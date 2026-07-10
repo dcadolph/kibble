@@ -1,0 +1,15 @@
+# Binaries
+/kibble
+*.exe
+
+# Test and coverage output
+*.out
+coverage.*
+
+# Editors
+.idea/
+.vscode/
+.DS_Store
+
+# Go
+/vendor/
