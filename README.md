@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/kibble-logo.png" alt="kibble" width="240">
+  <img src="assets/kibble-banner.png" alt="kibble" width="100%">
 </p>
 
 <h1 align="center">kibble</h1>
