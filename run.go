@@ -67,6 +67,19 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	return classify(step, string(out), time.Since(start))
 }
 
+// DockerAvailable reports an error when the docker CLI cannot reach a running
+// daemon, so kibble can fail fast with a clear message instead of reporting
+// every install as a container error.
+func DockerAvailable(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("cannot reach docker daemon: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // installScript builds, then smoke-tests, one module inside the container. It
 // prints BUILDCODE, SMOKECODE, and SMOKELINE markers for the parent to read. A
 // build timeout surfaces as BUILDCODE=124 so it is not mistaken for a failure.
@@ -80,8 +93,8 @@ if [ "$code" -ne 0 ]; then
   exit 0
 fi
 bin='%s'
-sout=$("$GOBIN/$bin" --version 2>&1); scode=$?
-if [ "$scode" -ne 0 ]; then sout=$("$GOBIN/$bin" --help 2>&1); scode=$?; fi
+sout=$(timeout 15 "$GOBIN/$bin" --version 2>&1); scode=$?
+if [ "$scode" -ne 0 ]; then sout=$(timeout 15 "$GOBIN/$bin" --help 2>&1); scode=$?; fi
 printf 'BUILDCODE=0\n'
 printf 'SMOKECODE=%%d\n' "$scode"
 printf 'SMOKELINE=%%s\n' "$(printf '%%s' "$sout" | head -n1 | cut -c1-70)"

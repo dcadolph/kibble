@@ -27,6 +27,8 @@ type config struct {
 	JSON bool
 	// Version reports whether to print the version and exit.
 	Version bool
+	// Strict reports whether timeouts and smoke failures also fail the run.
+	Strict bool
 }
 
 // main parses flags, collects install steps, runs them, and reports.
@@ -37,6 +39,7 @@ func main() {
 	flag.IntVar(&cfg.Workers, "workers", 3, "max concurrent installs")
 	flag.BoolVar(&cfg.JSON, "json", false, "emit results as JSON to stdout")
 	flag.BoolVar(&cfg.Version, "version", false, "print the version and exit")
+	flag.BoolVar(&cfg.Strict, "strict", false, "also fail on timeouts and smoke-test failures")
 	flag.Parse()
 
 	if cfg.Version {
@@ -56,11 +59,18 @@ func main() {
 		os.Exit(0)
 	}
 
+	if hasRunnable(steps) {
+		if err := DockerAvailable(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "kibble needs Docker to run install steps: %v\n", err)
+			os.Exit(2)
+		}
+	}
+
 	runner := &DockerRunner{Image: cfg.Image, Timeout: cfg.Timeout}
 	results := runAll(context.Background(), runner, steps, cfg.Workers)
 
 	report(os.Stdout, results, cfg.JSON)
-	if anyFail(results) {
+	if anyFail(results, cfg.Strict) {
 		os.Exit(1)
 	}
 }
@@ -114,7 +124,7 @@ func runAll(ctx context.Context, r Runner, steps []InstallStep, workers int) []R
 	var wg sync.WaitGroup
 	for i, step := range steps {
 		if !step.Run {
-			results[i] = Result{Step: step, Status: StatusSkipped, Detail: "not executed by v1"}
+			results[i] = Result{Step: step, Status: StatusSkipped, Detail: "not executed yet"}
 			continue
 		}
 		sem <- struct{}{}
@@ -129,10 +139,24 @@ func runAll(ctx context.Context, r Runner, steps []InstallStep, workers int) []R
 	return results
 }
 
-// anyFail reports whether any result is a real build failure.
-func anyFail(results []Result) bool {
+// hasRunnable reports whether any step will actually be executed.
+func hasRunnable(steps []InstallStep) bool {
+	for _, s := range steps {
+		if s.Run {
+			return true
+		}
+	}
+	return false
+}
+
+// anyFail reports whether the run should exit non-zero. A build failure always
+// counts. In strict mode, timeouts and smoke-test failures count too.
+func anyFail(results []Result, strict bool) bool {
 	for _, r := range results {
 		if r.Status == StatusFail {
+			return true
+		}
+		if strict && (r.Status == StatusTimeout || r.Status == StatusPassBuild) {
 			return true
 		}
 	}

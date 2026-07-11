@@ -67,6 +67,7 @@ myrepo  git-clone   SKIP    0s    not executed yet
 | `-workers` | `3`           | Max concurrent installs.                        |
 | `-json`    | `false`       | Emit results as JSON to stdout.                 |
 | `-version` | `false`       | Print the version and exit.                     |
+| `-strict`  | `false`       | Also fail on timeouts and smoke-test failures.  |
 
 ## What it checks today
 
