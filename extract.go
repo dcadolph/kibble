@@ -24,6 +24,8 @@ type InstallStep struct {
 	Binary string
 	// Run reports whether v1 actually executes this kind of step.
 	Run bool
+	// Usage is what the README cites for this binary, when anything is cited.
+	Usage *Usage
 }
 
 // Extractor finds install steps in README markdown.
@@ -56,41 +58,45 @@ var (
 // prose does not count as a runnable step.
 func DefaultExtractor() Extractor {
 	return ExtractorFunc(func(repo, markdown string) []InstallStep {
-		src := []byte(markdown)
-		doc := goldmark.New().Parser().Parse(text.NewReader(src))
 		seen := map[string]bool{}
 		var steps []InstallStep
-		add := func(s InstallStep, key string) {
-			if seen[key] {
-				return
+		for _, line := range codeLines(markdown) {
+			s, key, ok := classifyLine(repo, line)
+			if !ok || seen[key] {
+				continue
 			}
 			seen[key] = true
 			steps = append(steps, s)
 		}
-		_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-			if !entering {
-				return ast.WalkContinue, nil
-			}
-			var code string
-			switch node := n.(type) {
-			case *ast.FencedCodeBlock:
-				code = blockText(node, src)
-			case *ast.CodeBlock:
-				code = blockText(node, src)
-			case *ast.CodeSpan:
-				code = spanText(node, src)
-			default:
-				return ast.WalkContinue, nil
-			}
-			for _, line := range strings.Split(code, "\n") {
-				if s, key, ok := classifyLine(repo, line); ok {
-					add(s, key)
-				}
-			}
-			return ast.WalkContinue, nil
-		})
 		return steps
 	})
+}
+
+// codeLines returns every line the author marked as code: fenced blocks,
+// indented blocks, and inline spans.
+func codeLines(markdown string) []string {
+	src := []byte(markdown)
+	doc := goldmark.New().Parser().Parse(text.NewReader(src))
+	var lines []string
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		var code string
+		switch node := n.(type) {
+		case *ast.FencedCodeBlock:
+			code = blockText(node, src)
+		case *ast.CodeBlock:
+			code = blockText(node, src)
+		case *ast.CodeSpan:
+			code = spanText(node, src)
+		default:
+			return ast.WalkContinue, nil
+		}
+		lines = append(lines, strings.Split(code, "\n")...)
+		return ast.WalkContinue, nil
+	})
+	return lines
 }
 
 // classifyLine matches one code line against the known install patterns.
