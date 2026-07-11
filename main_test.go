@@ -23,6 +23,10 @@ func TestAnyFail(t *testing.T) {
 		Results: []Result{res(StatusTimeout)}, Strict: true, Want: true,
 	}, { // Test 4: a smoke failure fails under strict.
 		Results: []Result{res(StatusPassBuild)}, Strict: true, Want: true,
+	}, { // Test 5: doc drift does not fail by default.
+		Results: []Result{res(StatusDrift)}, Strict: false, Want: false,
+	}, { // Test 6: doc drift fails under strict.
+		Results: []Result{res(StatusDrift)}, Strict: true, Want: true,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

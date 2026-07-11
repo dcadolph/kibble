@@ -68,6 +68,7 @@ func main() {
 
 	runner := &DockerRunner{Image: cfg.Image, Timeout: cfg.Timeout}
 	results := runAll(context.Background(), runner, steps, cfg.Workers)
+	results = append(results, flagChecks(results)...)
 
 	report(os.Stdout, results, cfg.JSON)
 	if anyFail(results, cfg.Strict) {
@@ -87,7 +88,8 @@ func kibbleVersion() string {
 	return "dev"
 }
 
-// collect reads each repo's README and extracts its install steps.
+// collect reads each repo's README, extracts its install steps, and attaches
+// the flag and subcommand usage the README cites for each installed binary.
 func collect(paths []string) []InstallStep {
 	ex := DefaultExtractor()
 	var out []InstallStep
@@ -98,7 +100,20 @@ func collect(paths []string) []InstallStep {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", repo, err)
 			continue
 		}
-		out = append(out, ex.Extract(repo, md)...)
+		steps := ex.Extract(repo, md)
+		var bins []string
+		for _, s := range steps {
+			if s.Kind == "go-install" {
+				bins = append(bins, s.Binary)
+			}
+		}
+		usage := extractUsage(bins, md)
+		for i := range steps {
+			if steps[i].Kind == "go-install" {
+				steps[i].Usage = usage[steps[i].Binary]
+			}
+		}
+		out = append(out, steps...)
 	}
 	return out
 }
@@ -150,13 +165,13 @@ func hasRunnable(steps []InstallStep) bool {
 }
 
 // anyFail reports whether the run should exit non-zero. A build failure always
-// counts. In strict mode, timeouts and smoke-test failures count too.
+// counts. In strict mode, timeouts, smoke-test failures, and doc drift count too.
 func anyFail(results []Result, strict bool) bool {
 	for _, r := range results {
 		if r.Status == StatusFail {
 			return true
 		}
-		if strict && (r.Status == StatusTimeout || r.Status == StatusPassBuild) {
+		if strict && (r.Status == StatusTimeout || r.Status == StatusPassBuild || r.Status == StatusDrift) {
 			return true
 		}
 	}
