@@ -35,6 +35,9 @@ func TestClassifyLine(t *testing.T) {
 		In: "Run the doctor command to check your setup.", WantOK: false,
 	}, { // Test 5: go install without a version is not matched.
 		In: "go install ./...", WantOK: false,
+	}, { // Test 6: leading flags before the module are skipped.
+		In:       "go install -v github.com/x/y@latest",
+		WantKind: "go-install", WantMod: "github.com/x/y@latest", WantRun: true, WantOK: true,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -92,6 +95,34 @@ func TestExtract(t *testing.T) {
 			}
 			if diff := cmp.Diff(test.WantBins, bins); diff != "" {
 				t.Errorf("binaries mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestBinaryName checks the binary name go install produces, including the
+// major-version suffix case that a plain path.Base would get wrong.
+func TestBinaryName(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In   string
+		Want string
+	}{{ // Test 0: command under a cmd directory.
+		In: "github.com/dcadolph/cipher/cmd/cipher@latest", Want: "cipher",
+	}, { // Test 1: main package at the module root.
+		In: "github.com/dcadolph/vamoose@latest", Want: "vamoose",
+	}, { // Test 2: a v2 module root uses the element before the version suffix.
+		In: "github.com/foo/bar/v2@latest", Want: "bar",
+	}, { // Test 3: a command under a versioned module keeps its own name.
+		In: "github.com/foo/bar/v3/cmd/baz@latest", Want: "baz",
+	}, { // Test 4: a path with no version segment.
+		In: "example.com/tool", Want: "tool",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(test.Want, binaryName(test.In)); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

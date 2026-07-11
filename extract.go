@@ -41,17 +41,19 @@ func (f ExtractorFunc) Extract(repo, markdown string) []InstallStep {
 }
 
 var (
-	// reGoInstall matches a `go install <module>@<version>` invocation.
-	reGoInstall = regexp.MustCompile(`\bgo\s+install\s+(\S+@\S+)`)
+	// reGoInstall matches a `go install <module>@<version>` invocation, allowing
+	// leading flags such as `-v` before the module path.
+	reGoInstall = regexp.MustCompile(`\bgo\s+install\s+(?:-\S+\s+)*(\S+@\S+)`)
 	// reBrew matches a `brew install <target>` invocation.
 	reBrew = regexp.MustCompile(`\bbrew\s+install\s+(\S+)`)
 	// reGitClone matches a `git clone <target>` invocation.
 	reGitClone = regexp.MustCompile(`\bgit\s+clone\s+(\S+)`)
 )
 
-// DefaultExtractor returns an Extractor that reads fenced code blocks and
-// classifies the install commands inside them. Only fenced blocks are
-// considered, so prose mentions in backticks do not count as runnable steps.
+// DefaultExtractor returns an Extractor that reads code from fenced blocks,
+// indented blocks, and inline spans, and classifies the install commands
+// inside them. Only text the author marked as code is considered, so plain
+// prose does not count as a runnable step.
 func DefaultExtractor() Extractor {
 	return ExtractorFunc(func(repo, markdown string) []InstallStep {
 		src := []byte(markdown)
@@ -95,7 +97,7 @@ func DefaultExtractor() Extractor {
 func classifyLine(repo, line string) (InstallStep, string, bool) {
 	if m := reGoInstall.FindStringSubmatch(line); m != nil {
 		mod := m[1]
-		bin := path.Base(strings.SplitN(mod, "@", 2)[0])
+		bin := binaryName(mod)
 		return InstallStep{
 			Repo: repo, Kind: "go-install", Raw: strings.TrimSpace(line),
 			Module: mod, Binary: bin, Run: true,
@@ -112,6 +114,31 @@ func classifyLine(repo, line string) (InstallStep, string, bool) {
 		}, repo + "|clone|" + m[1], true
 	}
 	return InstallStep{}, "", false
+}
+
+// binaryName returns the binary name `go install` produces for a module path.
+// Go names the binary after the last path element, unless that element is a
+// major-version suffix like v2, in which case it uses the preceding element.
+func binaryName(modulePath string) string {
+	p := strings.SplitN(modulePath, "@", 2)[0]
+	base := path.Base(p)
+	if isMajorVersion(base) {
+		base = path.Base(path.Dir(p))
+	}
+	return base
+}
+
+// isMajorVersion reports whether s is a module major-version suffix like v2.
+func isMajorVersion(s string) bool {
+	if len(s) < 2 || s[0] != 'v' {
+		return false
+	}
+	for _, r := range s[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // liner is implemented by code block nodes that expose their raw lines.
