@@ -24,13 +24,13 @@ func TestClassifyLine(t *testing.T) {
 		In:       "go install github.com/dcadolph/slop-chop@latest   # lands in $(go env GOPATH)/bin",
 		WantKind: "go-install", WantMod: "github.com/dcadolph/slop-chop@latest",
 		WantRun: true, WantOK: true,
-	}, { // Test 2: brew install is recognized but not executed by v1.
+	}, { // Test 2: brew install is recognized and verified.
 		In:       "brew install dcadolph/tap/vamoose",
-		WantKind: "brew", WantMod: "dcadolph/tap/vamoose", WantRun: false, WantOK: true,
-	}, { // Test 3: git clone is recognized but not executed by v1.
+		WantKind: "brew", WantMod: "dcadolph/tap/vamoose", WantRun: true, WantOK: true,
+	}, { // Test 3: git clone is recognized and its recipe is executed.
 		In:       "git clone https://github.com/dcadolph/cipher && cd cipher && make install",
 		WantKind: "git-clone", WantMod: "https://github.com/dcadolph/cipher",
-		WantRun: false, WantOK: true,
+		WantRun: true, WantOK: true,
 	}, { // Test 4: plain prose is not an install command.
 		In: "Run the doctor command to check your setup.", WantOK: false,
 	}, { // Test 5: go install without a version is not matched.
@@ -95,6 +95,50 @@ func TestExtract(t *testing.T) {
 			}
 			if diff := cmp.Diff(test.WantBins, bins); diff != "" {
 				t.Errorf("binaries mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestInstallRecipeCapture checks that a git-clone step carries the rest of
+// its code block as the install recipe.
+func TestInstallRecipeCapture(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In        string
+		WantBlock []string
+	}{{ // Test 0: clone plus following build lines in one fenced block.
+		In:        "```sh\ngit clone git@github.com:x/y.git\ncd y\nmake install   # build it\n```\n",
+		WantBlock: []string{"git clone git@github.com:x/y.git", "cd y", "make install"},
+	}, { // Test 1: a one-line clone with && chain keeps the whole line.
+		In:        "```sh\ngit clone https://github.com/x/y && cd y && make install\n```\n",
+		WantBlock: []string{"git clone https://github.com/x/y && cd y && make install"},
+	}, { // Test 2: an inline clone span is its own one-line recipe.
+		In:        "Or `git clone https://github.com/x/y.git` to start.\n",
+		WantBlock: []string{"git clone https://github.com/x/y.git"},
+	}, { // Test 3: lines before the clone are not part of the recipe.
+		In:        "```sh\nbrew update\ngit clone https://github.com/x/y\ncd y\n```\n",
+		WantBlock: []string{"git clone https://github.com/x/y", "cd y"},
+	}, { // Test 4: capture stops before a documented teardown line.
+		In:        "```sh\ngit clone https://github.com/x/y\ncd y\nmake install\nmake uninstall\n```\n",
+		WantBlock: []string{"git clone https://github.com/x/y", "cd y", "make install"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			steps := DefaultExtractor().Extract("repo", test.In)
+			var clone *InstallStep
+			for i := range steps {
+				if steps[i].Kind == "git-clone" {
+					clone = &steps[i]
+					break
+				}
+			}
+			if clone == nil {
+				t.Fatalf("no git-clone step extracted from %q", test.In)
+			}
+			if diff := cmp.Diff(test.WantBlock, clone.Block); diff != "" {
+				t.Errorf("block mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

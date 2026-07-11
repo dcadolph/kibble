@@ -22,10 +22,13 @@ type InstallStep struct {
 	Module string
 	// Binary is the expected installed binary name, for go-install steps.
 	Binary string
-	// Run reports whether v1 actually executes this kind of step.
+	// Run reports whether kibble actually executes this kind of step.
 	Run bool
 	// Usage is what the README cites for this binary, when anything is cited.
 	Usage *Usage
+	// Block is the install recipe for a git-clone step: the clone line and the
+	// lines that follow it in the same code block, such as cd and make.
+	Block []string
 }
 
 // Extractor finds install steps in README markdown.
@@ -60,24 +63,53 @@ func DefaultExtractor() Extractor {
 	return ExtractorFunc(func(repo, markdown string) []InstallStep {
 		seen := map[string]bool{}
 		var steps []InstallStep
-		for _, line := range codeLines(markdown) {
-			s, key, ok := classifyLine(repo, line)
-			if !ok || seen[key] {
-				continue
+		for _, block := range codeBlocks(markdown) {
+			for i, line := range block {
+				s, key, ok := classifyLine(repo, line)
+				if !ok || seen[key] {
+					continue
+				}
+				seen[key] = true
+				if s.Kind == "git-clone" {
+					s.Block = installRecipe(block[i:])
+				}
+				steps = append(steps, s)
 			}
-			seen[key] = true
-			steps = append(steps, s)
 		}
 		return steps
 	})
 }
 
-// codeLines returns every line the author marked as code: fenced blocks,
-// indented blocks, and inline spans.
-func codeLines(markdown string) []string {
+// reTeardown matches a line that undoes an install, such as make uninstall or
+// make clean. Install blocks often document teardown next to setup, and
+// running it would remove the binary the recipe just produced.
+var reTeardown = regexp.MustCompile(`\b(uninstall|clean)\b|^rm\s`)
+
+// installRecipe trims an install block to its meaningful lines: comments and
+// blank lines are dropped, trailing shell comments are stripped, and capture
+// stops at the first teardown line.
+func installRecipe(lines []string) []string {
+	var out []string
+	for _, l := range lines {
+		l = strings.TrimSpace(stripComment(strings.TrimPrefix(strings.TrimSpace(l), "$ ")))
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		if reTeardown.MatchString(l) {
+			break
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+// codeBlocks returns the code the author marked, grouped by block: each
+// fenced or indented block is one group of lines, and each inline span is its
+// own group.
+func codeBlocks(markdown string) [][]string {
 	src := []byte(markdown)
 	doc := goldmark.New().Parser().Parse(text.NewReader(src))
-	var lines []string
+	var blocks [][]string
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
@@ -93,9 +125,18 @@ func codeLines(markdown string) []string {
 		default:
 			return ast.WalkContinue, nil
 		}
-		lines = append(lines, strings.Split(code, "\n")...)
+		blocks = append(blocks, strings.Split(code, "\n"))
 		return ast.WalkContinue, nil
 	})
+	return blocks
+}
+
+// codeLines returns every line the author marked as code, across all blocks.
+func codeLines(markdown string) []string {
+	var lines []string
+	for _, b := range codeBlocks(markdown) {
+		lines = append(lines, b...)
+	}
 	return lines
 }
 
@@ -111,12 +152,12 @@ func classifyLine(repo, line string) (InstallStep, string, bool) {
 	}
 	if m := reBrew.FindStringSubmatch(line); m != nil {
 		return InstallStep{
-			Repo: repo, Kind: "brew", Raw: strings.TrimSpace(line), Module: m[1],
+			Repo: repo, Kind: "brew", Raw: strings.TrimSpace(line), Module: m[1], Run: true,
 		}, repo + "|brew|" + m[1], true
 	}
 	if m := reGitClone.FindStringSubmatch(line); m != nil {
 		return InstallStep{
-			Repo: repo, Kind: "git-clone", Raw: strings.TrimSpace(line), Module: m[1],
+			Repo: repo, Kind: "git-clone", Raw: strings.TrimSpace(line), Module: m[1], Run: true,
 		}, repo + "|clone|" + m[1], true
 	}
 	return InstallStep{}, "", false
