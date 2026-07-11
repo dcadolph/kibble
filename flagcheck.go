@@ -53,15 +53,21 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 			if use == nil {
 				continue
 			}
+			flags := reFlagToken.FindAllStringSubmatch(seg, -1)
 			var sub string
 			if len(fields) > 1 && reSubName.MatchString(fields[1]) {
 				sub = fields[1]
+				// A flag on a nested invocation such as `tool walk rotate --x`
+				// lives on the nested command, so capture the two-token path
+				// and probe its help rather than only the parent's.
+				if len(flags) > 0 && len(fields) > 2 && reSubName.MatchString(fields[2]) {
+					sub = fields[1] + " " + fields[2]
+				}
 				if key := bin + "|" + sub; !subSeen[key] {
 					subSeen[key] = true
 					use.Subs = append(use.Subs, sub)
 				}
 			}
-			flags := reFlagToken.FindAllStringSubmatch(seg, -1)
 			if sub != "" && len(flags) > 0 {
 				flagged[bin+"|"+sub] = true
 			}
@@ -135,7 +141,9 @@ func flagChecks(results []Result) []Result {
 		}
 		var badSubs []string
 		for _, s := range r.Step.Usage.Subs {
-			if strings.Contains(r.helpText, fmt.Sprintf("unknown command %q", s)) {
+			parts := strings.Fields(s)
+			leaf := parts[len(parts)-1]
+			if strings.Contains(r.helpText, fmt.Sprintf("unknown command %q", leaf)) {
 				badSubs = append(badSubs, s)
 			}
 		}

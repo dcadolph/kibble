@@ -46,6 +46,11 @@ func TestExtractUsage(t *testing.T) {
 		Binaries:  []string{"tool"},
 		WantFlags: []string{"real"},
 		WantSubs:  []string{"run"},
+	}, { // Test 6: a flag on a nested invocation captures the two-token path.
+		In:        "```sh\ntool walk rotate ./secrets --older-than 90d\n```\n",
+		Binaries:  []string{"tool"},
+		WantFlags: []string{"older-than"},
+		WantSubs:  []string{"walk rotate"},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
