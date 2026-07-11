@@ -1,0 +1,14 @@
+name: docs
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  kibble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check install docs
+        uses: ./
+        with:
+          repo: .
