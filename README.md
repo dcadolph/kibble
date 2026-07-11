@@ -77,12 +77,32 @@ executed, so they show as `SKIP` rather than a false pass. A build that exceeds 
 timeout is reported as `TIMEOUT`, never as a failure, so a slow network does not fail a
 build that would otherwise pass.
 
+## Use it in CI
+
+Add a workflow that fails a pull request when a documented install breaks:
+
+```yaml
+name: docs
+on: pull_request
+jobs:
+  kibble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dcadolph/kibble@v1
+        with:
+          repo: .
+          # version: v0.3.0   # pin a version, or leave for latest
+          # args: -strict      # fail on timeouts and smoke failures too
+```
+
+The runner already has Docker, so kibble spins its clean-room containers there.
+
 ## Roadmap
 
 - Execute the Homebrew and `git clone` install paths.
 - Check that flags and subcommands named in the docs still exist in the CLI.
 - Run quickstart and example blocks, not just install steps.
-- Ship as a GitHub Action so a stale README fails a pull request.
 
 ## Why "kibble"
 
