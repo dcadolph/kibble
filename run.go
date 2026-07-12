@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -55,13 +56,31 @@ type DockerRunner struct {
 	Image string
 	// Timeout is the per-step build timeout.
 	Timeout time.Duration
+	// Fetch checks URLs for the brew formula verification. When nil, a
+	// default HTTP client is used.
+	Fetch Fetcher
 }
 
-// Run installs the step in a fresh container and smoke-tests the binary.
+// Run executes the step: go-install and git-clone run in a fresh container
+// and smoke-test the result, and brew is verified without installing.
 func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
-	secs := int(d.Timeout.Seconds())
-	script := fmt.Sprintf(installScript, secs, step.Module, step.Binary)
-	script += helpProbe(step)
+	var script string
+	switch step.Kind {
+	case "brew":
+		fetch := d.Fetch
+		if fetch == nil {
+			fetch = defaultFetcher()
+		}
+		start := time.Now()
+		res := checkBrew(step, fetch)
+		res.Duration = time.Since(start)
+		return res
+	case "git-clone":
+		script = cloneScriptFor(step, int(d.Timeout.Seconds()))
+	default:
+		script = fmt.Sprintf(installScript, int(d.Timeout.Seconds()), step.Module, step.Binary)
+		script += helpProbe(step)
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, d.Timeout+60*time.Second)
 	defer cancel()
@@ -71,6 +90,54 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	out, _ := cmd.CombinedOutput()
 	return classify(step, string(out), time.Since(start))
 }
+
+// reSSHRemote matches a GitHub SSH remote such as git@github.com:owner/repo.git.
+var reSSHRemote = regexp.MustCompile(`git@github\.com:([\w.-]+)/([\w.-]+?)(\.git)?(\s|$)`)
+
+// rewriteSSH converts GitHub SSH remotes to HTTPS, since a clean container
+// has no SSH key and a public repository clones fine without one.
+func rewriteSSH(line string) string {
+	return reSSHRemote.ReplaceAllString(line, "https://github.com/$1/$2.git$4")
+}
+
+// cloneScriptFor builds the container script for a git-clone install recipe:
+// the documented lines run in order, and whatever binary lands in GOBIN is
+// smoke-tested.
+func cloneScriptFor(step InstallStep, timeoutSecs int) string {
+	recipe := make([]string, 0, len(step.Block))
+	for _, l := range step.Block {
+		recipe = append(recipe, rewriteSSH(l))
+	}
+	body := strings.Join(recipe, "\n")
+	body = strings.ReplaceAll(body, "'", `'\''`)
+	return fmt.Sprintf(cloneScript, timeoutSecs, body, step.Repo)
+}
+
+// cloneScript runs a documented clone recipe and smoke-tests the result. It
+// prints the same markers as installScript, plus NOBIN when the recipe
+// produced no binary to test.
+const cloneScript = `set -u
+export GOBIN=/root/gobin
+mkdir -p "$GOBIN" /work
+cd /work
+out=$(timeout %[1]d bash -ec '%[2]s' 2>&1); code=$?
+if [ "$code" -ne 0 ]; then
+  printf 'BUILDCODE=%%d\n' "$code"
+  printf '%%s\n' "$out" | tail -n 3
+  exit 0
+fi
+printf 'BUILDCODE=0\n'
+bin=''
+if [ -x "$GOBIN/%[3]s" ]; then bin="$GOBIN/%[3]s"; else bin=$(ls "$GOBIN" 2>/dev/null | head -n1); [ -n "$bin" ] && bin="$GOBIN/$bin"; fi
+if [ -z "$bin" ]; then
+  printf 'NOBIN=1\n'
+  exit 0
+fi
+sout=$(timeout 15 "$bin" --version 2>&1); scode=$?
+if [ "$scode" -ne 0 ]; then sout=$(timeout 15 "$bin" --help 2>&1); scode=$?; fi
+printf 'SMOKECODE=%%d\n' "$scode"
+printf 'SMOKELINE=%%s\n' "$(printf '%%s' "$sout" | head -n1 | cut -c1-70)"
+`
 
 // helpProbe returns the script section that collects the binary's help
 // screens for flag checking. Cited subcommands are probed too, capped and
@@ -83,7 +150,17 @@ func helpProbe(step InstallStep) string {
 	}
 	var subs []string
 	for _, s := range step.Usage.Subs {
-		if reSubName.MatchString(s) && len(subs) < 12 {
+		if len(subs) >= 12 {
+			break
+		}
+		safe := true
+		for _, tok := range strings.Fields(s) {
+			if !reSubName.MatchString(tok) {
+				safe = false
+				break
+			}
+		}
+		if safe {
 			subs = append(subs, s)
 		}
 	}
@@ -134,6 +211,7 @@ printf 'SMOKELINE=%%s\n' "$(printf '%%s' "$sout" | head -n1 | cut -c1-70)"
 func classify(step InstallStep, out string, dur time.Duration) Result {
 	res := Result{Step: step, Duration: dur}
 	buildCode, smokeCode := -1, -1
+	noBin := false
 	inHelp := false
 	var tail, help []string
 	for _, line := range strings.Split(out, "\n") {
@@ -150,6 +228,8 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 			smokeCode, _ = strconv.Atoi(strings.TrimPrefix(line, "SMOKECODE="))
 		case strings.HasPrefix(line, "SMOKELINE="):
 			res.SmokeLine = strings.TrimPrefix(line, "SMOKELINE=")
+		case strings.HasPrefix(line, "NOBIN="):
+			noBin = true
 		default:
 			if strings.TrimSpace(line) != "" {
 				tail = append(tail, line)
@@ -167,6 +247,9 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 	case buildCode != 0:
 		res.Status = StatusFail
 		res.Detail = lastLine(tail)
+	case noBin:
+		res.Status = StatusPass
+		res.Detail = "recipe ran (no binary produced to smoke-test)"
 	case smokeCode == 0:
 		res.Status = StatusPass
 	default:

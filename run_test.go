@@ -33,6 +33,9 @@ func TestClassify(t *testing.T) {
 	}, { // Test 4: no marker at all means the container itself errored.
 		In:         "docker: Error response from daemon: pull access denied\n",
 		WantStatus: StatusFail,
+	}, { // Test 5: a recipe that runs but produces no binary still passes.
+		In:         "BUILDCODE=0\nNOBIN=1\n",
+		WantStatus: StatusPass, WantDetail: "no binary produced",
 	}}
 	step := InstallStep{Repo: "repo", Kind: "go-install", Binary: "tool"}
 	for testNum, test := range tests {
@@ -47,6 +50,32 @@ func TestClassify(t *testing.T) {
 			}
 			if test.WantDetail != "" && !strings.Contains(got.Detail, test.WantDetail) {
 				t.Errorf("detail %q does not contain %q", got.Detail, test.WantDetail)
+			}
+		})
+	}
+}
+
+// TestRewriteSSH checks that GitHub SSH remotes become HTTPS for keyless clones.
+func TestRewriteSSH(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In   string
+		Want string
+	}{{ // Test 0: an ssh remote with .git suffix.
+		In:   "git clone git@github.com:dcadolph/slop-chop.git",
+		Want: "git clone https://github.com/dcadolph/slop-chop.git",
+	}, { // Test 1: an ssh remote without the suffix.
+		In:   "git clone git@github.com:dcadolph/midden",
+		Want: "git clone https://github.com/dcadolph/midden.git",
+	}, { // Test 2: an https remote is untouched.
+		In:   "git clone https://github.com/dcadolph/cipher && cd cipher",
+		Want: "git clone https://github.com/dcadolph/cipher && cd cipher",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(test.Want, rewriteSSH(test.In)); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
