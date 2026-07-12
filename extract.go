@@ -29,6 +29,10 @@ type InstallStep struct {
 	// Block is the install recipe for a git-clone step: the clone line and the
 	// lines that follow it in the same code block, such as cd and make.
 	Block []string
+	// plan is the example plan attached to an example step.
+	plan *Plan
+	// dir is the local repo path an example step streams into its session.
+	dir string
 }
 
 // Extractor finds install steps in README markdown.
@@ -64,14 +68,14 @@ func DefaultExtractor() Extractor {
 		seen := map[string]bool{}
 		var steps []InstallStep
 		for _, block := range codeBlocks(markdown) {
-			for i, line := range block {
+			for i, line := range block.Lines {
 				s, key, ok := classifyLine(repo, line)
 				if !ok || seen[key] {
 					continue
 				}
 				seen[key] = true
 				if s.Kind == "git-clone" {
-					s.Block = installRecipe(block[i:])
+					s.Block = installRecipe(block.Lines[i:])
 				}
 				steps = append(steps, s)
 			}
@@ -103,29 +107,48 @@ func installRecipe(lines []string) []string {
 	return out
 }
 
+// codeBlock is one region of author-marked code in a README: a fenced block,
+// an indented block, or an inline span.
+type codeBlock struct {
+	// Lang is the fence info language, empty for indented blocks and spans.
+	Lang string
+	// Heading is the text of the nearest section heading above the block.
+	Heading string
+	// Span reports whether this is an inline span rather than a block.
+	Span bool
+	// Lines are the raw code lines.
+	Lines []string
+}
+
 // codeBlocks returns the code the author marked, grouped by block: each
 // fenced or indented block is one group of lines, and each inline span is its
 // own group.
-func codeBlocks(markdown string) [][]string {
+func codeBlocks(markdown string) []codeBlock {
 	src := []byte(markdown)
 	doc := goldmark.New().Parser().Parse(text.NewReader(src))
-	var blocks [][]string
+	var blocks []codeBlock
+	var heading string
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
-		var code string
+		b := codeBlock{Heading: heading}
 		switch node := n.(type) {
+		case *ast.Heading:
+			heading = spanText(node, src)
+			return ast.WalkContinue, nil
 		case *ast.FencedCodeBlock:
-			code = blockText(node, src)
+			b.Lang = string(node.Language(src))
+			b.Lines = strings.Split(blockText(node, src), "\n")
 		case *ast.CodeBlock:
-			code = blockText(node, src)
+			b.Lines = strings.Split(blockText(node, src), "\n")
 		case *ast.CodeSpan:
-			code = spanText(node, src)
+			b.Span = true
+			b.Lines = strings.Split(spanText(node, src), "\n")
 		default:
 			return ast.WalkContinue, nil
 		}
-		blocks = append(blocks, strings.Split(code, "\n"))
+		blocks = append(blocks, b)
 		return ast.WalkContinue, nil
 	})
 	return blocks
@@ -135,7 +158,7 @@ func codeBlocks(markdown string) [][]string {
 func codeLines(markdown string) []string {
 	var lines []string
 	for _, b := range codeBlocks(markdown) {
-		lines = append(lines, b...)
+		lines = append(lines, b.Lines...)
 	}
 	return lines
 }

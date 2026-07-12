@@ -35,6 +35,8 @@ reports which steps a brand-new user could actually complete.
 - Smoke-tests the binary (`--version`, then `--help`) to confirm it runs, not just builds.
 - Checks that every flag and subcommand the README cites still exists in the binary's
   help output, and reports what has drifted.
+- Replays the README's quickstart and usage blocks in one clean session after install,
+  so a documented example that no longer works fails in CI, not in a user's terminal.
 - Prints a table or JSON, and exits non-zero when a documented install fails.
 
 ## Install
@@ -59,21 +61,24 @@ Example output:
 ```
 REPO    KIND        STATUS  TIME  DETAIL
 myrepo  brew        PASS    1s    formula exists (install not attempted)
+myrepo  example     PASS    22s   15 lines ran, 9 skipped
 myrepo  flag-check  PASS    0s    9 cited flags ok, 4 subcommands cited
 myrepo  git-clone   PASS    41s   myrepo version 1.4.0
 myrepo  go-install  PASS    28s   myrepo version 1.4.0
 
-4 pass, 0 fail, 0 other of 4 install steps
+5 pass, 0 fail, 0 other of 5 install steps
 ```
 
-| Flag       | Default       | What                                     &nbsp; |
-| ---------- | ------------- | ----------------------------------------------- |
-| `-image`   | `golang:1.26` | Container image for clean-room installs.        |
-| `-timeout` | `240s`        | Per-step build timeout.                         |
-| `-workers` | `3`           | Max concurrent installs.                        |
-| `-json`    | `false`       | Emit results as JSON to stdout.                 |
-| `-version` | `false`       | Print the version and exit.                     |
-| `-strict`  | `false`       | Also fail on timeouts and smoke-test failures.  |
+| Flag        | Default       | What                                     &nbsp; |
+| ----------- | ------------- | ----------------------------------------------- |
+| `-image`    | `golang:1.26` | Container image for clean-room installs.        |
+| `-timeout`  | `240s`        | Per-step build timeout.                         |
+| `-workers`  | `3`           | Max concurrent installs.                        |
+| `-json`     | `false`       | Emit results as JSON to stdout.                 |
+| `-version`  | `false`       | Print the version and exit.                     |
+| `-strict`   | `false`       | Also fail on timeouts and smoke-test failures.  |
+| `-examples` | `true`        | Replay README example blocks in the container.  |
+| `-plan`     | `false`       | Print the example plans as JSON and exit.       |
 
 ## What it checks today
 
@@ -91,6 +96,52 @@ checked against the collected `--help` output. A flag the binary no longer has, 
 subcommand it rejects, is reported as `DRIFT`. The check is conservative: it only reads
 lines that invoke the binary by name, so flags shown for other tools do not count, and
 `DRIFT` fails the run only under `-strict`.
+
+## Examples
+
+An install that builds is only half the promise. The other half is the quickstart: the
+lines a new user actually types next. kibble replays them. After installing the binary,
+it copies the repository into the container and runs the README's example blocks in one
+session, in document order, so files and environment carry between blocks the way they do
+in a real terminal. A block that no longer works, a flag that changed, a command that
+prints an error where the docs promised output, all fail as `example` in CI.
+
+The judgment of which lines to run is deterministic and conservative, because a check
+that cries wolf is worse than no check. A line is skipped, never failed, when it needs
+something a clean container cannot honestly provide: a placeholder the reader must fill
+in (`<api-key>`, `age1bob...`), an interactive sign-in, a terminal, an API key, a local
+server, a file the docs reference but never create, or a subcommand that opens a shell or
+serves forever. Skips are reported with their reason, so the coverage is honest about what
+it did and did not run. A command the docs say exits nonzero, such as a linter that fails
+when it finds something, is recognized and passes on that exit.
+
+When the heuristics cannot settle a call, a `.kibble.yml` at the repository root does.
+It writes fixtures with real contents, exports environment, substitutes placeholder text,
+installs extra packages, and forces a specific line to run, skip, or run in the
+background with a readiness probe. Every choice lives in the file, so the run stays
+reproducible and the engine stays the thing that decides pass or fail.
+
+```yaml
+version: 1
+examples:
+  packages: [age]
+  substitutions:
+    "<api-key>": test-key-1234
+  fixtures:
+    - path: config.yaml
+      contents: |
+        setting: value
+  steps:
+    - match: mytool serve
+      background: true
+      readyLog: listening on
+    - match: mytool check
+      nonzeroOk: true
+```
+
+Preview the plan without running anything with `-plan`, which prints, per repository, the
+exact lines kibble would run, the ones it would skip and why, and the fixtures and
+packages the session needs. Turn the whole layer off with `-examples=false`.
 
 ## Use it in CI
 
@@ -116,7 +167,7 @@ The runner already has Docker, so kibble spins its clean-room containers there.
 ## Roadmap
 
 - Install brew formulas for real instead of only verifying they exist.
-- Run quickstart and example blocks, not just install steps.
+- JUnit XML output for CI annotations.
 
 ## Why "kibble"
 

@@ -42,6 +42,8 @@ type Result struct {
 	Detail string
 	// helpText is the help output collected for flag checking.
 	helpText string
+	// example carries per-line outcomes for an example session.
+	example *exampleRun
 }
 
 // Runner executes an install step in an isolated environment.
@@ -62,10 +64,13 @@ type DockerRunner struct {
 }
 
 // Run executes the step: go-install and git-clone run in a fresh container
-// and smoke-test the result, and brew is verified without installing.
+// and smoke-test the result, brew is verified without installing, and
+// example steps replay the README's example blocks in one session.
 func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	var script string
 	switch step.Kind {
+	case "example":
+		return d.runExample(ctx, step)
 	case "brew":
 		fetch := d.Fetch
 		if fetch == nil {

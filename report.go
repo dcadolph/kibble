@@ -24,24 +24,50 @@ func report(w io.Writer, results []Result, asJSON bool) {
 	reportTable(w, results)
 }
 
-// reportJSON writes results as an indented JSON array.
+// reportJSON writes results as an indented JSON array. Example rows carry
+// their per-line outcomes, so CI logs show exactly which documented line
+// failed or why one was skipped.
 func reportJSON(w io.Writer, results []Result) {
+	type lineRow struct {
+		Cmd    string `json:"cmd"`
+		Status string `json:"status"`
+		Code   int    `json:"code"`
+		Detail string `json:"detail,omitempty"`
+	}
+	type stepRow struct {
+		ID      string    `json:"id"`
+		Heading string    `json:"heading,omitempty"`
+		Lines   []lineRow `json:"lines"`
+	}
 	type row struct {
-		Repo    string `json:"repo"`
-		Kind    string `json:"kind"`
-		Status  string `json:"status"`
-		Seconds int    `json:"seconds"`
-		Module  string `json:"module,omitempty"`
-		Smoke   string `json:"smoke,omitempty"`
-		Detail  string `json:"detail,omitempty"`
+		Repo    string    `json:"repo"`
+		Kind    string    `json:"kind"`
+		Status  string    `json:"status"`
+		Seconds int       `json:"seconds"`
+		Module  string    `json:"module,omitempty"`
+		Smoke   string    `json:"smoke,omitempty"`
+		Detail  string    `json:"detail,omitempty"`
+		Steps   []stepRow `json:"steps,omitempty"`
 	}
 	rows := make([]row, 0, len(results))
 	for _, r := range results {
-		rows = append(rows, row{
+		out := row{
 			Repo: r.Step.Repo, Kind: r.Step.Kind, Status: string(r.Status),
 			Seconds: int(r.Duration.Round(time.Second).Seconds()),
 			Module:  r.Step.Module, Smoke: r.SmokeLine, Detail: r.Detail,
-		})
+		}
+		if r.example != nil {
+			for _, s := range r.example.Steps {
+				sr := stepRow{ID: s.ID, Heading: s.Heading}
+				for _, l := range s.Lines {
+					sr.Lines = append(sr.Lines, lineRow{
+						Cmd: l.Cmd, Status: string(l.Status), Code: l.Code, Detail: l.Detail,
+					})
+				}
+				out.Steps = append(out.Steps, sr)
+			}
+		}
+		rows = append(rows, out)
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

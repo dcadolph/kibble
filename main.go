@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -29,6 +30,10 @@ type config struct {
 	Version bool
 	// Strict reports whether timeouts and smoke failures also fail the run.
 	Strict bool
+	// Examples reports whether to replay README example blocks.
+	Examples bool
+	// Plan reports whether to print the example plans and exit.
+	Plan bool
 }
 
 // main parses flags, collects install steps, runs them, and reports.
@@ -40,6 +45,8 @@ func main() {
 	flag.BoolVar(&cfg.JSON, "json", false, "emit results as JSON to stdout")
 	flag.BoolVar(&cfg.Version, "version", false, "print the version and exit")
 	flag.BoolVar(&cfg.Strict, "strict", false, "also fail on timeouts and smoke-test failures")
+	flag.BoolVar(&cfg.Examples, "examples", true, "replay README example blocks in the container")
+	flag.BoolVar(&cfg.Plan, "plan", false, "print the example plans as JSON and exit")
 	flag.Parse()
 
 	if cfg.Version {
@@ -53,7 +60,13 @@ func main() {
 		os.Exit(2)
 	}
 
-	steps := collect(paths)
+	steps, plans := collect(paths, cfg.Examples || cfg.Plan)
+	if cfg.Plan {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(plans)
+		return
+	}
 	if len(steps) == 0 {
 		fmt.Fprintln(os.Stderr, "no install steps found")
 		os.Exit(0)
@@ -88,11 +101,13 @@ func kibbleVersion() string {
 	return "dev"
 }
 
-// collect reads each repo's README, extracts its install steps, and attaches
-// the flag and subcommand usage the README cites for each installed binary.
-func collect(paths []string) []InstallStep {
+// collect reads each repo's README, extracts its install steps, attaches
+// the flag and subcommand usage the README cites for each installed binary,
+// and, when examples are on, builds an example plan per repo.
+func collect(paths []string, examples bool) ([]InstallStep, []*Plan) {
 	ex := DefaultExtractor()
 	var out []InstallStep
+	var plans []*Plan
 	for _, p := range paths {
 		repo := filepath.Base(filepath.Clean(p))
 		md, err := readREADME(p)
@@ -101,10 +116,11 @@ func collect(paths []string) []InstallStep {
 			continue
 		}
 		steps := ex.Extract(repo, md)
-		var bins []string
+		var bins, mods []string
 		for _, s := range steps {
 			if s.Kind == "go-install" {
 				bins = append(bins, s.Binary)
+				mods = append(mods, s.Module)
 			}
 		}
 		usage := extractUsage(bins, md)
@@ -114,8 +130,45 @@ func collect(paths []string) []InstallStep {
 			}
 		}
 		out = append(out, steps...)
+		if !examples {
+			continue
+		}
+		if step, plan := exampleStepFor(repo, p, md, bins, mods); plan != nil {
+			plans = append(plans, plan)
+			if step != nil {
+				out = append(out, *step)
+			}
+		}
 	}
-	return out
+	return out, plans
+}
+
+// exampleStepFor builds a repo's example plan and, when it has steps, the
+// install step that runs it. A bad .kibble.yml is reported and examples are
+// dropped for the repo, so a config typo cannot pass as a green check.
+func exampleStepFor(repo, dir, md string, bins, mods []string) (*InstallStep, *Plan) {
+	cfg, err := loadExamplesConfig(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skip %s examples: bad .kibble.yml: %v\n", repo, err)
+		return nil, nil
+	}
+	if cfg != nil && cfg.Disable {
+		return nil, nil
+	}
+	plan := buildPlan(repo, dir, md, bins, mods, cfg)
+	if len(plan.Steps) == 0 {
+		return nil, plan
+	}
+	lines := 0
+	for _, s := range plan.Steps {
+		lines += len(s.Lines)
+	}
+	step := &InstallStep{
+		Repo: repo, Kind: "example", Run: true,
+		Raw:  fmt.Sprintf("%d blocks, %d lines", len(plan.Steps), lines),
+		plan: plan, dir: dir,
+	}
+	return step, plan
 }
 
 // readREADME returns the README contents for a repo directory.
