@@ -29,6 +29,9 @@ reports which steps a brand-new user could actually complete.
 - Extracts install commands from fenced, inline, and indented code, so a step written
   inline in prose is not missed.
 - Runs each `go install` in a clean `golang` container from zero.
+- Runs each `git clone` recipe too: the clone and the build lines that follow it in the
+  same code block, with GitHub SSH remotes rewritten to HTTPS for the keyless container.
+- Verifies each documented brew formula exists in its tap, without installing it.
 - Smoke-tests the binary (`--version`, then `--help`) to confirm it runs, not just builds.
 - Checks that every flag and subcommand the README cites still exists in the binary's
   help output, and reports what has drifted.
@@ -55,12 +58,12 @@ Example output:
 
 ```
 REPO    KIND        STATUS  TIME  DETAIL
-myrepo  brew        SKIP    0s    not executed yet
+myrepo  brew        PASS    1s    formula exists (install not attempted)
 myrepo  flag-check  PASS    0s    9 cited flags ok, 4 subcommands cited
-myrepo  git-clone   SKIP    0s    not executed yet
+myrepo  git-clone   PASS    41s   myrepo version 1.4.0
 myrepo  go-install  PASS    28s   myrepo version 1.4.0
 
-2 pass, 0 fail, 2 other of 4 install steps
+4 pass, 0 fail, 0 other of 4 install steps
 ```
 
 | Flag       | Default       | What                                     &nbsp; |
@@ -75,10 +78,12 @@ myrepo  go-install  PASS    28s   myrepo version 1.4.0
 ## What it checks today
 
 kibble verifies `go install` steps end to end: the module resolves, it builds from zero,
-and the binary runs. Homebrew and `git clone` steps are detected and listed, but not yet
-executed, so they show as `SKIP` rather than a false pass. A build that exceeds the
-timeout is reported as `TIMEOUT`, never as a failure, so a slow network does not fail a
-build that would otherwise pass.
+and the binary runs. A `git clone` step runs as the documented recipe, meaning the clone
+line plus the lines that follow it in the same code block, such as `cd` and
+`make install`, and whatever lands in the install directory is smoke-tested. A brew step
+is verified against its tap, so a renamed or missing formula is caught, but nothing is
+installed. A build that exceeds the timeout is reported as `TIMEOUT`, never as a failure,
+so a slow network does not fail a build that would otherwise pass.
 
 After a successful install, kibble compares the README against the binary itself. Every
 flag cited on a line that invokes the binary, and every subcommand those lines call, is
@@ -110,7 +115,7 @@ The runner already has Docker, so kibble spins its clean-room containers there.
 
 ## Roadmap
 
-- Execute the Homebrew and `git clone` install paths.
+- Install brew formulas for real instead of only verifying they exist.
 - Run quickstart and example blocks, not just install steps.
 
 ## Why "kibble"
