@@ -248,6 +248,18 @@ func TestSkipHeuristics(t *testing.T) {
 	}, { // Test 7: an @-prefixed missing file is still a missing file.
 		Markdown: "```sh\ntool check @args.json\n```\n",
 		WantSkip: "never create",
+	}, { // Test 8: the Go all-packages pattern is not an ellipsis placeholder.
+		Markdown: "```sh\ntool ./...\n```\n",
+		WantRun:  true,
+	}, { // Test 9: an all-caps stand-in ending in a noun is a placeholder.
+		Markdown: "```sh\ntool send SOMEFILE\n```\n",
+		WantSkip: "placeholder",
+	}, { // Test 10: an output flag creates its file, so it is not missing.
+		Markdown: "```sh\ntool scan -out results.json ./...\n```\n",
+		WantRun:  true,
+	}, { // Test 11: a foreign shell requested by flag skips.
+		Markdown: "```sh\ntool --shell zsh 'echo hi'\n```\n",
+		WantSkip: "zsh shell",
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
