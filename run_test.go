@@ -30,9 +30,9 @@ func TestClassify(t *testing.T) {
 	}, { // Test 3: build failed with a compile error.
 		In:         "BUILDCODE=1\npkg/foo/bar.go:10: undefined: Baz\n",
 		WantStatus: StatusFail, WantDetail: "undefined: Baz",
-	}, { // Test 4: no marker at all means the container itself errored.
+	}, { // Test 4: no marker at all is kibble's own error, not a doc failure.
 		In:         "docker: Error response from daemon: pull access denied\n",
-		WantStatus: StatusFail,
+		WantStatus: StatusError, WantDetail: "kibble could not run the step",
 	}, { // Test 5: a recipe that runs but produces no binary still passes.
 		In:         "BUILDCODE=0\nNOBIN=1\n",
 		WantStatus: StatusPass, WantDetail: "no binary produced",

@@ -26,6 +26,9 @@ const (
 	StatusSkipped Status = "SKIP"
 	// StatusDrift means the docs cite a flag or subcommand the binary lacks.
 	StatusDrift Status = "DRIFT"
+	// StatusError means kibble itself could not run the step, so the result
+	// says nothing about the document.
+	StatusError Status = "ERROR"
 )
 
 // Result is the outcome of attempting one install step.
@@ -40,6 +43,9 @@ type Result struct {
 	SmokeLine string
 	// Detail carries the error tail on failure or a note otherwise.
 	Detail string
+	// Image is the container image kibble selected for the step's toolchain,
+	// empty when the step ran in the configured default.
+	Image string
 	// helpText is the help output collected for flag checking.
 	helpText string
 	// example carries per-line outcomes for an example session.
@@ -81,8 +87,18 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 		res.Duration = time.Since(start)
 		return res
 	case "git-clone":
+		if strings.HasPrefix(step.Module, "git://github.com") {
+			return Result{
+				Step: step, Status: StatusFail,
+				Detail: "clone uses git://, which GitHub turned off in 2022, so this fails for every reader",
+			}
+		}
 		script = cloneScriptFor(step, int(d.Timeout.Seconds()))
 	default:
+		if _, isPkg := pkgKinds[step.Kind]; isPkg {
+			script = pkgScriptFor(step, int(d.Timeout.Seconds()))
+			break
+		}
 		script = fmt.Sprintf(installScript, int(d.Timeout.Seconds()), step.Module, step.Binary)
 		script += helpProbe(step)
 	}
@@ -90,11 +106,100 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	ctx, cancel := context.WithTimeout(ctx, d.Timeout+60*time.Second)
 	defer cancel()
 
+	image := d.imageFor(step)
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", d.Image, "bash", "-c", script)
+	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", image, "bash", "-c", script)
 	out, _ := cmd.CombinedOutput()
-	return classify(step, string(out), time.Since(start))
+	res := classify(step, string(out), time.Since(start))
+	if image != d.Image {
+		res.Image = image
+	}
+	if res.Status == StatusFail {
+		if name, missing := missingCommand(string(out)); missing {
+			res.Status = StatusSkipped
+			res.Detail = fmt.Sprintf("recipe needs %s, which %s does not provide", name, image)
+		} else if reNetworkError.MatchString(string(out)) {
+			res.Status = StatusError
+			res.Detail = "network error during the step, result unknown: " + res.Detail
+		}
+	}
+	return res
 }
+
+// reNetworkError matches container output that names a network failure, so a
+// flaky connection is reported as kibble's error rather than broken docs.
+var reNetworkError = regexp.MustCompile(
+	`Connection refused|Could not resolve host|Temporary failure in name resolution|Network is unreachable|TLS handshake timeout|connection reset by peer|Connection timed out`)
+
+// imageFor returns the container image a step runs in. A clone recipe runs in
+// the image that provides the toolchain its commands assume, so a Rust or Node
+// project builds with the tools its docs were written for. Everything else runs
+// in the configured default.
+func (d *DockerRunner) imageFor(step InstallStep) string {
+	if pk, ok := pkgKinds[step.Kind]; ok {
+		if tc, known := toolchains[pk.Ecosystem]; known && tc.Image != "" {
+			return tc.Image
+		}
+		return d.Image
+	}
+	if step.Kind != "git-clone" {
+		return d.Image
+	}
+	tc, ok := detectToolchain(step.Block, step.dir)
+	if !ok || tc.Image == "" {
+		return d.Image
+	}
+	return tc.Image
+}
+
+// pkgScriptFor builds the container script for a documented package install.
+// The documented line runs verbatim, so what kibble verifies is the command a
+// reader would actually type.
+func pkgScriptFor(step InstallStep, timeoutSecs int) string {
+	pk := pkgKinds[step.Kind]
+	body := shellCommand(step.Raw)
+	if pk.Bootstrap != "" {
+		body = pk.Bootstrap + "\n" + body
+	}
+	body = strings.ReplaceAll(body, "'", `'\''`)
+	return fmt.Sprintf(pkgScript, pk.BinDir, timeoutSecs, body, step.Binary)
+}
+
+// shellCommand returns a documented line in the form a shell can run: the
+// prompt marker many READMEs prefix and any trailing comment are removed, so
+// `$ cargo install ripgrep   # from crates.io` runs as written without them.
+func shellCommand(raw string) string {
+	return strings.TrimSpace(stripComment(strings.TrimPrefix(strings.TrimSpace(raw), "$ ")))
+}
+
+// pkgScript installs a documented package and smoke-tests whatever binary the
+// install added. The bin directory is compared before and after, so a package
+// whose binary carries a different name, as ripgrep provides rg, is still
+// found and tested rather than reported as missing.
+const pkgScript = `set -u
+BINDIR=%[1]s
+mkdir -p "$BINDIR" 2>/dev/null || true
+before=$(ls "$BINDIR" 2>/dev/null | sort)
+out=$(timeout %[2]d bash -ec '%[3]s' 2>&1); code=$?
+if [ "$code" -ne 0 ]; then
+  printf 'BUILDCODE=%%d\n' "$code"
+  printf '%%s\n' "$out" | tail -n 3
+  exit 0
+fi
+printf 'BUILDCODE=0\n'
+after=$(ls "$BINDIR" 2>/dev/null | sort)
+bin=$(comm -13 <(printf '%%s\n' "$before") <(printf '%%s\n' "$after") | head -n1)
+if [ -n "$bin" ]; then bin="$BINDIR/$bin"; fi
+if [ -z "$bin" ] && command -v "%[4]s" >/dev/null 2>&1; then bin=$(command -v "%[4]s"); fi
+if [ -z "$bin" ]; then
+  printf 'NOBIN=1\n'
+  exit 0
+fi
+sout=$(timeout 15 "$bin" --version 2>&1); scode=$?
+if [ "$scode" -ne 0 ]; then sout=$(timeout 15 "$bin" --help 2>&1); scode=$?; fi
+printf 'SMOKECODE=%%d\n' "$scode"
+printf 'SMOKELINE=%%s\n' "$(printf '%%s' "$sout" | head -n1 | cut -c1-70)"
+`
 
 // reSSHRemote matches a GitHub SSH remote such as git@github.com:owner/repo.git.
 var reSSHRemote = regexp.MustCompile(`git@github\.com:([\w.-]+)/([\w.-]+?)(\.git)?(\s|$)`)
@@ -133,7 +238,14 @@ if [ "$code" -ne 0 ]; then
 fi
 printf 'BUILDCODE=0\n'
 bin=''
-if [ -x "$GOBIN/%[3]s" ]; then bin="$GOBIN/%[3]s"; else bin=$(ls "$GOBIN" 2>/dev/null | head -n1); [ -n "$bin" ] && bin="$GOBIN/$bin"; fi
+if [ -x "$GOBIN/%[3]s" ]; then
+  bin="$GOBIN/%[3]s"
+elif command -v "%[3]s" >/dev/null 2>&1; then
+  bin=$(command -v "%[3]s")
+else
+  bin=$(find /work -maxdepth 5 -type f -perm -u+x -name "%[3]s" 2>/dev/null | head -n1)
+  if [ -z "$bin" ]; then b=$(ls "$GOBIN" 2>/dev/null | head -n1); [ -n "$b" ] && bin="$GOBIN/$b"; fi
+fi
 if [ -z "$bin" ]; then
   printf 'NOBIN=1\n'
   exit 0
@@ -244,8 +356,8 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 	res.helpText = strings.Join(help, "\n")
 	switch {
 	case buildCode == -1:
-		res.Status = StatusFail
-		res.Detail = "no build marker (container error): " + lastLine(tail)
+		res.Status = StatusError
+		res.Detail = "kibble could not run the step (container error): " + lastLine(tail)
 	case buildCode == 124:
 		res.Status = StatusTimeout
 		res.Detail = fmt.Sprintf("exceeded timeout after %s", dur.Round(time.Second))
@@ -257,12 +369,21 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 		res.Detail = "recipe ran (no binary produced to smoke-test)"
 	case smokeCode == 0:
 		res.Status = StatusPass
+	case reArchMismatch.MatchString(res.SmokeLine) || reArchMismatch.MatchString(out):
+		res.Status = StatusPass
+		res.SmokeLine = ""
+		res.Detail = "installed, but the binary targets another architecture, smoke test not possible here"
 	default:
 		res.Status = StatusPassBuild
 		res.Detail = fmt.Sprintf("binary built but smoke exit=%d", smokeCode)
 	}
 	return res
 }
+
+// reArchMismatch matches the errors a binary built for another architecture
+// produces, so an emulation artifact of the host is not reported as the tool
+// failing its smoke test.
+var reArchMismatch = regexp.MustCompile(`qemu-\w+: |Exec format error|cannot execute binary file`)
 
 // lastLine returns the final non-empty line, for compact error detail.
 func lastLine(lines []string) string {

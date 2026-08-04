@@ -45,6 +45,7 @@ func reportJSON(w io.Writer, results []Result) {
 		Status  string    `json:"status"`
 		Seconds int       `json:"seconds"`
 		Module  string    `json:"module,omitempty"`
+		Image   string    `json:"image,omitempty"`
 		Smoke   string    `json:"smoke,omitempty"`
 		Detail  string    `json:"detail,omitempty"`
 		Steps   []stepRow `json:"steps,omitempty"`
@@ -54,7 +55,8 @@ func reportJSON(w io.Writer, results []Result) {
 		out := row{
 			Repo: r.Step.Repo, Kind: r.Step.Kind, Status: string(r.Status),
 			Seconds: int(r.Duration.Round(time.Second).Seconds()),
-			Module:  r.Step.Module, Smoke: r.SmokeLine, Detail: r.Detail,
+			Module:  r.Step.Module, Image: r.Image,
+			Smoke: r.SmokeLine, Detail: r.Detail,
 		}
 		if r.example != nil {
 			for _, s := range r.example.Steps {
@@ -84,9 +86,13 @@ func reportTable(w io.Writer, results []Result) {
 		if r.Detail != "" {
 			detail = r.Detail
 		}
+		detail = truncate(detail, 54)
+		if r.Image != "" {
+			detail += fmt.Sprintf("  (%s)", r.Image)
+		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			r.Step.Repo, r.Step.Kind, r.Status,
-			r.Duration.Round(time.Second), truncate(detail, 54))
+			r.Duration.Round(time.Second), detail)
 		switch r.Status {
 		case StatusPass:
 			pass++
