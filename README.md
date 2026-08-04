@@ -29,8 +29,17 @@ reports which steps a brand-new user could actually complete.
 - Extracts install commands from fenced, inline, and indented code, so a step written
   inline in prose is not missed.
 - Runs each `go install` in a clean `golang` container from zero.
+- Runs documented package installs the same way, verbatim as written:
+  `cargo install`, `npm install -g`, `yarn global add`, `pipx install`, and
+  `uv tool install`.
 - Runs each `git clone` recipe too: the clone and the build lines that follow it in the
   same code block, with GitHub SSH remotes rewritten to HTTPS for the keyless container.
+- Picks the image from the toolchain the step assumes, so a Rust project builds with
+  `cargo` and a Node project with `npm`, and finds the installed binary wherever that
+  toolchain puts it, even when it is not named after the package.
+- Never blames a document for a tool kibble lacks: a missing toolchain is a skip with a
+  reason, so a red result means the documented steps are broken, not that kibble was
+  short a compiler.
 - Verifies each documented brew formula exists in its tap, without installing it.
 - Smoke-tests the binary (`--version`, then `--help`) to confirm it runs, not just builds.
 - Checks that every flag and subcommand the README cites still exists in the binary's
@@ -71,7 +80,7 @@ myrepo  go-install  PASS    28s   myrepo version 1.4.0
 
 | Flag        | Default       | What                                     &nbsp; |
 | ----------- | ------------- | ----------------------------------------------- |
-| `-image`    | `golang:1.26` | Container image for clean-room installs.        |
+| `-image`    | `golang:1.26` | Fallback image when no toolchain is detected.   |
 | `-timeout`  | `240s`        | Per-step build timeout.                         |
 | `-workers`  | `3`           | Max concurrent installs.                        |
 | `-json`     | `false`       | Emit results as JSON to stdout.                 |
@@ -85,35 +94,58 @@ myrepo  go-install  PASS    28s   myrepo version 1.4.0
 kibble verifies `go install` steps end to end: the module resolves, it builds from zero,
 and the binary runs. A `git clone` step runs as the documented recipe, meaning the clone
 line plus the lines that follow it in the same code block, such as `cd` and
-`make install`, and whatever lands in the install directory is smoke-tested. A brew step
+`make install`, and whatever the recipe produces is smoke-tested. A brew step
 is verified against its tap, so a renamed or missing formula is caught, but nothing is
 installed. A build that exceeds the timeout is reported as `TIMEOUT`, never as a failure,
 so a slow network does not fail a build that would otherwise pass.
 
+A package install runs the documented line verbatim, so what kibble verifies is the
+command a reader would actually type, flags and all. The bin directory is compared before
+and after, so the binary is found even when the package does not name it: a `cargo
+install` of ripgrep is checked by running `rg`, and an `npm install -g` of typescript by
+running `tsc`. A local build such as `cargo install --path .` is left to the clone recipe,
+which already covers it.
+
+The image follows the step. Commands such as `cargo`, `npm`, and `pip` name the
+toolchain a project builds with, and the repository's own manifests settle what a bare
+`make install` leaves open, so a Rust or Python project is built with the tools its docs
+were written for instead of failing in a Go image. When nothing identifies a toolchain
+the run falls back to `-image`, and if the recipe then reaches for a command that is not
+there, the step is a `SKIP` naming the missing tool rather than a `FAIL`. A verdict about
+your docs is never a verdict about kibble's own gaps. When kibble itself cannot run a
+step, because the daemon is unreachable or an image will not pull, that is `ERROR`, kept
+separate from `FAIL` for the same reason.
+
 After a successful install, kibble compares the README against the binary itself. Every
-flag cited on a line that invokes the binary, and every subcommand those lines call, is
-checked against the collected `--help` output. A flag the binary no longer has, or a
-subcommand it rejects, is reported as `DRIFT`. The check is conservative: it only reads
-lines that invoke the binary by name, so flags shown for other tools do not count, and
-`DRIFT` fails the run only under `-strict`.
+flag cited on a line that invokes the binary, every flag documented in a markdown flag
+table, and every subcommand those lines call, is checked against the collected `--help`
+output. A flag the binary no longer has, or a subcommand it rejects, is reported as
+`DRIFT`. The check is conservative: command lines only count when they invoke the binary
+by name, so flags shown for other tools do not count, and `DRIFT` fails the run only
+under `-strict`. kibble runs this check on its own README, so the flag table above rots
+loudly, not silently.
 
 ## Examples
 
 An install that builds is only half the promise. The other half is the quickstart: the
-lines a new user actually types next. kibble replays them. After installing the binary,
-it copies the repository into the container and runs the README's example blocks in one
-session, in document order, so files and environment carry between blocks the way they do
-in a real terminal. A block that no longer works, a flag that changed, a command that
+lines a new user actually types next. kibble replays them. After running the documented
+install, whichever ecosystem it belongs to, it copies the repository into the container
+and runs the README's example blocks in one session, in document order, so files and
+environment carry between blocks the way they do in a real terminal. The session verifies
+the documented tool actually landed on PATH before replaying anything, and a line that
+calls a documented tool the install does not provide, such as a conda alternative next to
+a cargo install, is skipped rather than failed. A block that no longer works, a flag that changed, a command that
 prints an error where the docs promised output, all fail as `example` in CI.
 
 The judgment of which lines to run is deterministic and conservative, because a check
 that cries wolf is worse than no check. A line is skipped, never failed, when it needs
 something a clean container cannot honestly provide: a placeholder the reader must fill
 in (`<api-key>`, `age1bob...`), an interactive sign-in, a terminal, an API key, a local
-server, a file the docs reference but never create, or a subcommand that opens a shell or
-serves forever. Skips are reported with their reason, so the coverage is honest about what
-it did and did not run. A command the docs say exits nonzero, such as a linter that fails
-when it finds something, is recognized and passes on that exit.
+server, a file the docs reference but never create, a variable such as `$HISTFILE` that
+only an interactive shell sets, or a subcommand that opens a shell or serves forever.
+Skips are reported with their reason, so the coverage is honest about what it did and
+did not run. A command the docs say exits nonzero, such as a linter that fails when it
+finds something, is recognized and passes on that exit.
 
 When the heuristics cannot settle a call, a `.kibble.yml` at the repository root does.
 It writes fixtures with real contents, exports environment, substitutes placeholder text,
@@ -141,7 +173,10 @@ examples:
 
 Preview the plan without running anything with `-plan`, which prints, per repository, the
 exact lines kibble would run, the ones it would skip and why, and the fixtures and
-packages the session needs. Turn the whole layer off with `-examples=false`.
+packages the session needs. The preview is the floor, not the ceiling: at run time the
+session may downgrade more lines to skips for reasons only execution can see, such as a
+command that turns out to need a terminal. Turn the whole layer off with
+`-examples=false`.
 
 ## Use it in CI
 
@@ -164,10 +199,18 @@ jobs:
 
 The runner already has Docker, so kibble spins its clean-room containers there.
 
+In a workflow, kibble speaks GitHub natively. A failed install or example is annotated on
+the exact README line that broke, so it shows up inline in the pull request the way a
+failing test does. Doc drift becomes a warning annotation, and the job summary gets the
+full results table, readable without opening a log.
+
 ## Roadmap
 
 - Install brew formulas for real instead of only verifying they exist.
-- JUnit XML output for CI annotations.
+- JUnit XML output for CI systems that are not GitHub.
+- Optional LLM assist for the calls the heuristics cannot settle, such as classifying an
+  ambiguous block as command or illustration. Strictly additive: the engine stays
+  deterministic, decides every pass and fail itself, and is fully useful with zero keys.
 
 ## Why "kibble"
 
