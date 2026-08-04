@@ -173,7 +173,7 @@ var (
 	// trail off in an ellipsis.
 	rePlaceholder = regexp.MustCompile(
 		`<[^<>\s]+>|(^|[^${])\{[A-Za-z][A-Za-z0-9_]*\}|(^|\s)\[[^\[\]\s]+\](\s|$)` +
-			`|\bxxxx\b|\*\*\*|\bpath/to/|\.\.\.(\s|$)`)
+			`|\bxxxx\b|\*\*\*|\bpath/to/|(^|[^/])\.\.\.(\s|$)`)
 	// reLogin matches a command that starts an interactive sign-in.
 	reLogin = regexp.MustCompile(`\b(login|signin|sign-in|logout)\b`)
 	// reGitState matches a git invocation that needs history, tags, or a
@@ -198,7 +198,8 @@ var (
 	reDotSlashArg = regexp.MustCompile(`^\./[\w][\w./+-]*$`)
 	// reCreatedToken matches a token a line creates: a redirect target, an
 	// -o argument, or the arguments of mkdir, touch, cp, or mv.
-	reCreatedToken = regexp.MustCompile(`>{1,2}\s*([^\s&|;]+)|\s-o\s+(\S+)`)
+	reCreatedToken = regexp.MustCompile(
+		`>{1,2}\s*([^\s&|;]+)|\s-o\s+(\S+)|--?(?:output|outfile|dest|out|o)[= ]([^\s&|;]+)`)
 	// reAssignPrefix matches a leading VAR= or export VAR= assignment and
 	// captures the variable name.
 	reAssignPrefix = regexp.MustCompile(`^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=`)
