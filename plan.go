@@ -515,6 +515,9 @@ func (pl *planner) skipReason(flat string) string {
 	if reForeignShellFile.MatchString(flat) {
 		return "written for another shell, and the session runs bash"
 	}
+	if sh := foreignShellFlag(flat); sh != "" {
+		return fmt.Sprintf("asks for the %s shell, which the container does not have", sh)
+	}
 	if reKernelPath.MatchString(flat) {
 		return "touches kernel interfaces the container does not expose"
 	}
@@ -544,13 +547,16 @@ func (pl *planner) skipReason(flat string) string {
 // starts with a letter or underscore.
 var reVarExpansion = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?`)
 
-// containerVars are the variables the container itself provides, so expanding
-// one is honest even though no documented line assigns it.
+// containerVars are the variables the session provides, so expanding one is
+// honest even though no documented line assigns it: the container's own
+// environment, plus the editor and git variables the session script exports.
 var containerVars = map[string]bool{
 	"HOME": true, "PATH": true, "PWD": true, "OLDPWD": true, "SHLVL": true,
-	"HOSTNAME": true, "TERM": true, "LANG": true, "TMPDIR": true,
+	"HOSTNAME": true, "TERM": true, "LANG": true, "TMPDIR": true, "USER": true,
 	"GOPATH": true, "GOBIN": true, "GOROOT": true,
 	"CARGO_HOME": true, "RUSTUP_HOME": true,
+	"EDITOR": true, "VISUAL": true, "GIT_EDITOR": true, "GIT_TERMINAL_PROMPT": true,
+	"DEBIAN_FRONTEND": true,
 }
 
 // unsetVar returns the first variable a line expands that nothing in the
@@ -593,8 +599,28 @@ func localAssignments(flat string) map[string]bool {
 var reFishSource = regexp.MustCompile(`\|\s*source\s*$`)
 
 // reForeignShellFile matches loading a file whose extension names another
-// shell: nushell, fish, PowerShell, xonsh. bash cannot execute any of them.
-var reForeignShellFile = regexp.MustCompile(`(^|\s)(source|\.)\s+\S+\.(nu|fish|ps1|xsh)\b`)
+// shell: nushell, fish, PowerShell, xonsh, tcsh, csh, elvish. bash cannot
+// execute any of them.
+var reForeignShellFile = regexp.MustCompile(`(^|\s)(source|\.)\s+\S+\.(nu|fish|ps1|xsh|tcsh|csh|elv)\b`)
+
+// foreignShells are shells a documented `--shell NAME` flag can name that the
+// session's bash image does not provide, as in a benchmark run under zsh.
+var foreignShells = map[string]bool{
+	"zsh": true, "fish": true, "tcsh": true, "csh": true, "ksh": true,
+	"elvish": true, "nu": true, "nushell": true, "pwsh": true, "powershell": true,
+}
+
+// reShellFlag captures the argument of a documented --shell flag.
+var reShellFlag = regexp.MustCompile(`--shell[= ]([A-Za-z]+)`)
+
+// foreignShellFlag returns the shell a line asks for through --shell when that
+// shell is not the bash the session provides, or empty otherwise.
+func foreignShellFlag(flat string) string {
+	if m := reShellFlag.FindStringSubmatch(flat); m != nil && foreignShells[m[1]] {
+		return m[1]
+	}
+	return ""
+}
 
 // reKernelPath matches a reference to /proc or /sys, kernel interfaces a
 // container cannot honestly provide, as in a benchmark dropping page caches.
@@ -643,6 +669,19 @@ var placeholderWords = map[string]bool{
 	"query": true, "regex": true, "searchterm": true, "yourfile": true,
 }
 
+// upperPlaceholderWords are all-caps stand-ins docs use for a value the reader
+// supplies, beyond the ones the noun-suffix rule already catches.
+var upperPlaceholderWords = map[string]bool{
+	"INPUT": true, "OUTPUT": true, "SRC": true, "DEST": true, "URL": true,
+	"PATTERN": true, "QUERY": true, "TARGET": true, "SOURCE": true, "ARG": true,
+}
+
+// reUpperPlaceholder matches an all-caps token ending in a placeholder noun,
+// the SOMEFILE, MYDIR, CONFIGPATH convention docs use for a reader-supplied
+// value. Acronyms such as GET or TCP do not end in these nouns, so they are
+// left to run.
+var reUpperPlaceholder = regexp.MustCompile(`^[A-Z][A-Z0-9_]*(FILE|DIR|DIRECTORY|PATH|NAME)$`)
+
 // bareWordPlaceholder returns the first positional token that is a
 // conventional placeholder word, or empty when none is. The command word
 // itself is exempt, since a tool could be named pattern.
@@ -653,7 +692,7 @@ func bareWordPlaceholder(flat string) string {
 		if i == 0 || strings.HasPrefix(tok, "-") {
 			continue
 		}
-		if placeholderWords[tok] {
+		if placeholderWords[tok] || upperPlaceholderWords[tok] || reUpperPlaceholder.MatchString(tok) {
 			return tok
 		}
 	}
