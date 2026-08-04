@@ -196,6 +196,12 @@ var (
 		`^\.?/?[\w][\w./+-]*\.(md|txt|yaml|yml|json|csv|ics|toml|ini|env|conf|cfg|xml|html|wav|png|jpg|gif|rb|py|js|go|rs|ts|tsx|jsx|c|h|cpp|hpp|java|kt|swift|sh|pl|lua|zig|pem|crt|key|der)$`)
 	// reDotSlashArg matches a whole ./-prefixed path token of any shape.
 	reDotSlashArg = regexp.MustCompile(`^\./[\w][\w./+-]*$`)
+	// reHomeFileArg matches a ~/-prefixed file token with a known extension, so
+	// a documented read of a home config the docs never create is skipped
+	// rather than failed. The home directory is outside the repo, so such a
+	// file is never faked, only reported as absent.
+	reHomeFileArg = regexp.MustCompile(
+		`^~/[\w.][\w./+-]*\.(md|txt|yaml|yml|json|toml|ini|conf|cfg|env|sh|rc)$`)
 	// reCreatedToken matches a token a line creates: a redirect target, an
 	// -o argument, or the arguments of mkdir, touch, cp, or mv.
 	reCreatedToken = regexp.MustCompile(
@@ -634,6 +640,9 @@ var reKernelPath = regexp.MustCompile(`(^|[\s'"=])/(proc|sys)/`)
 func (pl *planner) missingGlob(flat string) string {
 	for _, tok := range strings.Fields(stripComment(flat)) {
 		tok = strings.Trim(tok, `'"`)
+		if strings.HasPrefix(tok, "-") || strings.ContainsAny(tok, ":,") {
+			continue
+		}
 		star := strings.Index(tok, "*")
 		if star <= 0 || !strings.Contains(tok[:star], "/") {
 			continue
@@ -848,6 +857,12 @@ func (pl *planner) missingFile(flat string) string {
 			tok = tok[j+1:]
 		}
 		tok = strings.TrimPrefix(tok, "@")
+		if strings.HasPrefix(tok, "~/") && reHomeFileArg.MatchString(tok) {
+			if pl.created[tok] || createsToken(flat, tok) {
+				continue
+			}
+			return tok
+		}
 		if !reFileArg.MatchString(tok) && !reDotSlashArg.MatchString(tok) {
 			continue
 		}

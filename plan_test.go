@@ -260,6 +260,12 @@ func TestSkipHeuristics(t *testing.T) {
 	}, { // Test 11: a foreign shell requested by flag skips.
 		Markdown: "```sh\ntool --shell zsh 'echo hi'\n```\n",
 		WantSkip: "zsh shell",
+	}, { // Test 12: a home config the docs never create is skipped.
+		Markdown: "```sh\ntool --config ~/.config/tool/config.toml\n```\n",
+		WantSkip: "references ~/.config/tool/config.toml",
+	}, { // Test 13: a rule spec inside a flag is not a missing file glob.
+		Markdown: "```sh\ntool --exclude-rules=\"cmd/.*:G204\" ./...\n```\n",
+		WantRun:  true,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
