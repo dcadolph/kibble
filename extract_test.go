@@ -122,6 +122,13 @@ func TestInstallRecipeCapture(t *testing.T) {
 	}, { // Test 4: capture stops before a documented teardown line.
 		In:        "```sh\ngit clone https://github.com/x/y\ncd y\nmake install\nmake uninstall\n```\n",
 		WantBlock: []string{"git clone https://github.com/x/y", "cd y", "make install"},
+	}, { // Test 5: in a prompted block, printed output is not a command.
+		In: "```\n$ git clone https://github.com/x/y\n$ cd y\n$ cargo build --release\n" +
+			"$ ./target/release/y --version\n0.1.3\n```\n",
+		WantBlock: []string{
+			"git clone https://github.com/x/y", "cd y", "cargo build --release",
+			"./target/release/y --version",
+		},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -167,6 +174,90 @@ func TestBinaryName(t *testing.T) {
 			t.Parallel()
 			if diff := cmp.Diff(test.Want, binaryName(test.In)); diff != "" {
 				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestClassifyPackage checks that documented package installs are recognized
+// with the right kind and target, and that a local build is left to the clone
+// recipe rather than treated as a package install.
+func TestClassifyPackage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In       string
+		WantKind string
+		WantPkg  string
+		WantOK   bool
+	}{{ // Test 0: a crate install.
+		In: "cargo install ripgrep", WantOK: true,
+		WantKind: "cargo-install", WantPkg: "ripgrep",
+	}, { // Test 1: flags before the crate do not hide it.
+		In: "cargo install --locked ripgrep", WantOK: true,
+		WantKind: "cargo-install", WantPkg: "ripgrep",
+	}, { // Test 2: a local build belongs to the clone recipe.
+		In: "cargo install --path .", WantOK: false,
+	}, { // Test 3: a global node install.
+		In: "npm install -g prettier", WantOK: true,
+		WantKind: "npm-install", WantPkg: "prettier",
+	}, { // Test 4: the short form counts too.
+		In: "npm i -g prettier", WantOK: true,
+		WantKind: "npm-install", WantPkg: "prettier",
+	}, { // Test 5: a project dependency install is not a tool install.
+		In: "npm install prettier", WantOK: false,
+	}, { // Test 6: yarn spells global differently.
+		In: "yarn global add prettier", WantOK: true,
+		WantKind: "npm-install", WantPkg: "prettier",
+	}, { // Test 7: a pipx install.
+		In: "pipx install black", WantOK: true,
+		WantKind: "pipx-install", WantPkg: "black",
+	}, { // Test 8: a uv tool install.
+		In: "uv tool install ruff", WantOK: true,
+		WantKind: "uv-install", WantPkg: "ruff",
+	}, { // Test 9: sudo does not hide the install.
+		In: "sudo npm install -g prettier", WantOK: true,
+		WantKind: "npm-install", WantPkg: "prettier",
+	}, { // Test 10: an unrelated line matches nothing.
+		In: "go build ./...", WantOK: false,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			kind, pkg, ok := classifyPackage(test.In)
+			if diff := cmp.Diff(test.WantOK, ok); diff != "" {
+				t.Errorf("ok mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantKind, kind); diff != "" {
+				t.Errorf("kind mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantPkg, pkg); diff != "" {
+				t.Errorf("package mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestPackageBinary checks the fallback binary name guessed for a package,
+// used only when the install adds nothing detectable to the bin directory.
+func TestPackageBinary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In       string
+		WantName string
+	}{{ // Test 0: a plain package keeps its name.
+		In: "prettier", WantName: "prettier",
+	}, { // Test 1: a scope is not part of the binary name.
+		In: "@biomejs/biome", WantName: "biome",
+	}, { // Test 2: a pinned version is not part of the name.
+		In: "prettier@3.3.3", WantName: "prettier",
+	}, { // Test 3: a scoped and pinned request reduces to the name.
+		In: "@biomejs/biome@1.8.0", WantName: "biome",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(test.WantName, packageBinary(test.In)); diff != "" {
+				t.Errorf("binary mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
