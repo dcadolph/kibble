@@ -80,6 +80,20 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 			}
 		}
 	}
+	// A flag table documents the binary without invoking it, so its rows are
+	// attributed to the repo's single binary when there is exactly one.
+	if len(binaries) == 1 {
+		bin := binaries[0]
+		for _, name := range tableFlags(markdown) {
+			if key := bin + "|" + name; !flagSeen[key] {
+				flagSeen[key] = true
+				if byBin[bin] == nil {
+					byBin[bin] = &Usage{}
+				}
+				byBin[bin].Flags = append(byBin[bin].Flags, name)
+			}
+		}
+	}
 	// Subcommands cited with flags come first, so the probe cap never cuts a
 	// subcommand whose flags need verifying.
 	for bin, use := range byBin {
@@ -88,6 +102,22 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 		})
 	}
 	return byBin
+}
+
+// reTableFlagRow matches a markdown table row whose first cell is a single
+// backticked flag, the common shape of a README flag table.
+var reTableFlagRow = regexp.MustCompile("^\\|\\s*`(--?[A-Za-z][A-Za-z0-9_-]+)`\\s*\\|")
+
+// tableFlags returns the flags a README documents in markdown tables, so a
+// flag table drifts the same way a cited command line does.
+func tableFlags(markdown string) []string {
+	var out []string
+	for _, line := range strings.Split(markdown, "\n") {
+		if m := reTableFlagRow.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			out = append(out, strings.TrimLeft(m[1], "-"))
+		}
+	}
+	return out
 }
 
 // stripComment removes a trailing shell comment from a code line.
