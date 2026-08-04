@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"time"
 )
@@ -84,6 +85,9 @@ func main() {
 	results = append(results, flagChecks(results)...)
 
 	report(os.Stdout, results, cfg.JSON)
+	if os.Getenv("GITHUB_ACTIONS") == "true" {
+		githubOutput(os.Stdout, results)
+	}
 	if anyFail(results, cfg.Strict) {
 		os.Exit(1)
 	}
@@ -116,15 +120,10 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan) {
 			continue
 		}
 		steps := ex.Extract(repo, md)
-		var bins, mods []string
-		for _, s := range steps {
-			if s.Kind == "go-install" {
-				bins = append(bins, s.Binary)
-				mods = append(mods, s.Module)
-			}
-		}
+		bins, installs := sessionInstalls(p, steps)
 		usage := extractUsage(bins, md)
 		for i := range steps {
+			steps[i].dir = p
 			if steps[i].Kind == "go-install" {
 				steps[i].Usage = usage[steps[i].Binary]
 			}
@@ -133,7 +132,7 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan) {
 		if !examples {
 			continue
 		}
-		if step, plan := exampleStepFor(repo, p, md, bins, mods); plan != nil {
+		if step, plan := exampleStepFor(repo, p, md, sessionBinaries(repo, bins, installs), installs); plan != nil {
 			plans = append(plans, plan)
 			if step != nil {
 				out = append(out, *step)
@@ -143,10 +142,93 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan) {
 	return out, plans
 }
 
+// sessionInstalls returns the documented binaries and the installs that put
+// them on PATH. Every install kind counts, not only Go, so a Rust or Node
+// project's examples run against the tool its own README installs.
+func sessionInstalls(dir string, steps []InstallStep) ([]string, []PlanInstall) {
+	var bins []string
+	var all []PlanInstall
+	for _, s := range steps {
+		var in PlanInstall
+		switch {
+		case s.Kind == "go-install":
+			in = PlanInstall{Cmd: "go install " + s.Module, Ecosystem: "go", binary: s.Binary}
+		case pkgKinds[s.Kind].Ecosystem != "":
+			pk := pkgKinds[s.Kind]
+			in = PlanInstall{
+				Cmd: shellCommand(s.Raw), Ecosystem: pk.Ecosystem,
+				binary: s.Binary, bootstrap: pk.Bootstrap,
+			}
+		default:
+			continue
+		}
+		all = append(all, in)
+		if s.Binary != "" && !slices.Contains(bins, s.Binary) {
+			bins = append(bins, s.Binary)
+		}
+	}
+	return bins, oncePerBinary(sameEcosystem(all, dir))
+}
+
+// sessionBinaries pads the documented binaries with the repository's own name
+// for the example session, because a package rarely names its binary, as
+// fd-find provides fd. The padded name is a PATH candidate only; usage
+// extraction keeps the unpadded list so a flag table attributes correctly.
+func sessionBinaries(repo string, bins []string, installs []PlanInstall) []string {
+	if len(installs) > 0 && reSimpleWord.MatchString(repo) && !slices.Contains(bins, repo) {
+		return append(append([]string{}, bins...), repo)
+	}
+	return bins
+}
+
+// oncePerBinary drops installs that provide a tool an earlier install already
+// provides. A project documenting uv, pip, and pipx installs of the same tool
+// is listing three routes to one binary, and the session needs one.
+func oncePerBinary(installs []PlanInstall) []PlanInstall {
+	seen := map[string]bool{}
+	var out []PlanInstall
+	for _, in := range installs {
+		if in.binary != "" && seen[in.binary] {
+			continue
+		}
+		seen[in.binary] = true
+		out = append(out, in)
+	}
+	return out
+}
+
+// sameEcosystem narrows documented installs to one toolchain, since a README
+// offering both a cargo and an npm install is offering alternatives and a
+// session needs only one. The repository's own manifests choose, so the tool
+// is installed the way the project is built; otherwise the first install wins.
+// Several installs of the chosen toolchain are all kept, since a project that
+// documents two binaries needs both.
+func sameEcosystem(installs []PlanInstall, dir string) []PlanInstall {
+	if len(installs) == 0 {
+		return nil
+	}
+	want := installs[0].Ecosystem
+	if eco, ok := ecosystemFromManifests(dir); ok {
+		for _, in := range installs {
+			if in.Ecosystem == eco {
+				want = eco
+				break
+			}
+		}
+	}
+	var out []PlanInstall
+	for _, in := range installs {
+		if in.Ecosystem == want {
+			out = append(out, in)
+		}
+	}
+	return out
+}
+
 // exampleStepFor builds a repo's example plan and, when it has steps, the
 // install step that runs it. A bad .kibble.yml is reported and examples are
 // dropped for the repo, so a config typo cannot pass as a green check.
-func exampleStepFor(repo, dir, md string, bins, mods []string) (*InstallStep, *Plan) {
+func exampleStepFor(repo, dir, md string, bins []string, installs []PlanInstall) (*InstallStep, *Plan) {
 	cfg, err := loadExamplesConfig(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "skip %s examples: bad .kibble.yml: %v\n", repo, err)
@@ -155,7 +237,7 @@ func exampleStepFor(repo, dir, md string, bins, mods []string) (*InstallStep, *P
 	if cfg != nil && cfg.Disable {
 		return nil, nil
 	}
-	plan := buildPlan(repo, dir, md, bins, mods, cfg)
+	plan := buildPlan(repo, dir, md, bins, installs, cfg)
 	if len(plan.Steps) == 0 {
 		return nil, plan
 	}
@@ -218,10 +300,11 @@ func hasRunnable(steps []InstallStep) bool {
 }
 
 // anyFail reports whether the run should exit non-zero. A build failure always
-// counts. In strict mode, timeouts, smoke-test failures, and doc drift count too.
+// counts, and so does an error, since kibble could not do its job and CI should
+// notice. In strict mode, timeouts, smoke-test failures, and doc drift count too.
 func anyFail(results []Result, strict bool) bool {
 	for _, r := range results {
-		if r.Status == StatusFail {
+		if r.Status == StatusFail || r.Status == StatusError {
 			return true
 		}
 		if strict && (r.Status == StatusTimeout || r.Status == StatusPassBuild || r.Status == StatusDrift) {

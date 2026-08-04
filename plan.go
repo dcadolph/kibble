@@ -16,8 +16,8 @@ import (
 type Plan struct {
 	// Repo is the repository directory name.
 	Repo string `json:"repo"`
-	// Modules are the go modules installed to put the binaries on PATH.
-	Modules []string `json:"modules,omitempty"`
+	// Installs are the documented installs run to put the binaries on PATH.
+	Installs []PlanInstall `json:"installs,omitempty"`
 	// Binaries are the documented binaries the session installs.
 	Binaries []string `json:"binaries,omitempty"`
 	// Packages are Debian packages installed before any step runs.
@@ -30,6 +30,21 @@ type Plan struct {
 	Steps []PlanStep `json:"steps,omitempty"`
 	// Excluded counts code blocks that are not shell recipes.
 	Excluded int `json:"excluded,omitempty"`
+}
+
+// PlanInstall is one documented install the session runs before replaying
+// examples, so the binary the examples call is on PATH.
+type PlanInstall struct {
+	// Cmd is the shell command that performs the install.
+	Cmd string `json:"cmd"`
+	// Ecosystem is the toolchain the command needs, empty when it is Go and
+	// the configured default image already provides it.
+	Ecosystem string `json:"ecosystem,omitempty"`
+	// binary is the tool this install is expected to provide. It exists to
+	// drop alternative installs of the same tool and is not part of output.
+	binary string
+	// bootstrap installs the package manager itself when the image lacks it.
+	bootstrap string
 }
 
 // Fixture is a file the executor writes into the session workdir.
@@ -63,6 +78,8 @@ type PlanLine struct {
 	Skip string `json:"skip,omitempty"`
 	// NonzeroOK accepts a nonzero exit as documented behavior.
 	NonzeroOK bool `json:"nonzeroOk,omitempty"`
+	// Line is the 1-based README line the command sits on, 0 when unknown.
+	Line int `json:"line,omitempty"`
 }
 
 // Runnable reports whether any line of the step actually runs.
@@ -116,6 +133,33 @@ var interactiveSubs = map[string]bool{
 	"tui": true, "dashboard": true, "repl": true, "console": true, "web": true,
 }
 
+// findingSubs are subcommands whose documented behavior is to exit nonzero
+// when they find something, the way a linter fails a run it flags. A nonzero
+// exit from these is the tool working, not the docs breaking.
+var findingSubs = map[string]bool{
+	"check": true, "lint": true, "audit": true, "vet": true, "diff": true,
+	"format": true, "fmt": true,
+}
+
+// reAbsoluteCd captures the target of a cd into an absolute directory.
+var reAbsoluteCd = regexp.MustCompile(`(?:^|&&|;)\s*cd\s+(/\S*)`)
+
+// systemCd returns the absolute directory a line changes into when that
+// directory is one the docs assume exists on the reader's system, such as a
+// BSD ports tree. The session's own directories are exempt.
+func systemCd(flat string) string {
+	m := reAbsoluteCd.FindStringSubmatch(flat)
+	if m == nil {
+		return ""
+	}
+	for _, ok := range []string{"/work", "/tmp", "/root"} {
+		if m[1] == ok || strings.HasPrefix(m[1], ok+"/") {
+			return ""
+		}
+	}
+	return m[1]
+}
+
 // synthFixture is the body written for a fabricated fixture file.
 const synthFixture = `# Notes
 
@@ -127,9 +171,17 @@ var (
 	// rePlaceholder matches tokens a reader must replace before running:
 	// angle-bracket slots, xxxx runs, path/to/ stand-ins, and values that
 	// trail off in an ellipsis.
-	rePlaceholder = regexp.MustCompile(`<[^<>\s]+>|\bxxxx\b|\bpath/to/|\S\.\.\.(\s|$)`)
+	rePlaceholder = regexp.MustCompile(
+		`<[^<>\s]+>|(^|[^${])\{[A-Za-z][A-Za-z0-9_]*\}|(^|\s)\[[^\[\]\s]+\](\s|$)` +
+			`|\bxxxx\b|\*\*\*|\bpath/to/|\.\.\.(\s|$)`)
 	// reLogin matches a command that starts an interactive sign-in.
 	reLogin = regexp.MustCompile(`\b(login|signin|sign-in|logout)\b`)
+	// reGitState matches a git invocation that needs history, tags, or a
+	// remote. The session replays examples in a freshly initialized repo with
+	// no commits and no remotes, so these commands fail there even when the
+	// docs are right.
+	reGitState = regexp.MustCompile(
+		`\bgit\s+(-\S+\s+)*(fetch|pull|push|show|describe|log|rebase|merge|cherry-pick|revert|blame|bisect|shortlog|submodule)\b|\bgit\b[^|;&]*\b(origin|upstream)\b`)
 	// reLocalhost matches a reference to a service on the local machine,
 	// which a clean container does not have.
 	reLocalhost = regexp.MustCompile(`\blocalhost\b|127\.0\.0\.1`)
@@ -141,7 +193,7 @@ var (
 	// reFileArg matches a whole token that names a relative file with a
 	// known extension, so missing example files are caught before they run.
 	reFileArg = regexp.MustCompile(
-		`^\.?/?[\w][\w./+-]*\.(md|txt|yaml|yml|json|csv|ics|toml|ini|env|conf|cfg|xml|html|wav|png|jpg|gif|rb|py|js|go)$`)
+		`^\.?/?[\w][\w./+-]*\.(md|txt|yaml|yml|json|csv|ics|toml|ini|env|conf|cfg|xml|html|wav|png|jpg|gif|rb|py|js|go|rs|ts|tsx|jsx|c|h|cpp|hpp|java|kt|swift|sh|pl|lua|zig|pem|crt|key|der)$`)
 	// reDotSlashArg matches a whole ./-prefixed path token of any shape.
 	reDotSlashArg = regexp.MustCompile(`^\./[\w][\w./+-]*$`)
 	// reCreatedToken matches a token a line creates: a redirect target, an
@@ -160,8 +212,8 @@ var (
 // repo. binaries and modules come from the repo's go-install steps, dir is
 // the local checkout used to resolve file references, and cfg carries the
 // repo's .kibble.yml overrides, if any.
-func buildPlan(repo, dir, markdown string, binaries, modules []string, cfg *ExamplesConfig) *Plan {
-	p := &Plan{Repo: repo, Modules: modules, Binaries: binaries}
+func buildPlan(repo, dir, markdown string, binaries []string, installs []PlanInstall, cfg *ExamplesConfig) *Plan {
+	p := &Plan{Repo: repo, Installs: installs, Binaries: binaries}
 	pl := &planner{
 		plan:     p,
 		binaries: map[string]bool{},
@@ -169,6 +221,7 @@ func buildPlan(repo, dir, markdown string, binaries, modules []string, cfg *Exam
 		created:  map[string]bool{},
 		poisoned: map[string]bool{},
 		badVars:  map[string]bool{},
+		setVars:  map[string]bool{},
 		packages: map[string]bool{},
 		fixed:    map[string]bool{},
 		cfg:      cfg,
@@ -176,8 +229,17 @@ func buildPlan(repo, dir, markdown string, binaries, modules []string, cfg *Exam
 	for _, b := range binaries {
 		pl.binaries[b] = true
 	}
+	if len(installs) > 0 {
+		if b := documentedBinary(markdown, pl.binaries); b != "" {
+			pl.binaries[b] = true
+			p.Binaries = append(p.Binaries, b)
+		}
+	}
 	if cfg != nil {
 		p.Env = cfg.Env
+		for k := range cfg.Env {
+			pl.setVars[k] = true
+		}
 		p.Fixtures = append(p.Fixtures, cfg.Fixtures...)
 		for _, f := range cfg.Fixtures {
 			pl.created[f.Path] = true
@@ -243,6 +305,10 @@ type planner struct {
 	// badVars holds variables assigned by skipped lines; later lines that
 	// expand them skip instead of running with an empty value.
 	badVars map[string]bool
+	// setVars holds variables the session provides: those the config exports
+	// and those an earlier line assigned. A line expanding anything else is
+	// relying on a shell the container is not.
+	setVars map[string]bool
 	// packages collects Debian packages the session must install.
 	packages map[string]bool
 	// fixed tracks fixture paths already fabricated, to avoid duplicates.
@@ -284,7 +350,10 @@ func (pl *planner) addBlock(block codeBlock) {
 		ID:      fmt.Sprintf("b%d", len(pl.plan.Steps)+1),
 		Heading: block.Heading,
 	}
+	lineIn := sourceLineIndex(block)
+	shownErr := shownFailures(block)
 	nonzero := false
+	lostDir := false
 	for _, ln := range lines {
 		ln = pl.substituted(ln)
 		flat := flatten(ln)
@@ -296,19 +365,36 @@ func (pl *planner) addBlock(block codeBlock) {
 			}
 			continue
 		}
-		line := PlanLine{Cmd: ln}
+		line := PlanLine{Cmd: ln, Line: lineIn(ln)}
 		if reNonzeroNote.MatchString(trailingComment(flat)) {
 			line.NonzeroOK = true
 		} else if nonzero {
 			line.NonzeroOK = true
 			nonzero = false
 		}
+		if _, sub := invokedBinary(flat, pl.binaries); findingSubs[sub] {
+			line.NonzeroOK = true
+		}
+		if shownErr[strings.TrimSpace(flat)] {
+			line.NonzeroOK = true
+		}
 		line.Skip = pl.skipReason(flat)
+		if line.Skip == "" && lostDir {
+			line.Skip = "follows a skipped cd, so it would run in the wrong directory"
+		}
 		pl.applyRules(&line, &step, flat)
+		if line.Skip != "" && strings.HasPrefix(strings.TrimSpace(flat), "cd ") {
+			lostDir = true
+		}
+		if m := reAssignPrefix.FindStringSubmatch(flat); m != nil {
+			if line.Skip == "" {
+				pl.setVars[m[1]] = true
+			} else {
+				pl.badVars[m[1]] = true
+			}
+		}
 		if line.Skip == "" {
 			pl.recordCreated(flat)
-		} else if m := reAssignPrefix.FindStringSubmatch(flat); m != nil {
-			pl.badVars[m[1]] = true
 		}
 		step.Lines = append(step.Lines, line)
 	}
@@ -316,6 +402,54 @@ func (pl *planner) addBlock(block codeBlock) {
 		return
 	}
 	pl.plan.Steps = append(pl.plan.Steps, step)
+}
+
+// reShownError matches output a doc displays under a command to demonstrate
+// it failing, such as a usage screen or an error message.
+var reShownError = regexp.MustCompile(`^(USAGE:|usage:|[Ee]rror[: ])`)
+
+// shownFailures returns the commands of a prompted block whose displayed
+// output is an error. Docs sometimes show a command failing on purpose, to
+// teach why the corrected form that follows is needed, and the demonstrated
+// failure exiting nonzero is the document working as written.
+func shownFailures(block codeBlock) map[string]bool {
+	out := map[string]bool{}
+	current := ""
+	for _, raw := range block.Lines {
+		t := strings.TrimSpace(raw)
+		if strings.HasPrefix(t, "$ ") {
+			current = strings.TrimSpace(strings.TrimPrefix(t, "$ "))
+			continue
+		}
+		if current != "" && reShownError.MatchString(t) {
+			out[current] = true
+		}
+	}
+	return out
+}
+
+// sourceLineIndex returns a lookup from a prepared logical line back to its
+// 1-based README line. The prepared line may have lost a prompt marker or
+// gained continuation lines, so the match compares the first physical line
+// against each raw block line with the prompt stripped. Unmatched lines fall
+// back to the block's first line, and 0 means the block's position is unknown.
+func sourceLineIndex(block codeBlock) func(string) int {
+	return func(ln string) int {
+		if block.Line == 0 {
+			return 0
+		}
+		first := strings.TrimSpace(ln)
+		if i := strings.Index(first, "\n"); i >= 0 {
+			first = strings.TrimSpace(first[:i])
+		}
+		for i, raw := range block.Lines {
+			raw = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "$ "))
+			if raw == first {
+				return block.Line + i
+			}
+		}
+		return block.Line
+	}
 }
 
 // qualifies reports whether every command line of a block starts with a
@@ -369,15 +503,224 @@ func (pl *planner) skipReason(flat string) string {
 	if hasBareStdinDash(flat) {
 		return "reads stdin, which the session does not provide"
 	}
+	if reGitState.MatchString(flat) {
+		return "needs git history or a remote, which the fresh session repo lacks"
+	}
+	if dir := systemCd(flat); dir != "" {
+		return fmt.Sprintf("changes into %s, which only the reader's system has", dir)
+	}
+	if reFishSource.MatchString(flat) {
+		return "written for the fish shell, and the session runs bash"
+	}
+	if reForeignShellFile.MatchString(flat) {
+		return "written for another shell, and the session runs bash"
+	}
+	if reKernelPath.MatchString(flat) {
+		return "touches kernel interfaces the container does not expose"
+	}
+	if miss := pl.missingGlob(flat); miss != "" {
+		return fmt.Sprintf("globs %s, which the docs never create", miss)
+	}
+	if bin != "" && bareWordPlaceholder(flat) != "" {
+		return fmt.Sprintf("docs use %q as a placeholder the reader must fill in",
+			bareWordPlaceholder(flat))
+	}
 	for v := range pl.badVars {
 		if strings.Contains(flat, "$"+v) || strings.Contains(flat, "${"+v+"}") {
 			return fmt.Sprintf("expands $%s, which a skipped line was to set", v)
 		}
 	}
+	if v := pl.unsetVar(flat); v != "" {
+		return fmt.Sprintf("expands $%s, which the docs never set", v)
+	}
 	if path := pl.missingFile(flat); path != "" {
 		return fmt.Sprintf("references %s, which the docs never create", path)
 	}
 	return ""
+}
+
+// reVarExpansion matches a shell variable expansion such as $HOME or ${HOME}.
+// Command substitution and positional parameters do not match, since neither
+// starts with a letter or underscore.
+var reVarExpansion = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?`)
+
+// containerVars are the variables the container itself provides, so expanding
+// one is honest even though no documented line assigns it.
+var containerVars = map[string]bool{
+	"HOME": true, "PATH": true, "PWD": true, "OLDPWD": true, "SHLVL": true,
+	"HOSTNAME": true, "TERM": true, "LANG": true, "TMPDIR": true,
+	"GOPATH": true, "GOBIN": true, "GOROOT": true,
+	"CARGO_HOME": true, "RUSTUP_HOME": true,
+}
+
+// unsetVar returns the first variable a line expands that nothing in the
+// session sets, or empty when every expansion resolves. A README written for
+// an interactive shell cites variables such as HISTFILE that no documented
+// line assigns and no container provides, so the line is skipped rather than
+// failed: the document is right, the container is simply not that shell.
+func (pl *planner) unsetVar(flat string) string {
+	local := localAssignments(flat)
+	for _, m := range reVarExpansion.FindAllStringSubmatch(flat, -1) {
+		name := m[1]
+		if pl.setVars[name] || containerVars[name] || local[name] {
+			continue
+		}
+		return name
+	}
+	return ""
+}
+
+// localAssignments returns the variables a line assigns before its command,
+// as in `FOO=bar cmd`, since a line may expand what it just set.
+func localAssignments(flat string) map[string]bool {
+	out := map[string]bool{}
+	fields := strings.Fields(strings.TrimSpace(flat))
+	for _, f := range fields {
+		if f == "export" {
+			continue
+		}
+		m := reAssignPrefix.FindStringSubmatch(f)
+		if m == nil {
+			break
+		}
+		out[m[1]] = true
+	}
+	return out
+}
+
+// reFishSource matches piping into a bare `source`, fish's idiom for loading
+// shell integration, which bash cannot run.
+var reFishSource = regexp.MustCompile(`\|\s*source\s*$`)
+
+// reForeignShellFile matches loading a file whose extension names another
+// shell: nushell, fish, PowerShell, xonsh. bash cannot execute any of them.
+var reForeignShellFile = regexp.MustCompile(`(^|\s)(source|\.)\s+\S+\.(nu|fish|ps1|xsh)\b`)
+
+// reKernelPath matches a reference to /proc or /sys, kernel interfaces a
+// container cannot honestly provide, as in a benchmark dropping page caches.
+var reKernelPath = regexp.MustCompile(`(^|[\s'"=])/(proc|sys)/`)
+
+// missingGlob returns a quoted glob argument whose fixed directory prefix
+// matches nothing in the repository, or empty. A doc line such as
+// `lint "src/util/**/*.js"` shows the shape of a command against the reader's
+// tree, and a repository without src/util cannot honestly run it.
+func (pl *planner) missingGlob(flat string) string {
+	for _, tok := range strings.Fields(stripComment(flat)) {
+		tok = strings.Trim(tok, `'"`)
+		star := strings.Index(tok, "*")
+		if star <= 0 || !strings.Contains(tok[:star], "/") {
+			continue
+		}
+		prefix := tok[:strings.LastIndex(tok[:star], "/")+1]
+		if strings.ContainsAny(prefix, "$~") {
+			continue
+		}
+		found := false
+		for path := range pl.tree {
+			if strings.HasPrefix(path, prefix) {
+				found = true
+				break
+			}
+		}
+		for path := range pl.created {
+			if strings.HasPrefix(path, prefix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return tok
+		}
+	}
+	return ""
+}
+
+// placeholderWords are bare words docs conventionally use where the reader
+// supplies a real value, as in `fd pattern path`. Only exact, unquoted
+// positional tokens count, so a real file named pattern.txt is unaffected.
+var placeholderWords = map[string]bool{
+	"pattern": true, "path": true, "file": true, "filename": true, "dirname": true,
+	"query": true, "regex": true, "searchterm": true, "yourfile": true,
+}
+
+// bareWordPlaceholder returns the first positional token that is a
+// conventional placeholder word, or empty when none is. The command word
+// itself is exempt, since a tool could be named pattern.
+func bareWordPlaceholder(flat string) string {
+	fields := strings.Fields(stripComment(flat))
+	for i, tok := range fields {
+		tok = strings.Trim(tok, `'"`)
+		if i == 0 || strings.HasPrefix(tok, "-") {
+			continue
+		}
+		if placeholderWords[tok] {
+			return tok
+		}
+	}
+	return ""
+}
+
+// docBinaryFloor is how many example lines must start with the same unknown
+// command before kibble treats it as the tool the README documents.
+const docBinaryFloor = 3
+
+// reBinaryName matches the shape of a command-line tool's name. Binaries are
+// lowercase by convention, which is what separates a real invocation from
+// captured program output such as a benchmark's `Benchmark 1: ...` line.
+var reBinaryName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+
+// notDocumentedBinary are words that begin a command line without naming the
+// tool a README is about: shell builtins and keywords, privilege wrappers, and
+// the package managers that install tools rather than being one.
+var notDocumentedBinary = map[string]bool{
+	"sudo": true, "alias": true, "eval": true, "set": true, "unset": true,
+	"local": true, "exit": true, "return": true, "exec": true, "trap": true,
+	"read": true, "shift": true, "wait": true, "kill": true, "if": true,
+	"then": true, "else": true, "elif": true, "fi": true, "for": true,
+	"while": true, "do": true, "done": true, "case": true, "esac": true,
+	"function": true, "time": true, "command": true, "type": true,
+	"apt": true, "apt-get": true, "yum": true, "dnf": true, "pacman": true,
+	"brew": true, "snap": true, "nix": true, "port": true, "scoop": true,
+	"choco": true, "winget": true, "docker": true, "gem": true, "pipx": true,
+}
+
+// documentedBinary returns the command a README repeatedly invokes that is
+// neither a shell builtin nor an already-known binary. A package seldom names
+// its binary, as ripgrep provides rg, and the docs themselves are the most
+// reliable statement of what the tool is called. The guess only widens which
+// blocks are considered; the session verifies the binary exists before running
+// anything, so a wrong guess costs coverage rather than correctness.
+func documentedBinary(markdown string, known map[string]bool) string {
+	counts := map[string]int{}
+	for _, block := range codeBlocks(markdown) {
+		if block.Span || !shellLangs[block.Lang] {
+			continue
+		}
+		for _, ln := range logicalLines(prepareLines(block.Lines)) {
+			flat := strings.TrimSpace(flatten(ln))
+			if flat == "" || strings.HasPrefix(flat, "#") {
+				continue
+			}
+			first := strings.Fields(flat)[0]
+			if knownCommands[first] || known[first] || notDocumentedBinary[first] {
+				continue
+			}
+			if commandEcosystem[first] != "" || !reBinaryName.MatchString(first) {
+				continue
+			}
+			counts[first]++
+		}
+	}
+	best, bestCount := "", 0
+	for name, n := range counts {
+		if n > bestCount || (n == bestCount && name < best) {
+			best, bestCount = name, n
+		}
+	}
+	if bestCount < docBinaryFloor {
+		return ""
+	}
+	return best
 }
 
 // substituted applies the configured substitutions to a logical line, in a
@@ -440,6 +783,7 @@ func (pl *planner) missingFile(flat string) string {
 		if j := strings.LastIndex(tok, "="); j >= 0 {
 			tok = tok[j+1:]
 		}
+		tok = strings.TrimPrefix(tok, "@")
 		if !reFileArg.MatchString(tok) && !reDotSlashArg.MatchString(tok) {
 			continue
 		}

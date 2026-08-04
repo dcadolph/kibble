@@ -44,6 +44,8 @@ type lineResult struct {
 	Code int
 	// Detail explains a skip, failure, or documented nonzero exit.
 	Detail string
+	// Line is the 1-based README line the command sits on, 0 when unknown.
+	Line int
 	// output is what the line printed, kept for dependency analysis.
 	output string
 }
@@ -60,7 +62,7 @@ var (
 	// reNetErr matches errors that mean the command needed a network
 	// service the container does not run.
 	reNetErr = regexp.MustCompile(
-		`(?i)connection refused|no such host|dial tcp|network is unreachable|could not connect`)
+		`(?i)connection refused|no such host|dial tcp|network is unreachable|could not connect|cannot connect`)
 	// reNoData matches a query that ran correctly and found nothing, which a
 	// fresh session often cannot avoid: the docs query dates and terms that
 	// have no entries yet.
@@ -93,9 +95,15 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 		res.Detail = "no example blocks found"
 		return res
 	}
-	if len(plan.Modules) == 0 {
+	if len(plan.Installs) == 0 {
 		res.Status = StatusSkipped
-		res.Detail = "no go install step puts a binary on PATH; examples not run"
+		res.Detail = "no documented install puts a binary on PATH; examples not run"
+		return res
+	}
+	image, ok := d.exampleImage(plan)
+	if !ok {
+		res.Status = StatusSkipped
+		res.Detail = "documented installs need more than one toolchain; no single image serves them"
 		return res
 	}
 
@@ -104,10 +112,62 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 	defer cancel()
 
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-i", d.Image, "bash", "-c", script)
+	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-i", image, "bash", "-c", script)
 	cmd.Stdin = bytes.NewReader(repoTar(step.dir))
 	out, _ := cmd.CombinedOutput()
-	return classifyExample(step, plan, string(out), wrapped, time.Since(start))
+	res = classifyExample(step, plan, string(out), wrapped, time.Since(start))
+	if image != d.Image {
+		res.Image = image
+	}
+	return res
+}
+
+// exampleImage returns the image an example session runs in. Every documented
+// install must be servable by one image, since the session is one shell: a
+// project installed with both cargo and npm names two toolchains and is
+// reported as a skip rather than run in an image missing one of them.
+func (d *DockerRunner) exampleImage(plan *Plan) (string, bool) {
+	eco := ""
+	for _, in := range plan.Installs {
+		if in.Ecosystem == "" {
+			continue
+		}
+		if eco != "" && eco != in.Ecosystem {
+			return "", false
+		}
+		eco = in.Ecosystem
+	}
+	if tc, known := toolchains[eco]; known && tc.Image != "" {
+		return tc.Image, true
+	}
+	return d.Image, true
+}
+
+// redirectDirs returns the parent directories of a line's redirect targets,
+// for targets nested under a directory. Docs redirect into standard user
+// directories such as ~/.local/share that exist on real systems, so the
+// session creates them rather than failing a correct document. Targets with
+// expansions beyond a leading ~ are left alone, since their value is unknown.
+func redirectDirs(flat string) []string {
+	var out []string
+	for _, m := range reCreatedToken.FindAllStringSubmatch(flat, -1) {
+		for _, tok := range m[1:] {
+			if tok == "" || !strings.Contains(tok, "/") {
+				continue
+			}
+			dir := filepath.Dir(tok)
+			if strings.ContainsAny(dir, "$`\"'") {
+				continue
+			}
+			if strings.HasPrefix(dir, "~/") {
+				dir = `"$HOME"/` + shellSafe(dir[2:])
+			} else {
+				dir = "'" + shellSafe(dir) + "'"
+			}
+			out = append(out, dir)
+		}
+	}
+	return out
 }
 
 // sessionBudget bounds the whole example session: each module build gets the
@@ -122,7 +182,7 @@ func sessionBudget(plan *Plan, install time.Duration) time.Duration {
 			}
 		}
 	}
-	budget := time.Duration(len(plan.Modules))*install +
+	budget := time.Duration(len(plan.Installs))*install +
 		time.Duration(lines)*20*time.Second + 3*time.Minute
 	if budget > 20*time.Minute {
 		budget = 20 * time.Minute
@@ -137,7 +197,7 @@ func sessionScript(plan *Plan, installSecs int) (string, map[string]bool) {
 	wrapped := map[string]bool{}
 	var b strings.Builder
 	b.WriteString(`export GOBIN=/root/gobin
-export PATH="$GOBIN:$PATH"
+export PATH="$GOBIN:$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 export EDITOR=true VISUAL=true GIT_EDITOR=true
 export GIT_TERMINAL_PROMPT=0
 export DEBIAN_FRONTEND=noninteractive
@@ -155,11 +215,26 @@ apt-get install -y -qq --no-install-recommends %s >/dev/null 2>&1
 printf 'KIBBLE-PKGS CODE=%%d\n' "$?"
 `, strings.Join(plan.Packages, " "))
 	}
-	for _, mod := range plan.Modules {
-		fmt.Fprintf(&b, `out=$(timeout %d go install '%s' 2>&1); code=$?
+	for _, in := range plan.Installs {
+		if in.bootstrap != "" {
+			fmt.Fprintf(&b, "%s >/dev/null 2>&1 || true\n", in.bootstrap)
+		}
+		fmt.Fprintf(&b, `out=$(timeout %d bash -ec '%s' 2>&1); code=$?
 printf 'KIBBLE-BUILD CODE=%%d\n' "$code"
 if [ "$code" -ne 0 ]; then printf '%%s\n' "$out" | tail -n 3; printf 'KIBBLE-ABORT\n'; exit 0; fi
-`, installSecs, mod)
+`, installSecs, shellSafe(in.Cmd))
+	}
+	if len(plan.Binaries) > 0 {
+		var quoted []string
+		for _, b := range plan.Binaries {
+			quoted = append(quoted, "'"+shellSafe(b)+"'")
+		}
+		fmt.Fprintf(&b, `have=0
+for kb in %s; do
+  if command -v "$kb" >/dev/null 2>&1; then have=1; printf 'KIBBLE-HAVE %%s\n' "$kb"; fi
+done
+if [ "$have" -eq 0 ]; then printf 'KIBBLE-NOBIN\n'; exit 0; fi
+`, strings.Join(quoted, " "))
 	}
 	for _, f := range plan.Fixtures {
 		if dir := filepath.Dir(f.Path); dir != "." {
@@ -183,6 +258,9 @@ if [ "$code" -ne 0 ]; then printf '%%s\n' "$out" | tail -n 3; printf 'KIBBLE-ABO
 				continue
 			}
 			cmd := l.Cmd
+			for _, dir := range redirectDirs(flatten(cmd)) {
+				fmt.Fprintf(&b, "mkdir -p %s >/dev/null 2>&1 || true\n", dir)
+			}
 			if isSimpleCommand(flatten(cmd)) {
 				cmd = fmt.Sprintf("timeout %d %s", int(lineTimeout.Seconds()), cmd)
 				wrapped[fmt.Sprintf("%s:%d", s.ID, i)] = true
@@ -274,11 +352,16 @@ func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[strin
 	dur time.Duration) Result {
 	res := Result{Step: step, Duration: dur}
 	outcomes := map[string]lineOutcome{}
+	have := map[string]bool{}
 	var chunk []string
-	aborted, done := false, false
+	aborted, done, noBin := false, false, false
 	pkgCode := 0
 	for _, line := range strings.Split(out, "\n") {
 		switch {
+		case strings.HasPrefix(line, "KIBBLE-NOBIN"):
+			noBin = true
+		case strings.HasPrefix(line, "KIBBLE-HAVE "):
+			have[strings.TrimSpace(strings.TrimPrefix(line, "KIBBLE-HAVE "))] = true
 		case strings.HasPrefix(line, "KIBBLE-PKGS CODE="):
 			pkgCode, _ = strconv.Atoi(strings.TrimPrefix(line, "KIBBLE-PKGS CODE="))
 			chunk = nil
@@ -309,7 +392,12 @@ func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[strin
 		res.Detail = "documented install failed in the session; examples not run"
 		return res
 	}
-	run, worst, detail := buildOutcomes(plan, outcomes, wrapped, done)
+	if noBin {
+		res.Status = StatusSkipped
+		res.Detail = "installed tool is not on PATH under any documented name; examples not run"
+		return res
+	}
+	run, worst, detail := buildOutcomes(plan, outcomes, wrapped, done, have)
 	res.example = run
 	res.Status = worst
 	res.Detail = detail
@@ -323,14 +411,14 @@ func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[strin
 // failures that only depend on skipped lines, and returns the per-step
 // outcomes with the aggregate status and its summary detail.
 func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[string]bool,
-	done bool) (*exampleRun, Status, string) {
+	done bool, have map[string]bool) (*exampleRun, Status, string) {
 	run := &exampleRun{}
 	ended := false
 	for _, s := range plan.Steps {
 		es := exampleStep{ID: s.ID, Heading: s.Heading}
 		for i, l := range s.Lines {
 			key := fmt.Sprintf("%s:%d", s.ID, i)
-			lr := lineResult{Cmd: flatten(l.Cmd), Code: -1}
+			lr := lineResult{Cmd: flatten(l.Cmd), Code: -1, Line: l.Line}
 			o, seen := outcomes[key]
 			switch {
 			case l.Skip != "":
@@ -350,9 +438,38 @@ func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[stri
 		}
 		run.Steps = append(run.Steps, es)
 	}
+	resolveMissingBinaries(run, plan, have)
 	resolveDependentFailures(run, plan)
 	status, detail := summarize(run)
 	return run, status, detail
+}
+
+// resolveMissingBinaries downgrades failures on lines that invoke a
+// documented binary the session does not have. A README can document several
+// tools while its install provides one, as a conda alternative next to a
+// cargo install, and a line calling the absent one says nothing about the
+// docs being wrong.
+func resolveMissingBinaries(run *exampleRun, plan *Plan, have map[string]bool) {
+	if len(have) == 0 {
+		return
+	}
+	bins := map[string]bool{}
+	for _, b := range plan.Binaries {
+		bins[b] = true
+	}
+	for si := range run.Steps {
+		s := &run.Steps[si]
+		for li := range s.Lines {
+			l := &s.Lines[li]
+			if l.Status != StatusFail {
+				continue
+			}
+			if bin, _ := invokedBinary(l.Cmd, bins); bin != "" && !have[bin] {
+				l.Status = StatusSkipped
+				l.Detail = fmt.Sprintf("invokes %s, which the documented install does not provide", bin)
+			}
+		}
+	}
 }
 
 // resolveDependentFailures downgrades failures caused by skipped lines: a

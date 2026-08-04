@@ -6,13 +6,15 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 // examplePlan builds a small plan for executor tests: one step of runnable
 // lines around one planned skip.
 func examplePlan() *Plan {
 	return &Plan{
-		Repo: "repo", Modules: []string{"example.com/tool@latest"}, Binaries: []string{"tool"},
+		Repo: "repo", Binaries: []string{"tool"},
+		Installs: []PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}},
 		Steps: []PlanStep{{
 			ID: "b1",
 			Lines: []PlanLine{
@@ -202,7 +204,7 @@ func TestSessionScript(t *testing.T) {
 	script, wrapped := sessionScript(plan, 240)
 
 	for _, want := range []string{
-		"go install 'example.com/tool@latest'",
+		"bash -ec 'go install example.com/tool@latest'",
 		"apt-get install -y -qq --no-install-recommends age",
 		"mkdir -p 'docs'",
 		"export A='1'",
@@ -245,6 +247,76 @@ func TestIsSimpleCommand(t *testing.T) {
 			t.Parallel()
 			if got := isSimpleCommand(test.In); got != test.Want {
 				t.Errorf("isSimpleCommand(%q) = %v, want %v", test.In, got, test.Want)
+			}
+		})
+	}
+}
+
+// TestRedirectDirs checks that redirect targets get their parent directories
+// created, so docs redirecting into standard user paths do not fail.
+func TestRedirectDirs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In       string
+		WantDirs []string
+	}{{ // Test 0: a home-relative completion path.
+		In:       "tool --gen bash > ~/.local/share/bash-completion/completions/tool",
+		WantDirs: []string{`"$HOME"/.local/share/bash-completion/completions`},
+	}, { // Test 1: a bare filename needs no directory.
+		In: "tool list > out.txt",
+	}, { // Test 2: a relative nested path.
+		In:       "tool export > exports/data.json",
+		WantDirs: []string{"'exports'"},
+	}, { // Test 3: a target with an expansion is left alone.
+		In: "tool export > $OUT/data.json",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			got := redirectDirs(test.In)
+			if diff := cmp.Diff(test.WantDirs, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("dirs mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestResolveMissingBinaries checks that a failing line invoking a documented
+// binary the session lacks becomes a skip, while other failures stay real.
+func TestResolveMissingBinaries(t *testing.T) {
+	t.Parallel()
+	plan := &Plan{Binaries: []string{"tool", "conda"}}
+	tests := []struct {
+		Have map[string]bool
+		In   []lineResult
+		Want []Status
+	}{{ // Test 0: the absent binary's failure becomes a skip.
+		Have: map[string]bool{"tool": true},
+		In: []lineResult{
+			{Cmd: "conda install -c conda-forge tool", Status: StatusFail},
+			{Cmd: "tool run", Status: StatusPass},
+		},
+		Want: []Status{StatusSkipped, StatusPass},
+	}, { // Test 1: a failure on a present binary stays a failure.
+		Have: map[string]bool{"tool": true},
+		In:   []lineResult{{Cmd: "tool run", Status: StatusFail}},
+		Want: []Status{StatusFail},
+	}, { // Test 2: no recorded binaries leaves everything alone.
+		Have: nil,
+		In:   []lineResult{{Cmd: "conda install tool", Status: StatusFail}},
+		Want: []Status{StatusFail},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			run := &exampleRun{Steps: []exampleStep{{ID: "b1", Lines: test.In}}}
+			resolveMissingBinaries(run, plan, test.Have)
+			var got []Status
+			for _, l := range run.Steps[0].Lines {
+				got = append(got, l.Status)
+			}
+			if diff := cmp.Diff(test.Want, got); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

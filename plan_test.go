@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -127,12 +128,31 @@ func TestBuildPlan(t *testing.T) {
 	}, { // Test 15: prompt-style blocks keep only prompted lines.
 		Markdown:  "```console\n$ tool run\noutput line\n```\n",
 		WantSteps: [][]planLine{{{Cmd: "tool run"}}},
+	}, { // Test 16: a variable no documented line sets is skipped, not failed.
+		Markdown:  "```sh\ntool run < $HISTFILE\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "tool run < $HISTFILE", Skip: true}}},
+	}, { // Test 17: a variable an earlier line exports resolves and runs.
+		Markdown: "```sh\nexport TOKEN=abc\ntool run --key $TOKEN\n```\n",
+		WantSteps: [][]planLine{{
+			{Cmd: "export TOKEN=abc"},
+			{Cmd: "tool run --key $TOKEN"},
+		}},
+	}, { // Test 18: a variable assigned as a prefix on the same line resolves.
+		Markdown:  "```sh\nMODE=fast tool run --bind 'reload($MODE)'\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "MODE=fast tool run --bind 'reload($MODE)'"}}},
+	}, { // Test 19: the container's own variables resolve.
+		Markdown:  "```sh\ntool run --out $HOME/out\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "tool run --out $HOME/out"}}},
+	}, { // Test 20: a variable the config exports resolves.
+		Markdown:  "```sh\ntool run --key $TOKEN\n```\n",
+		Cfg:       &ExamplesConfig{Env: map[string]string{"TOKEN": "abc"}},
+		WantSteps: [][]planLine{{{Cmd: "tool run --key $TOKEN"}}},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			plan := buildPlan("repo", "", test.Markdown,
-				[]string{"tool"}, []string{"example.com/tool@latest"}, test.Cfg)
+			plan := buildPlan("repo", "", test.Markdown, []string{"tool"},
+				[]PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}}, test.Cfg)
 			if diff := cmp.Diff(test.WantSteps, projectPlan(plan), cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("steps mismatch (-want +got):\n%s", diff)
 			}
@@ -190,6 +210,70 @@ func TestLogicalLines(t *testing.T) {
 			t.Parallel()
 			if diff := cmp.Diff(test.Want, logicalLines(test.In)); diff != "" {
 				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestSkipHeuristics checks the skip classes that keep kibble from blaming
+// correct docs for what a clean container lacks.
+func TestSkipHeuristics(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Markdown string
+		WantSkip string
+		WantRun  bool
+		WantNZ   bool
+	}{{ // Test 0: a brace placeholder is the reader's to fill in.
+		Markdown: "```sh\ntool {source_file_or_directory}\n```\n",
+		WantSkip: "placeholder",
+	}, { // Test 1: a shell variable expansion is not a brace placeholder.
+		Markdown: "```sh\nexport V=x\ntool run ${V}\n```\n",
+		WantRun:  true,
+	}, { // Test 2: git needing a remote skips in the fresh session repo.
+		Markdown: "```sh\ngit fetch origin\n```\n",
+		WantSkip: "git history or a remote",
+	}, { // Test 3: git config is fine in a fresh repo.
+		Markdown: "```sh\ngit config user.name kibble\n```\n",
+		WantRun:  true,
+	}, { // Test 4: cd into a system directory only the reader has.
+		Markdown: "```sh\ncd /usr/ports/textproc/tool\nmake install\n```\n",
+		WantSkip: "only the reader's system",
+	}, { // Test 5: a bare placeholder word as a positional argument.
+		Markdown: "```sh\ntool pattern path -x echo\n```\n",
+		WantSkip: "placeholder",
+	}, { // Test 6: a check subcommand may exit nonzero by design.
+		Markdown: "```sh\ntool check\n```\n",
+		WantRun:  true, WantNZ: true,
+	}, { // Test 7: an @-prefixed missing file is still a missing file.
+		Markdown: "```sh\ntool check @args.json\n```\n",
+		WantSkip: "never create",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := buildPlan("repo", "", test.Markdown, []string{"tool"},
+				[]PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}}, nil)
+			var last PlanLine
+			found := false
+			for _, s := range plan.Steps {
+				for _, l := range s.Lines {
+					if strings.HasPrefix(flatten(l.Cmd), "tool") || strings.HasPrefix(flatten(l.Cmd), "git") || strings.HasPrefix(flatten(l.Cmd), "cd /") {
+						last, found = l, true
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("no matching line in plan: %+v", plan.Steps)
+			}
+			if test.WantRun && last.Skip != "" {
+				t.Errorf("line skipped: %q", last.Skip)
+			}
+			if test.WantSkip != "" && !strings.Contains(last.Skip, test.WantSkip) {
+				t.Errorf("skip %q does not contain %q", last.Skip, test.WantSkip)
+			}
+			if test.WantNZ && !last.NonzeroOK {
+				t.Error("expected NonzeroOK")
 			}
 		})
 	}
