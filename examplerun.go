@@ -196,7 +196,7 @@ func sessionBudget(plan *Plan, install time.Duration) time.Duration {
 func sessionScript(plan *Plan, installSecs int) (string, map[string]bool) {
 	wrapped := map[string]bool{}
 	var b strings.Builder
-	b.WriteString(`export GOBIN=/root/gobin
+	b.WriteString(`export GOBIN="$(go env GOPATH 2>/dev/null || echo /root/go)/bin"
 export PATH="$GOBIN:$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 export EDITOR=true VISUAL=true GIT_EDITOR=true
 export GIT_TERMINAL_PROMPT=0
