@@ -131,6 +131,7 @@ var synthExtensions = map[string]bool{".md": true, ".txt": true}
 var interactiveSubs = map[string]bool{
 	"demo": true, "serve": true, "server": true, "daemon": true, "app": true,
 	"tui": true, "dashboard": true, "repl": true, "console": true, "web": true,
+	"record": true, "watch": true, "attach": true, "shell": true, "top": true,
 }
 
 // findingSubs are subcommands whose documented behavior is to exit nonzero
