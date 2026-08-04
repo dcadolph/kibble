@@ -74,6 +74,12 @@ var (
 		`(?i)\b(entry|body|input|message|text) is empty\b|\bempty (entry|body|input|message)\b`)
 	// reNoExec matches the Go exec error for a missing helper program.
 	reNoExec = regexp.MustCompile(`executable file not found`)
+	// reMissingDep matches a tool reporting that a system dependency it needs
+	// is absent, such as vhs requiring ffmpeg. The dependency is the container's
+	// gap, not the document's, so the line is skipped.
+	reMissingDep = regexp.MustCompile(
+		`(?i)\bis not installed\b|\b(please|must) install\b|\bnot found in (your )?\$?PATH\b` +
+			`|\brequires? \S+ to be installed\b`)
 	// reLineMarker parses a KIBBLE-LINE marker into step ID, line index,
 	// and either an exit code or the SKIP token.
 	reLineMarker = regexp.MustCompile(`^KIBBLE-LINE (\S+):(\d+) (?:CODE=(-?\d+)|SKIP)$`)
@@ -603,6 +609,9 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool) 
 		reNoExec.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Detail = "invokes a command the container lacks: " + tail
+	case reMissingDep.MatchString(o.output):
+		lr.Status = StatusSkipped
+		lr.Detail = "needs a system dependency the container lacks: " + tail
 	case reTTYErr.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Detail = "needs a terminal, which the container lacks"

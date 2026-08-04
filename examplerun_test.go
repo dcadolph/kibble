@@ -127,6 +127,17 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-DONE"),
 		WantStatus: StatusPass,
 		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+	}, { // Test 9: a missing system dependency skips, not fails.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"ffmpeg is not installed. Install it from https://ffmpeg.org",
+			"KIBBLE-LINE b1:1 CODE=1",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusPass,
+		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
