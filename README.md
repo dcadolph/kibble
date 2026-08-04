@@ -153,6 +153,10 @@ installs extra packages, and forces a specific line to run, skip, or run in the
 background with a readiness probe. Every choice lives in the file, so the run stays
 reproducible and the engine stays the thing that decides pass or fail.
 
+The most common use is a scanner or linter whose whole job is to exit nonzero when it
+finds something. Point it at real code and it does exactly that, which is the tool working,
+not the docs breaking. One `nonzeroOk` line settles it.
+
 ```yaml
 version: 1
 examples:
@@ -167,8 +171,12 @@ examples:
     - match: mytool serve
       background: true
       readyLog: listening on
-    - match: mytool check
+    - match: mytool scan          # a scanner exits nonzero on findings by design
       nonzeroOk: true
+    - match: mytool *.go          # a documented form the clean session cannot run
+      skip: file-glob loading is unreliable here
+    - match: mytool demo          # force a line the planner would skip
+      run: true
 ```
 
 Preview the plan without running anything with `-plan`, which prints, per repository, the
