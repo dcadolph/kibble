@@ -724,6 +724,18 @@ var notDocumentedBinary = map[string]bool{
 	"choco": true, "winget": true, "docker": true, "gem": true, "pipx": true,
 }
 
+// englishStopwords are common words that begin prose sentences inside code
+// blocks, so binary inference does not mistake a repeated "the" or "if" for
+// the tool the README documents.
+var englishStopwords = map[string]bool{
+	"the": true, "a": true, "an": true, "this": true, "that": true, "these": true,
+	"those": true, "it": true, "is": true, "are": true, "was": true, "be": true,
+	"if": true, "then": true, "or": true, "and": true, "but": true, "to": true,
+	"for": true, "in": true, "on": true, "of": true, "with": true, "you": true,
+	"your": true, "we": true, "our": true, "will": true, "can": true, "note": true,
+	"see": true, "here": true, "now": true, "all": true, "no": true, "yes": true,
+}
+
 // documentedBinary returns the command a README repeatedly invokes that is
 // neither a shell builtin nor an already-known binary. A package seldom names
 // its binary, as ripgrep provides rg, and the docs themselves are the most
@@ -732,6 +744,7 @@ var notDocumentedBinary = map[string]bool{
 // anything, so a wrong guess costs coverage rather than correctness.
 func documentedBinary(markdown string, known map[string]bool) string {
 	counts := map[string]int{}
+	knownSeen := false
 	for _, block := range codeBlocks(markdown) {
 		if block.Span || !shellLangs[block.Lang] {
 			continue
@@ -742,7 +755,11 @@ func documentedBinary(markdown string, known map[string]bool) string {
 				continue
 			}
 			first := strings.Fields(flat)[0]
-			if knownCommands[first] || known[first] || notDocumentedBinary[first] {
+			if known[first] {
+				knownSeen = true
+				continue
+			}
+			if knownCommands[first] || notDocumentedBinary[first] || englishStopwords[first] {
 				continue
 			}
 			if commandEcosystem[first] != "" || !reBinaryName.MatchString(first) {
@@ -750,6 +767,13 @@ func documentedBinary(markdown string, known map[string]bool) string {
 			}
 			counts[first]++
 		}
+	}
+	// When a documented binary already appears as a command, the real tool name
+	// is confirmed and no guess is needed. Inference is only for the case where
+	// the package installs a differently named binary that the docs invoke, as
+	// ripgrep provides rg, and the package name never appears as a command.
+	if knownSeen {
+		return ""
 	}
 	best, bestCount := "", 0
 	for name, n := range counts {
