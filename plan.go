@@ -170,11 +170,13 @@ Nothing here is special; the example only needs a file to exist.
 
 var (
 	// rePlaceholder matches tokens a reader must replace before running:
-	// angle-bracket slots, xxxx runs, path/to/ stand-ins, and values that
-	// trail off in an ellipsis.
+	// angle-bracket slots, xxxx runs, path/to/ and /home/user stand-ins, and
+	// values that trail off in an ellipsis. The ellipsis is ignored after a
+	// slash so a Go package pattern such as ./... is not mistaken for one.
 	rePlaceholder = regexp.MustCompile(
 		`<[^<>\s]+>|(^|[^${])\{[A-Za-z][A-Za-z0-9_]*\}|(^|\s)\[[^\[\]\s]+\](\s|$)` +
-			`|\bxxxx\b|\*\*\*|\bpath/to/|(^|[^/])\.\.\.(\s|$)`)
+			`|\bxxxx\b|\*\*\*|\bpath/to/|/(home|Users)/(user|you|me|username|yourname)\b` +
+			`|(^|[^/])\.\.\.($|[\s'".])`)
 	// reLogin matches a command that starts an interactive sign-in.
 	reLogin = regexp.MustCompile(`\b(login|signin|sign-in|logout)\b`)
 	// reGitState matches a git invocation that needs history, tags, or a

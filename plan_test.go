@@ -266,6 +266,15 @@ func TestSkipHeuristics(t *testing.T) {
 	}, { // Test 13: a rule spec inside a flag is not a missing file glob.
 		Markdown: "```sh\ntool --exclude-rules=\"cmd/.*:G204\" ./...\n```\n",
 		WantRun:  true,
+	}, { // Test 14: a conventional fake home path is a placeholder.
+		Markdown: "```sh\ntool grep TODO /home/user\n```\n",
+		WantSkip: "placeholder",
+	}, { // Test 15: a truncated value in quotes is a placeholder.
+		Markdown: "```sh\ntool --token 'abc-v1....'\n```\n",
+		WantSkip: "placeholder",
+	}, { // Test 16: the Go pattern is still not a placeholder after the change.
+		Markdown: "```sh\ntool run ./...\n```\n",
+		WantRun:  true,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
