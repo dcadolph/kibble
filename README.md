@@ -88,6 +88,7 @@ myrepo  go-install  PASS    28s   myrepo version 1.4.0
 | `-strict`   | `false`       | Also fail on timeouts and smoke-test failures.  |
 | `-examples` | `true`        | Replay README example blocks in the container.  |
 | `-plan`     | `false`       | Print the example plans as JSON and exit.       |
+| `-suggest`  | `false`       | Propose a `.kibble.yml` using a model and exit. |
 
 ## What it checks today
 
@@ -179,6 +180,25 @@ examples:
       run: true
 ```
 
+### Let a model write the config
+
+Writing that file by hand means reading every skip reason and deciding which ones you
+disagree with. `-suggest` does the reading. It sends the lines the engine could not
+settle, and only those, to a model you configure, then prints a `.kibble.yml` with one
+entry per disagreement for you to review and commit.
+
+```sh
+export ANTHROPIC_API_KEY=...          # or OPENAI_API_KEY, or KIBBLE_ADVISOR=ollama
+kibble -suggest ./myrepo > .kibble.yml
+```
+
+The model never decides whether anything passed. It classifies documented lines, once,
+into a file you read and commit; after that the run is deterministic again and no model
+is consulted. kibble with no key configured verifies exactly as much as kibble with one,
+which is why the flag is the only place a model appears at all. Claude, ChatGPT, and a
+local Ollama are supported, chosen in that order from the environment, and `KIBBLE_ADVISOR`
+picks one explicitly. A local Ollama keeps the whole thing on your machine.
+
 Preview the plan without running anything with `-plan`, which prints, per repository, the
 exact lines kibble would run, the ones it would skip and why, and the fixtures and
 packages the session needs. The preview is the floor, not the ceiling: at run time the
@@ -216,9 +236,6 @@ full results table, readable without opening a log.
 
 - Install brew formulas for real instead of only verifying they exist.
 - JUnit XML output for CI systems that are not GitHub.
-- Optional LLM assist for the calls the heuristics cannot settle, such as classifying an
-  ambiguous block as command or illustration. Strictly additive: the engine stays
-  deterministic, decides every pass and fail itself, and is fully useful with zero keys.
 
 ## Why "kibble"
 

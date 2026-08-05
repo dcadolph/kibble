@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -35,6 +36,8 @@ type config struct {
 	Examples bool
 	// Plan reports whether to print the example plans and exit.
 	Plan bool
+	// Suggest reports whether to propose a .kibble.yml and exit.
+	Suggest bool
 }
 
 // main parses flags, collects install steps, runs them, and reports.
@@ -48,6 +51,8 @@ func main() {
 	flag.BoolVar(&cfg.Strict, "strict", false, "also fail on timeouts and smoke-test failures")
 	flag.BoolVar(&cfg.Examples, "examples", true, "replay README example blocks in the container")
 	flag.BoolVar(&cfg.Plan, "plan", false, "print the example plans as JSON and exit")
+	flag.BoolVar(&cfg.Suggest, "suggest", false,
+		"propose a .kibble.yml using a configured model and exit")
 	flag.Parse()
 
 	if cfg.Version {
@@ -61,7 +66,10 @@ func main() {
 		os.Exit(2)
 	}
 
-	steps, plans := collect(paths, cfg.Examples || cfg.Plan)
+	steps, plans := collect(paths, cfg.Examples || cfg.Plan || cfg.Suggest)
+	if cfg.Suggest {
+		os.Exit(suggestConfigs(context.Background(), os.Stdout, plans))
+	}
 	if cfg.Plan {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -91,6 +99,41 @@ func main() {
 	if anyFail(results, cfg.Strict) {
 		os.Exit(1)
 	}
+}
+
+// suggestConfigs proposes a .kibble.yml per repository and returns the exit
+// code. The model classifies only the lines the engine could not settle, and
+// its answer is written for a human to read and commit, never applied to a
+// run. A repository the engine already understands produces no file, which is
+// the good outcome.
+func suggestConfigs(ctx context.Context, w io.Writer, plans []*Plan) int {
+	advisor, ok := NewAdvisor()
+	if !ok {
+		fmt.Fprintln(os.Stderr, advisorHelp)
+		return 2
+	}
+	wrote := false
+	for _, plan := range plans {
+		cands := suggestCandidates(plan)
+		if len(cands) == 0 {
+			fmt.Fprintf(os.Stderr, "%s: nothing to ask about\n", plan.Repo)
+			continue
+		}
+		got, err := askAdvisor(ctx, advisor, plan.Repo, cands)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", plan.Repo, err)
+			return 1
+		}
+		if writeSuggestedConfig(w, plan.Repo, cands, got) {
+			wrote = true
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "%s: the model agreed with every call kibble made\n", plan.Repo)
+	}
+	if !wrote {
+		fmt.Fprintln(os.Stderr, "no config needed")
+	}
+	return 0
 }
 
 // kibbleVersion reports kibble's own version from the build info, so a binary
