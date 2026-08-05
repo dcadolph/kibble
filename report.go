@@ -79,7 +79,7 @@ func reportJSON(w io.Writer, results []Result) {
 // reportTable writes a compact aligned table and a summary line.
 func reportTable(w io.Writer, results []Result) {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "REPO\tKIND\tSTATUS\tTIME\tDETAIL")
+	_, _ = fmt.Fprintln(tw, "REPO\tKIND\tSTATUS\tTIME\tDETAIL")
 	var pass, fail, other int
 	for _, r := range results {
 		detail := r.SmokeLine
@@ -90,7 +90,7 @@ func reportTable(w io.Writer, results []Result) {
 		if r.Image != "" {
 			detail += fmt.Sprintf("  (%s)", r.Image)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			r.Step.Repo, r.Step.Kind, r.Status,
 			r.Duration.Round(time.Second), detail)
 		switch r.Status {
@@ -103,7 +103,7 @@ func reportTable(w io.Writer, results []Result) {
 		}
 	}
 	_ = tw.Flush()
-	fmt.Fprintf(w, "\n%d pass, %d fail, %d other of %d install steps\n",
+	_, _ = fmt.Fprintf(w, "\n%d pass, %d fail, %d other of %d install steps\n",
 		pass, fail, other, len(results))
 }
 
