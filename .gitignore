@@ -13,3 +13,6 @@ coverage.*
 
 # Go
 /vendor/
+
+# Release artifacts
+/dist/
