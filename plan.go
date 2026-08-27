@@ -538,8 +538,9 @@ func (pl *planner) skipReason(flat string) string {
 		return fmt.Sprintf("docs use %q as a placeholder the reader must fill in",
 			bareWordPlaceholder(flat))
 	}
+	expandable := withoutSingleQuoted(flat)
 	for v := range pl.badVars {
-		if strings.Contains(flat, "$"+v) || strings.Contains(flat, "${"+v+"}") {
+		if strings.Contains(expandable, "$"+v) || strings.Contains(expandable, "${"+v+"}") {
 			return fmt.Sprintf("expands $%s, which a skipped line was to set", v)
 		}
 	}
@@ -576,7 +577,7 @@ var containerVars = map[string]bool{
 // failed: the document is right, the container is simply not that shell.
 func (pl *planner) unsetVar(flat string) string {
 	local := localAssignments(flat)
-	for _, m := range reVarExpansion.FindAllStringSubmatch(flat, -1) {
+	for _, m := range reVarExpansion.FindAllStringSubmatch(withoutSingleQuoted(flat), -1) {
 		name := m[1]
 		if pl.setVars[name] || containerVars[name] || local[name] {
 			continue
@@ -584,6 +585,28 @@ func (pl *planner) unsetVar(flat string) string {
 		return name
 	}
 	return ""
+}
+
+// withoutSingleQuoted blanks the contents of single-quoted spans, since a
+// shell expands nothing inside them. It keeps an awk or sed program such as
+// `awk '{print $NF}'` from reading as a line that expands a variable the
+// session never sets, which would skip a working documented line. Quotes
+// inside a double-quoted span are literal text and do not open one.
+func withoutSingleQuoted(flat string) string {
+	b := []byte(flat)
+	inSingle, inDouble := false, false
+	for i := range b {
+		switch {
+		case b[i] == '"' && !inSingle:
+			inDouble = !inDouble
+		case b[i] == '\'' && !inDouble:
+			inSingle = !inSingle
+			b[i] = ' '
+		case inSingle:
+			b[i] = ' '
+		}
+	}
+	return string(b)
 }
 
 // localAssignments returns the variables a line assigns before its command,
@@ -1072,7 +1095,11 @@ func hasBareStdinDash(flat string) bool {
 	if strings.Contains(f, "|") {
 		return false
 	}
-	for _, tok := range strings.Fields(f)[1:] {
+	fields := strings.Fields(f)
+	if len(fields) < 2 {
+		return false
+	}
+	for _, tok := range fields[1:] {
 		if tok == "-" {
 			return true
 		}

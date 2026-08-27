@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -81,9 +82,17 @@ var (
 		`(?i)\bis not installed\b|\b(please|must) install\b|\bnot found in (your )?\$?PATH\b` +
 			`|\brequires? \S+ to be installed\b`)
 	// reLineMarker parses a KIBBLE-LINE marker into step ID, line index,
-	// and either an exit code or the SKIP token.
-	reLineMarker = regexp.MustCompile(`^KIBBLE-LINE (\S+):(\d+) (?:CODE=(-?\d+)|SKIP)$`)
+	// and either an exit code or the SKIP token. The marker is matched
+	// anywhere in a line rather than only at its start, so a documented
+	// command whose output ends without a newline cannot swallow the marker
+	// that follows it and turn a real result into a missing one.
+	reLineMarker = regexp.MustCompile(`KIBBLE-LINE (\S+):(\d+) (?:CODE=(-?\d+)|SKIP)$`)
 )
+
+// markerLead is printed before every session marker. A documented command
+// whose output ends without a trailing newline would otherwise leave the
+// marker appended to that output, where the parser cannot see it.
+const markerLead = `\n`
 
 // lineTimeout bounds one wrapped example line, so a command that waits for
 // input or serves forever cannot eat the whole session budget.
@@ -118,9 +127,18 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 	defer cancel()
 
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-i", image, "bash", "-c", script)
+	name := containerName()
+	cmd := exec.CommandContext(ctx,
+		"docker", "run", "--rm", "-i", "--name", name, image, "bash", "-c", script)
+	cmd.Cancel = removeContainerFunc(cmd, name)
 	cmd.Stdin = bytes.NewReader(repoTar(step.dir))
 	out, _ := cmd.CombinedOutput()
+	if ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) {
+		return Result{
+			Step: step, Status: StatusError, Duration: time.Since(start),
+			Detail: "run was interrupted, so the examples have no verdict",
+		}
+	}
 	res = classifyExample(step, plan, string(out), wrapped, time.Since(start))
 	if image != d.Image {
 		res.Image = image
@@ -218,7 +236,7 @@ git config user.name kibble >/dev/null 2>&1
 	if len(plan.Packages) > 0 {
 		fmt.Fprintf(&b, `apt-get update -qq >/dev/null 2>&1
 apt-get install -y -qq --no-install-recommends %s >/dev/null 2>&1
-printf 'KIBBLE-PKGS CODE=%%d\n' "$?"
+printf '\nKIBBLE-PKGS CODE=%%d\n' "$?"
 `, strings.Join(plan.Packages, " "))
 	}
 	for _, in := range plan.Installs {
@@ -226,8 +244,8 @@ printf 'KIBBLE-PKGS CODE=%%d\n' "$?"
 			fmt.Fprintf(&b, "%s >/dev/null 2>&1 || true\n", in.bootstrap)
 		}
 		fmt.Fprintf(&b, `out=$(timeout %d bash -ec '%s' 2>&1); code=$?
-printf 'KIBBLE-BUILD CODE=%%d\n' "$code"
-if [ "$code" -ne 0 ]; then printf '%%s\n' "$out" | tail -n 3; printf 'KIBBLE-ABORT\n'; exit 0; fi
+printf '\nKIBBLE-BUILD CODE=%%d\n' "$code"
+if [ "$code" -ne 0 ]; then printf '%%s\n' "$out" | tail -n 3; printf '\nKIBBLE-ABORT\n'; exit 0; fi
 `, installSecs, shellSafe(in.Cmd))
 	}
 	if len(plan.Binaries) > 0 {
@@ -237,9 +255,9 @@ if [ "$code" -ne 0 ]; then printf '%%s\n' "$out" | tail -n 3; printf 'KIBBLE-ABO
 		}
 		fmt.Fprintf(&b, `have=0
 for kb in %s; do
-  if command -v "$kb" >/dev/null 2>&1; then have=1; printf 'KIBBLE-HAVE %%s\n' "$kb"; fi
+  if command -v "$kb" >/dev/null 2>&1; then have=1; printf '\nKIBBLE-HAVE %%s\n' "$kb"; fi
 done
-if [ "$have" -eq 0 ]; then printf 'KIBBLE-NOBIN\n'; exit 0; fi
+if [ "$have" -eq 0 ]; then printf '\nKIBBLE-NOBIN\n'; exit 0; fi
 `, strings.Join(quoted, " "))
 	}
 	for _, f := range plan.Fixtures {
@@ -253,14 +271,14 @@ if [ "$have" -eq 0 ]; then printf 'KIBBLE-NOBIN\n'; exit 0; fi
 		fmt.Fprintf(&b, "export %s='%s'\n", k, shellSafe(plan.Env[k]))
 	}
 	for _, s := range plan.Steps {
-		fmt.Fprintf(&b, "printf 'KIBBLE-STEP %s START\\n'\n", s.ID)
+		fmt.Fprintf(&b, "printf '"+markerLead+"KIBBLE-STEP %s START\\n'\n", s.ID)
 		if s.Background {
 			writeBackgroundStep(&b, s)
 			continue
 		}
 		for i, l := range s.Lines {
 			if l.Skip != "" {
-				fmt.Fprintf(&b, "printf 'KIBBLE-LINE %s:%d SKIP\\n'\n", s.ID, i)
+				fmt.Fprintf(&b, "printf '"+markerLead+"KIBBLE-LINE %s:%d SKIP\\n'\n", s.ID, i)
 				continue
 			}
 			cmd := l.Cmd
@@ -272,11 +290,12 @@ if [ "$have" -eq 0 ]; then printf 'KIBBLE-NOBIN\n'; exit 0; fi
 				wrapped[fmt.Sprintf("%s:%d", s.ID, i)] = true
 			}
 			b.WriteString(cmd + "\n")
-			fmt.Fprintf(&b, "printf 'KIBBLE-LINE %s:%d CODE=%%d\\n' \"$?\"\n", s.ID, i)
+			fmt.Fprintf(&b,
+				"printf '"+markerLead+"KIBBLE-LINE %s:%d CODE=%%d\\n' \"$?\"\n", s.ID, i)
 		}
 	}
 	b.WriteString(`[ -n "${KIBBLE_BG:-}" ] && kill $KIBBLE_BG >/dev/null 2>&1
-printf 'KIBBLE-DONE\n'
+printf '\nKIBBLE-DONE\n'
 `)
 	return b.String(), wrapped
 }
@@ -302,10 +321,11 @@ for i in $(seq 1 30); do grep -q '%s' %s 2>/dev/null && ready=0 && break; sleep 
 	}
 	for i, l := range s.Lines {
 		if l.Skip != "" {
-			fmt.Fprintf(b, "printf 'KIBBLE-LINE %s:%d SKIP\\n'\n", s.ID, i)
+			fmt.Fprintf(b, "printf '"+markerLead+"KIBBLE-LINE %s:%d SKIP\\n'\n", s.ID, i)
 			continue
 		}
-		fmt.Fprintf(b, "printf 'KIBBLE-LINE %s:%d CODE=%%d\\n' \"$ready\"\n", s.ID, i)
+		fmt.Fprintf(b,
+			"printf '"+markerLead+"KIBBLE-LINE %s:%d CODE=%%d\\n' \"$ready\"\n", s.ID, i)
 	}
 }
 
@@ -352,6 +372,19 @@ type lineOutcome struct {
 	output string
 }
 
+// markerTail splits a line on a session marker, returning the output that
+// preceded the marker, the text that followed it, and whether the marker is
+// present. Markers are found anywhere in a line rather than only at its
+// start, so a documented command whose output ends without a newline cannot
+// hide the marker the session printed next.
+func markerTail(line, marker string) (before, after string, ok bool) {
+	i := strings.Index(line, marker)
+	if i < 0 {
+		return "", "", false
+	}
+	return line[:i], line[i+len(marker):], true
+}
+
 // classifyExample parses session output into a Result: per-line outcomes
 // feed step results, and the worst outcome names the repo's example status.
 func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[string]bool,
@@ -362,25 +395,33 @@ func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[strin
 	var chunk []string
 	aborted, done, noBin := false, false, false
 	pkgCode := 0
+	keep := func(s string) {
+		if strings.TrimSpace(s) != "" && len(chunk) < 200 {
+			chunk = append(chunk, s)
+		}
+	}
 	for _, line := range strings.Split(out, "\n") {
-		switch {
-		case strings.HasPrefix(line, "KIBBLE-NOBIN"):
+		switch pre, rest, ok := markerTail(line, "KIBBLE-HAVE "); {
+		case strings.Contains(line, "KIBBLE-NOBIN"):
 			noBin = true
-		case strings.HasPrefix(line, "KIBBLE-HAVE "):
-			have[strings.TrimSpace(strings.TrimPrefix(line, "KIBBLE-HAVE "))] = true
-		case strings.HasPrefix(line, "KIBBLE-PKGS CODE="):
-			pkgCode, _ = strconv.Atoi(strings.TrimPrefix(line, "KIBBLE-PKGS CODE="))
+		case ok:
+			keep(pre)
+			have[strings.TrimSpace(rest)] = true
+		case strings.Contains(line, "KIBBLE-PKGS CODE="):
+			_, code, _ := markerTail(line, "KIBBLE-PKGS CODE=")
+			pkgCode, _ = strconv.Atoi(strings.TrimSpace(code))
 			chunk = nil
-		case strings.HasPrefix(line, "KIBBLE-BUILD CODE="):
+		case strings.Contains(line, "KIBBLE-BUILD CODE="):
 			chunk = nil
-		case strings.HasPrefix(line, "KIBBLE-ABORT"):
+		case strings.Contains(line, "KIBBLE-ABORT"):
 			aborted = true
-		case strings.HasPrefix(line, "KIBBLE-STEP "):
+		case strings.Contains(line, "KIBBLE-STEP "):
 			chunk = nil
-		case strings.HasPrefix(line, "KIBBLE-DONE"):
+		case strings.Contains(line, "KIBBLE-DONE"):
 			done = true
 		case reLineMarker.MatchString(line):
 			m := reLineMarker.FindStringSubmatch(line)
+			keep(line[:len(line)-len(m[0])])
 			code := -1
 			if m[3] != "" {
 				code, _ = strconv.Atoi(m[3])
@@ -388,9 +429,7 @@ func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[strin
 			outcomes[m[1]+":"+m[2]] = lineOutcome{code: code, output: strings.Join(chunk, "\n")}
 			chunk = nil
 		default:
-			if strings.TrimSpace(line) != "" && len(chunk) < 200 {
-				chunk = append(chunk, line)
-			}
+			keep(line)
 		}
 	}
 	if aborted {

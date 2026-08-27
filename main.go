@@ -11,10 +11,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -66,31 +68,45 @@ func main() {
 		os.Exit(2)
 	}
 
-	steps, plans := collect(paths, cfg.Examples || cfg.Plan || cfg.Suggest)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	steps, plans, problems := collect(paths, cfg.Examples || cfg.Plan || cfg.Suggest)
 	if cfg.Suggest {
-		os.Exit(suggestConfigs(context.Background(), os.Stdout, plans))
+		os.Exit(suggestConfigs(ctx, os.Stdout, plans))
 	}
 	if cfg.Plan {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(plans)
+		if err := enc.Encode(plans); err != nil {
+			fmt.Fprintf(os.Stderr, "kibble could not write the plan: %v\n", err)
+			os.Exit(1)
+		}
+		if len(problems) > 0 {
+			os.Exit(1)
+		}
 		return
 	}
-	if len(steps) == 0 {
+	if len(steps) == 0 && len(problems) == 0 {
 		fmt.Fprintln(os.Stderr, "no install steps found")
 		os.Exit(0)
 	}
 
 	if hasRunnable(steps) {
-		if err := DockerAvailable(context.Background()); err != nil {
+		if err := DockerAvailable(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "kibble needs Docker to run install steps: %v\n", err)
 			os.Exit(2)
 		}
 	}
 
 	runner := &DockerRunner{Image: cfg.Image, Timeout: cfg.Timeout}
-	results := runAll(context.Background(), runner, steps, cfg.Workers)
+	results := runAll(ctx, runner, steps, cfg.Workers)
+	if ctx.Err() != nil {
+		fmt.Fprintln(os.Stderr, "kibble: interrupted")
+		os.Exit(130)
+	}
 	results = append(results, flagChecks(results)...)
+	results = append(results, problems...)
 
 	report(os.Stdout, results, cfg.JSON)
 	if os.Getenv("GITHUB_ACTIONS") == "true" {
@@ -150,16 +166,23 @@ func kibbleVersion() string {
 
 // collect reads each repo's README, extracts its install steps, attaches
 // the flag and subcommand usage the README cites for each installed binary,
-// and, when examples are on, builds an example plan per repo.
-func collect(paths []string, examples bool) ([]InstallStep, []*Plan) {
+// and, when examples are on, builds an example plan per repo. It also returns
+// a result per repository kibble could not read, so a path with no README and
+// a malformed config both reach the report instead of passing as silence.
+func collect(paths []string, examples bool) ([]InstallStep, []*Plan, []Result) {
 	ex := DefaultExtractor()
 	var out []InstallStep
 	var plans []*Plan
+	var problems []Result
 	for _, p := range paths {
 		repo := filepath.Base(filepath.Clean(p))
-		md, err := readREADME(p)
+		md, name, err := readREADME(p)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "skip %s: %v\n", repo, err)
+			problems = append(problems, Result{
+				Step:   InstallStep{Repo: repo, Kind: "readme", dir: p},
+				Status: StatusError,
+				Detail: fmt.Sprintf("kibble read nothing from %s: %v", p, err),
+			})
 			continue
 		}
 		steps := ex.Extract(repo, md)
@@ -167,7 +190,8 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan) {
 		usage := extractUsage(bins, md)
 		for i := range steps {
 			steps[i].dir = p
-			if steps[i].Kind == "go-install" {
+			steps[i].readme = name
+			if steps[i].Binary != "" {
 				steps[i].Usage = usage[steps[i].Binary]
 			}
 		}
@@ -175,14 +199,25 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan) {
 		if !examples {
 			continue
 		}
-		if step, plan := exampleStepFor(repo, p, md, sessionBinaries(repo, bins, installs), installs); plan != nil {
-			plans = append(plans, plan)
-			if step != nil {
-				out = append(out, *step)
-			}
+		step, plan, err := exampleStepFor(repo, p, md, sessionBinaries(repo, bins, installs), installs)
+		if err != nil {
+			problems = append(problems, Result{
+				Step:   InstallStep{Repo: repo, Kind: "config", dir: p, readme: name},
+				Status: StatusError,
+				Detail: fmt.Sprintf("bad .kibble.yml, so examples did not run: %v", err),
+			})
+			continue
+		}
+		if plan == nil {
+			continue
+		}
+		plans = append(plans, plan)
+		if step != nil {
+			step.readme = name
+			out = append(out, *step)
 		}
 	}
-	return out, plans
+	return out, plans, problems
 }
 
 // sessionInstalls returns the documented binaries and the installs that put
@@ -269,20 +304,20 @@ func sameEcosystem(installs []PlanInstall, dir string) []PlanInstall {
 }
 
 // exampleStepFor builds a repo's example plan and, when it has steps, the
-// install step that runs it. A bad .kibble.yml is reported and examples are
-// dropped for the repo, so a config typo cannot pass as a green check.
-func exampleStepFor(repo, dir, md string, bins []string, installs []PlanInstall) (*InstallStep, *Plan) {
+// install step that runs it. A bad .kibble.yml is returned as an error rather
+// than dropped, so a config typo cannot pass as a green check.
+func exampleStepFor(repo, dir, md string, bins []string, installs []PlanInstall) (
+	*InstallStep, *Plan, error) {
 	cfg, err := loadExamplesConfig(dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "skip %s examples: bad .kibble.yml: %v\n", repo, err)
-		return nil, nil
+		return nil, nil, err
 	}
 	if cfg != nil && cfg.Disable {
-		return nil, nil
+		return nil, nil, nil
 	}
 	plan := buildPlan(repo, dir, md, bins, installs, cfg)
 	if len(plan.Steps) == 0 {
-		return nil, plan
+		return nil, plan, nil
 	}
 	lines := 0
 	for _, s := range plan.Steps {
@@ -293,21 +328,44 @@ func exampleStepFor(repo, dir, md string, bins []string, installs []PlanInstall)
 		Raw:  fmt.Sprintf("%d blocks, %d lines", len(plan.Steps), lines),
 		plan: plan, dir: dir,
 	}
-	return step, plan
+	return step, plan, nil
 }
 
-// readREADME returns the README contents for a repo directory.
-func readREADME(dir string) (string, error) {
-	for _, name := range []string{"README.md", "readme.md", "README.MD"} {
-		b, err := os.ReadFile(filepath.Join(dir, name))
-		if err == nil {
-			return string(b), nil
+// readmeNames are the README file names kibble looks for, in order.
+var readmeNames = []string{"README.md", "readme.md", "README.MD"}
+
+// readREADME returns a repo directory's README contents and the file name it
+// came from, so an annotation can point at the file the repository has. The
+// directory is listed rather than opened by name, because a case-insensitive
+// filesystem answers to README.md for a file named readme.md and would have
+// kibble annotate a path that does not exist on a case-sensitive host.
+func readREADME(dir string) (string, string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", "", err
+	}
+	present := map[string]bool{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			present[e.Name()] = true
 		}
 	}
-	return "", fmt.Errorf("no README found")
+	for _, name := range readmeNames {
+		if !present[name] {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return "", "", err
+		}
+		return string(b), name, nil
+	}
+	return "", "", fmt.Errorf("no README found")
 }
 
 // runAll executes steps with bounded concurrency and returns their results.
+// A canceled run stops handing out work, so an interrupt does not queue more
+// containers behind the ones already being torn down.
 func runAll(ctx context.Context, r Runner, steps []InstallStep, workers int) []Result {
 	if workers < 1 {
 		workers = 1
@@ -320,7 +378,15 @@ func runAll(ctx context.Context, r Runner, steps []InstallStep, workers int) []R
 			results[i] = Result{Step: step, Status: StatusSkipped, Detail: "not executed yet"}
 			continue
 		}
-		sem <- struct{}{}
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			results[i] = Result{
+				Step: step, Status: StatusError,
+				Detail: "run was interrupted before this step started",
+			}
+			continue
+		}
 		wg.Add(1)
 		go func(i int, s InstallStep) {
 			defer wg.Done()
