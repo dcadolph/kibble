@@ -16,7 +16,7 @@ import (
 // the way a failing test would appear.
 func githubOutput(w io.Writer, results []Result) {
 	for _, r := range results {
-		file := readmePath(r.Step.dir)
+		file := readmePath(r.Step.dir, r.Step.readme)
 		switch r.Status {
 		case StatusFail:
 			if r.example != nil {
@@ -66,15 +66,19 @@ func escapeAnnotation(s string) string {
 	return s
 }
 
-// readmePath returns the repo-relative README path for annotations. In a
-// workflow the target is the checkout root, so the path is README.md or the
-// subdirectory it sits in.
-func readmePath(dir string) string {
+// readmePath returns the repo-relative README path for annotations, using the
+// file name the repository actually has so an annotation is not pinned to a
+// README.md that never existed. In a workflow the target is the checkout
+// root, so the path is the file name or the subdirectory it sits in.
+func readmePath(dir, name string) string {
+	if name == "" {
+		name = readmeNames[0]
+	}
 	dir = filepath.ToSlash(filepath.Clean(dir))
 	if dir == "." || dir == "" || filepath.IsAbs(dir) {
-		return "README.md"
+		return name
 	}
-	return dir + "/README.md"
+	return dir + "/" + name
 }
 
 // writeStepSummary appends a markdown results table to the job's step summary

@@ -275,6 +275,18 @@ func TestSkipHeuristics(t *testing.T) {
 	}, { // Test 16: the Go pattern is still not a placeholder after the change.
 		Markdown: "```sh\ntool run ./...\n```\n",
 		WantRun:  true,
+	}, { // Test 17: an awk field reference is not a shell expansion.
+		Markdown: "```sh\ntool list | awk '{print $NF}'\n```\n",
+		WantRun:  true,
+	}, { // Test 18: a variable named inside single quotes is literal text.
+		Markdown: "```sh\ntool grep '$MISSING'\n```\n",
+		WantRun:  true,
+	}, { // Test 19: an apostrophe in double quotes does not open a quoted span.
+		Markdown: "```sh\ntool say \"don't\" $MISSING\n```\n",
+		WantSkip: "which the docs never set",
+	}, { // Test 20: an unquoted expansion the docs never set still skips.
+		Markdown: "```sh\ntool run $MISSING\n```\n",
+		WantSkip: "which the docs never set",
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

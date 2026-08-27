@@ -166,3 +166,40 @@ func TestFlagChecks(t *testing.T) {
 		})
 	}
 }
+
+// TestRejectedSub checks how a cited subcommand is judged against its help
+// probe. The exit code is the general signal, since a command framework
+// rejects an unknown subcommand nonzero whatever wording it prints.
+func TestRejectedSub(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		HelpText string
+		SubCodes map[string]int
+		Sub      string
+		Want     bool
+	}{{ // Test 0: a subcommand the binary accepted is not drift.
+		SubCodes: map[string]int{"scan": 0}, Sub: "scan", Want: false,
+	}, { // Test 1: a nonzero probe means the binary rejected the subcommand.
+		SubCodes: map[string]int{"bogus": 1}, Sub: "bogus", Want: true,
+	}, { // Test 2: a probe that timed out says nothing about the docs.
+		SubCodes: map[string]int{"serve": 124}, Sub: "serve", Want: false,
+	}, { // Test 3: a probe that found no binary says nothing about the docs.
+		SubCodes: map[string]int{"scan": 127}, Sub: "scan", Want: false,
+	}, { // Test 4: a binary that answers cleanly is caught by its wording.
+		HelpText: `Error: unknown command "gone" for "tool"`,
+		SubCodes: map[string]int{"gone": 0}, Sub: "gone", Want: true,
+	}, { // Test 5: a subcommand the probe never reached is not judged.
+		SubCodes: map[string]int{}, Sub: "scan", Want: false,
+	}, { // Test 6: a nested subcommand is judged on its own probe.
+		SubCodes: map[string]int{"walk rotate": 2}, Sub: "walk rotate", Want: true,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			r := Result{helpText: test.HelpText, subCodes: test.SubCodes}
+			if got := rejectedSub(r, test.Sub); got != test.Want {
+				t.Errorf("rejectedSub(%q) = %v, want %v", test.Sub, got, test.Want)
+			}
+		})
+	}
+}

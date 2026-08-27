@@ -128,10 +128,14 @@ func stripComment(line string) string {
 	return line
 }
 
+// reSegment matches the pipes and command separators that end one simple
+// command in a shell line.
+var reSegment = regexp.MustCompile(`\|\||&&|;|\|`)
+
 // splitSegments splits a shell line on pipes and command separators, so a
 // binary invoked mid-pipeline is still recognized.
 func splitSegments(line string) []string {
-	return regexp.MustCompile(`\|\||&&|;|\|`).Split(line, -1)
+	return reSegment.Split(line, -1)
 }
 
 // helpFlags returns the set of flag names, without dashes, that a binary's
@@ -144,6 +148,24 @@ func helpFlags(helpText string) map[string]bool {
 	return out
 }
 
+// probeExcuses are exit codes from a subcommand help probe that say nothing
+// about the docs: the probe timed out, or the binary was not there to run.
+var probeExcuses = map[int]bool{124: true, 127: true}
+
+// rejectedSub reports whether the binary rejected a subcommand the README
+// cites. The probe's own exit code is the general signal, since a command
+// framework rejects an unknown subcommand nonzero whatever it prints; the
+// wording match catches the case where a binary answers a bad subcommand with
+// its usage screen and exits clean.
+func rejectedSub(r Result, sub string) bool {
+	parts := strings.Fields(sub)
+	if strings.Contains(r.helpText, fmt.Sprintf("unknown command %q", parts[len(parts)-1])) {
+		return true
+	}
+	code, probed := r.subCodes[sub]
+	return probed && code != 0 && !probeExcuses[code]
+}
+
 // flagChecks derives one flag-check result per binary whose install succeeded
 // and whose README cites usage. A cited flag missing from every collected
 // help screen, or a subcommand the binary rejects, is reported as drift.
@@ -154,7 +176,10 @@ func flagChecks(results []Result) []Result {
 			continue
 		}
 		check := Result{
-			Step: InstallStep{Repo: r.Step.Repo, Kind: "flag-check", Binary: r.Step.Binary},
+			Step: InstallStep{
+				Repo: r.Step.Repo, Kind: "flag-check", Binary: r.Step.Binary,
+				dir: r.Step.dir, readme: r.Step.readme,
+			},
 		}
 		known := helpFlags(r.helpText)
 		if len(known) == 0 {
@@ -171,9 +196,7 @@ func flagChecks(results []Result) []Result {
 		}
 		var badSubs []string
 		for _, s := range r.Step.Usage.Subs {
-			parts := strings.Fields(s)
-			leaf := parts[len(parts)-1]
-			if strings.Contains(r.helpText, fmt.Sprintf("unknown command %q", leaf)) {
+			if rejectedSub(r, s) {
 				badSubs = append(badSubs, s)
 			}
 		}

@@ -35,6 +35,9 @@ type InstallStep struct {
 	plan *Plan
 	// dir is the local repo path an example step streams into its session.
 	dir string
+	// readme is the README file name the step was extracted from, so an
+	// annotation points at the file the repository actually has.
+	readme string
 }
 
 // Extractor finds install steps in README markdown.
@@ -233,6 +236,16 @@ var pkgInvocations = []struct {
 	{Kind: "npm-install", Words: []string{"yarn", "global", "add"}},
 }
 
+// bootstrapPackages are the package managers and build plumbing a README
+// installs to prepare the machine rather than to document its own tool. A
+// line such as `pip install --upgrade pip` is setup, not an install a reader
+// is meant to end up with, so kibble does not verify it as one.
+var bootstrapPackages = map[string]bool{
+	"pip": true, "pip3": true, "npm": true, "cargo": true, "uv": true,
+	"pipx": true, "yarn": true, "pnpm": true, "setuptools": true, "wheel": true,
+	"virtualenv": true, "build": true,
+}
+
 // classifyPackage matches a line against the known package installs and
 // returns the step kind and the package being installed.
 func classifyPackage(line string) (string, string, bool) {
@@ -240,9 +253,11 @@ func classifyPackage(line string) (string, string, bool) {
 		if inv.Global && !hasGlobalFlag(line) {
 			continue
 		}
-		if pkg := installTarget(line, inv.Words...); pkg != "" {
-			return inv.Kind, normalizePackage(pkg), true
+		pkg := normalizePackage(installTarget(line, inv.Words...))
+		if pkg == "" || bootstrapPackages[pkg] {
+			continue
 		}
+		return inv.Kind, pkg, true
 	}
 	return "", "", false
 }

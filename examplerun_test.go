@@ -162,6 +162,80 @@ func TestClassifyExample(t *testing.T) {
 	}
 }
 
+// TestClassifyExampleMarkerRecovery checks that a documented line whose
+// output ends without a trailing newline still reports its own result. The
+// session prints each marker on a fresh line, and the parser recovers one
+// that arrives glued to earlier output anyway, so a real failure is never
+// filed as a line that did not run.
+func TestClassifyExampleMarkerRecovery(t *testing.T) {
+	t.Parallel()
+	step := InstallStep{Repo: "repo", Kind: "example"}
+	tests := []struct {
+		Out        string
+		WantStatus Status
+		WantLines  []Status
+	}{{ // Test 0: a passing line whose output has no trailing newline.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"1.2.3KIBBLE-LINE b1:0 CODE=0",
+			"KIBBLE-LINE b1:1 CODE=0",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusPass,
+		WantLines:  []Status{StatusPass, StatusPass, StatusPass},
+	}, { // Test 1: a failing line whose output has no trailing newline.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"boom-and-failKIBBLE-LINE b1:1 CODE=3",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusFail,
+		WantLines:  []Status{StatusPass, StatusFail, StatusPass},
+	}, { // Test 2: the newline the session prints keeps the marker on its own line.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"1.2.3",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"KIBBLE-LINE b1:1 CODE=0",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusPass,
+		WantLines:  []Status{StatusPass, StatusPass, StatusPass},
+	}, { // Test 3: output glued to the marker is still that line's output.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"ffmpeg is not installedKIBBLE-LINE b1:1 CODE=1",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusPass,
+		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			res := classifyExample(step, examplePlan(), test.Out, nil, 0)
+			if res.Status != test.WantStatus {
+				t.Errorf("status = %s, want %s (detail %q)", res.Status, test.WantStatus, res.Detail)
+			}
+			var got []Status
+			for _, s := range res.example.Steps {
+				for _, l := range s.Lines {
+					got = append(got, l.Status)
+				}
+			}
+			if diff := cmp.Diff(test.WantLines, got); diff != "" {
+				t.Errorf("line statuses mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestResolveDependentFailures(t *testing.T) {
 	t.Parallel()
 	plan := &Plan{Binaries: []string{"tool"}}
@@ -222,11 +296,20 @@ func TestSessionScript(t *testing.T) {
 		"export B='2'",
 		"KIBBLE-STEP b1 START",
 		"timeout 90 tool init",
-		"printf 'KIBBLE-LINE b1:1 SKIP\\n'",
+		`printf '\nKIBBLE-LINE b1:1 SKIP\n'`,
 		"KIBBLE-DONE",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q", want)
+		}
+	}
+	// Every marker starts its own line, so output that ends without a newline
+	// cannot swallow the marker printed after it.
+	for _, marker := range []string{"KIBBLE-STEP", "KIBBLE-LINE", "KIBBLE-DONE", "KIBBLE-BUILD"} {
+		for _, line := range strings.Split(script, "\n") {
+			if strings.Contains(line, marker) && !strings.Contains(line, `printf '\n`) {
+				t.Errorf("marker %s printed without a leading newline: %q", marker, line)
+			}
 		}
 	}
 	if !wrapped["b1:0"] || !wrapped["b1:2"] {

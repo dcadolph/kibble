@@ -103,7 +103,7 @@ func reportTable(w io.Writer, results []Result) {
 		}
 	}
 	_ = tw.Flush()
-	_, _ = fmt.Fprintf(w, "\n%d pass, %d fail, %d other of %d install steps\n",
+	_, _ = fmt.Fprintf(w, "\n%d pass, %d fail, %d other of %d checks\n",
 		pass, fail, other, len(results))
 }
 

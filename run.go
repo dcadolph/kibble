@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -48,6 +51,10 @@ type Result struct {
 	Image string
 	// helpText is the help output collected for flag checking.
 	helpText string
+	// subCodes maps each cited subcommand to the exit code its help probe
+	// returned, so a subcommand the binary rejects is caught by its exit
+	// rather than by one framework's wording for the error.
+	subCodes map[string]int
 	// example carries per-line outcomes for an example session.
 	example *exampleRun
 }
@@ -96,7 +103,7 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 		script = cloneScriptFor(step, int(d.Timeout.Seconds()))
 	default:
 		if _, isPkg := pkgKinds[step.Kind]; isPkg {
-			script = pkgScriptFor(step, int(d.Timeout.Seconds()))
+			script = pkgScriptFor(step, int(d.Timeout.Seconds())) + helpProbe(step)
 			break
 		}
 		script = fmt.Sprintf(installScript, int(d.Timeout.Seconds()), step.Module, step.Binary)
@@ -108,8 +115,17 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 
 	image := d.imageFor(step)
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", image, "bash", "-c", script)
+	name := containerName()
+	cmd := exec.CommandContext(ctx,
+		"docker", "run", "--rm", "--name", name, image, "bash", "-c", script)
+	cmd.Cancel = removeContainerFunc(cmd, name)
 	out, _ := cmd.CombinedOutput()
+	if ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) {
+		return Result{
+			Step: step, Status: StatusError, Duration: time.Since(start),
+			Detail: "run was interrupted, so this step has no verdict",
+		}
+	}
 	res := classify(step, string(out), time.Since(start))
 	if image != d.Image {
 		res.Image = image
@@ -257,10 +273,14 @@ printf 'SMOKELINE=%%s\n' "$(printf '%%s' "$sout" | head -n1 | cut -c1-70)"
 `
 
 // helpProbe returns the script section that collects the binary's help
-// screens for flag checking. Cited subcommands are probed too, capped and
-// restricted to safe names so nothing unexpected reaches the shell. The list
-// arrives with flag-bearing subcommands first, so the cap never drops one
-// whose flags must be verified.
+// screens for flag checking. Every install script leaves the installed binary
+// in $bin, so the same probe serves a Go, package, or clone install. Cited
+// subcommands are probed too, capped and restricted to safe names so nothing
+// unexpected reaches the shell. The list arrives with flag-bearing
+// subcommands first, so the cap never drops one whose flags must be verified.
+// Each subcommand probe reports its own exit code, which is how a binary that
+// rejects a cited subcommand is caught without matching one framework's
+// wording for the error.
 func helpProbe(step InstallStep) string {
 	if step.Usage == nil {
 		return ""
@@ -282,13 +302,38 @@ func helpProbe(step InstallStep) string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString("echo KIBBLE-HELP-START\n")
-	b.WriteString(`timeout 15 "$GOBIN/$bin" --help 2>&1 | head -n 200` + "\n")
+	b.WriteString("printf '" + markerLead + "KIBBLE-HELP-START\\n'\n")
+	b.WriteString(`kh=$(timeout 15 "$bin" --help 2>&1)` + "\n")
+	b.WriteString(`printf '%s\n' "$kh" | head -n 200` + "\n")
 	for _, s := range subs {
-		fmt.Fprintf(&b, `timeout 15 "$GOBIN/$bin" %s --help 2>&1 | head -n 200`+"\n", s)
+		fmt.Fprintf(&b, `kh=$(timeout 15 "$bin" %s --help 2>&1); kc=$?`+"\n", s)
+		b.WriteString(`printf '%s\n' "$kh" | head -n 200` + "\n")
+		fmt.Fprintf(&b, "printf '"+markerLead+"KIBBLE-SUB %s CODE=%%d\\n' \"$kc\"\n", s)
 	}
-	b.WriteString("echo KIBBLE-HELP-END\n")
+	b.WriteString("printf '" + markerLead + "KIBBLE-HELP-END\\n'\n")
 	return b.String()
+}
+
+// containerSeq numbers containers within one run so every step gets a name
+// kibble can tear down on its own.
+var containerSeq atomic.Uint64
+
+// containerName returns a container name unique to this process and step.
+func containerName() string {
+	return fmt.Sprintf("kibble-%d-%d", os.Getpid(), containerSeq.Add(1))
+}
+
+// removeContainerFunc returns the cancel hook for a docker run. Killing the
+// docker client leaves the container running, since the daemon owns it, so
+// the hook removes the container by name before killing the client. Without
+// it an interrupted run leaves containers building in the background.
+func removeContainerFunc(cmd *exec.Cmd, name string) func() error {
+	return func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
+		return cmd.Process.Kill()
+	}
 }
 
 // DockerAvailable reports an error when the docker CLI cannot reach a running
@@ -307,6 +352,9 @@ func DockerAvailable(ctx context.Context) error {
 // installScript builds, then smoke-tests, one module inside the container. It
 // prints BUILDCODE, SMOKECODE, and SMOKELINE markers for the parent to read. A
 // build timeout surfaces as BUILDCODE=124 so it is not mistaken for a failure.
+// When the module builds but kibble's guess at the binary name finds nothing,
+// whatever landed in GOBIN is smoke-tested instead, and an empty GOBIN prints
+// NOBIN, so a wrong guess never reads as the documented install failing.
 const installScript = `set -u
 export GOBIN=/root/gobin
 mkdir -p "$GOBIN"
@@ -316,10 +364,18 @@ if [ "$code" -ne 0 ]; then
   printf '%%s\n' "$out" | tail -n 3
   exit 0
 fi
-bin='%s'
-sout=$(timeout 15 "$GOBIN/$bin" --version 2>&1); scode=$?
-if [ "$scode" -ne 0 ]; then sout=$(timeout 15 "$GOBIN/$bin" --help 2>&1); scode=$?; fi
 printf 'BUILDCODE=0\n'
+bin="$GOBIN/%s"
+if [ ! -x "$bin" ]; then
+  b=$(ls "$GOBIN" 2>/dev/null | head -n1)
+  if [ -n "$b" ]; then bin="$GOBIN/$b"; fi
+fi
+if [ ! -x "$bin" ]; then
+  printf 'NOBIN=1\n'
+  exit 0
+fi
+sout=$(timeout 15 "$bin" --version 2>&1); scode=$?
+if [ "$scode" -ne 0 ]; then sout=$(timeout 15 "$bin" --help 2>&1); scode=$?; fi
 printf 'SMOKECODE=%%d\n' "$scode"
 printf 'SMOKELINE=%%s\n' "$(printf '%%s' "$sout" | head -n1 | cut -c1-70)"
 `
@@ -330,6 +386,7 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 	buildCode, smokeCode := -1, -1
 	noBin := false
 	inHelp := false
+	subCodes := map[string]int{}
 	var tail, help []string
 	for _, line := range strings.Split(out, "\n") {
 		switch {
@@ -337,6 +394,9 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 			inHelp = true
 		case strings.HasPrefix(line, "KIBBLE-HELP-END"):
 			inHelp = false
+		case reSubMarker.MatchString(line):
+			m := reSubMarker.FindStringSubmatch(line)
+			subCodes[m[1]], _ = strconv.Atoi(m[2])
 		case inHelp:
 			help = append(help, line)
 		case strings.HasPrefix(line, "BUILDCODE="):
@@ -354,6 +414,9 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 		}
 	}
 	res.helpText = strings.Join(help, "\n")
+	if len(subCodes) > 0 {
+		res.subCodes = subCodes
+	}
 	switch {
 	case buildCode == -1:
 		res.Status = StatusError
@@ -379,6 +442,10 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 	}
 	return res
 }
+
+// reSubMarker parses a KIBBLE-SUB marker into the cited subcommand and the
+// exit code its help probe returned.
+var reSubMarker = regexp.MustCompile(`^KIBBLE-SUB (.+) CODE=(-?\d+)$`)
 
 // reArchMismatch matches the errors a binary built for another architecture
 // produces, so an emulation artifact of the host is not reported as the tool

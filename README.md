@@ -75,7 +75,7 @@ myrepo  flag-check  PASS    0s    9 cited flags ok, 4 subcommands cited
 myrepo  git-clone   PASS    41s   myrepo version 1.4.0
 myrepo  go-install  PASS    28s   myrepo version 1.4.0
 
-5 pass, 0 fail, 0 other of 5 install steps
+5 pass, 0 fail, 0 other of 5 checks
 ```
 
 | Flag        | Default       | What                                     &nbsp; |
@@ -121,10 +121,25 @@ After a successful install, kibble compares the README against the binary itself
 flag cited on a line that invokes the binary, every flag documented in a markdown flag
 table, and every subcommand those lines call, is checked against the collected `--help`
 output. A flag the binary no longer has, or a subcommand it rejects, is reported as
-`DRIFT`. The check is conservative: command lines only count when they invoke the binary
-by name, so flags shown for other tools do not count, and `DRIFT` fails the run only
-under `-strict`. kibble runs this check on its own README, so the flag table above rots
-loudly, not silently.
+`DRIFT`. A rejected subcommand is caught by the exit code of its own help probe rather
+than by matching one command framework's wording, so the check is not tied to the
+library a tool happens to use.
+
+The comparison needs a name to attribute cited flags to, so it covers the installs that
+name their binary up front: every `go install`, whose binary follows from the module
+path, and every package install whose package names the binary it provides. The two
+cases it does not cover are honest gaps rather than silent ones. A `git clone` recipe
+names no binary in advance, and a package that installs a differently named binary, as
+ripgrep provides `rg`, gives the docs nothing to key on; both are still installed and
+smoke-tested, they are just not compared against the README. The check is conservative in
+the other direction too: command lines only count when they invoke the binary by name, so
+flags shown for other tools do not count, and `DRIFT` fails the run only under `-strict`.
+kibble runs this check on its own README, so the flag table above rots loudly, not
+silently.
+
+A repository kibble cannot read is a failure, not a quiet skip. A path with no README, a
+path that does not exist, and a malformed `.kibble.yml` each report `ERROR` and exit
+non-zero, so a typo in a workflow cannot pass as a green check that verified nothing.
 
 ## Examples
 
