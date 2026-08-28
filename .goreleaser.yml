@@ -35,6 +35,9 @@ changelog:
 
 release:
   mode: keep-existing
+  # Without this a rerun dies on "already_exists" when it re-uploads the
+  # archives, before it reaches the steps that follow.
+  replace_existing_artifacts: true
 
 homebrew_casks:
   - name: kibble
