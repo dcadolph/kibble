@@ -50,7 +50,8 @@ func main() {
 	flag.IntVar(&cfg.Workers, "workers", 3, "max concurrent installs")
 	flag.BoolVar(&cfg.JSON, "json", false, "emit results as JSON to stdout")
 	flag.BoolVar(&cfg.Version, "version", false, "print the version and exit")
-	flag.BoolVar(&cfg.Strict, "strict", false, "also fail on timeouts and smoke-test failures")
+	flag.BoolVar(&cfg.Strict, "strict", false,
+		"also fail on timeouts, smoke-test failures, drift, and documentation gaps")
 	flag.BoolVar(&cfg.Examples, "examples", true, "replay README example blocks in the container")
 	flag.BoolVar(&cfg.Plan, "plan", false, "print the example plans as JSON and exit")
 	flag.BoolVar(&cfg.Suggest, "suggest", false,
@@ -410,13 +411,17 @@ func hasRunnable(steps []InstallStep) bool {
 
 // anyFail reports whether the run should exit non-zero. A build failure always
 // counts, and so does an error, since kibble could not do its job and CI should
-// notice. In strict mode, timeouts, smoke-test failures, and doc drift count too.
+// notice. In strict mode, timeouts, smoke-test failures, doc drift, and
+// documentation gaps count too. A gap never fails a default run: it says the
+// document is incomplete, which is worth reporting but is not proof of a
+// broken install, and a checker that breaks everyone's build gets uninstalled.
 func anyFail(results []Result, strict bool) bool {
 	for _, r := range results {
 		if r.Status == StatusFail || r.Status == StatusError {
 			return true
 		}
-		if strict && (r.Status == StatusTimeout || r.Status == StatusPassBuild || r.Status == StatusDrift) {
+		if strict && (r.Status == StatusTimeout || r.Status == StatusPassBuild ||
+			r.Status == StatusDrift || r.Status == StatusGap) {
 			return true
 		}
 	}

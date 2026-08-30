@@ -27,6 +27,11 @@ const (
 	StatusFail Status = "FAIL"
 	// StatusSkipped means v1 does not execute this kind of step.
 	StatusSkipped Status = "SKIP"
+	// StatusGap means the documentation is incomplete: a documented line
+	// names a file, directory, or variable that no documented step creates,
+	// so a reader following the document cannot run it. Unlike a skip, the
+	// gap is the document's, not the container's.
+	StatusGap Status = "GAP"
 	// StatusDrift means the docs cite a flag or subcommand the binary lacks.
 	StatusDrift Status = "DRIFT"
 	// StatusError means kibble itself could not run the step, so the result

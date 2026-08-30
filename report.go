@@ -80,7 +80,7 @@ func reportJSON(w io.Writer, results []Result) {
 func reportTable(w io.Writer, results []Result) {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "REPO\tKIND\tSTATUS\tTIME\tDETAIL")
-	var pass, fail, other int
+	var pass, fail, gap, other int
 	for _, r := range results {
 		detail := r.SmokeLine
 		if r.Detail != "" {
@@ -98,13 +98,15 @@ func reportTable(w io.Writer, results []Result) {
 			pass++
 		case StatusFail:
 			fail++
+		case StatusGap:
+			gap++
 		default:
 			other++
 		}
 	}
 	_ = tw.Flush()
-	_, _ = fmt.Fprintf(w, "\n%d pass, %d fail, %d other of %d checks\n",
-		pass, fail, other, len(results))
+	_, _ = fmt.Fprintf(w, "\n%d pass, %d fail, %d gap, %d other of %d checks\n",
+		pass, fail, gap, other, len(results))
 }
 
 // truncate shortens s to n runes, adding an ellipsis when it cuts.
