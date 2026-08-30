@@ -37,6 +37,7 @@ func TestClassifyExample(t *testing.T) {
 	tests := []struct {
 		Out        string
 		Wrapped    map[string]bool
+		Plan       *Plan
 		WantStatus Status
 		WantLines  []Status
 	}{{ // Test 0: all lines pass.
@@ -70,7 +71,51 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-DONE"),
 		WantStatus: StatusPass,
 		WantLines:  []Status{StatusPass, StatusPass, StatusPass},
-	}, { // Test 3: credential errors downgrade to a skip.
+	}, { // Test 2a: a setting the document never names is the document's gap.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"vamoose: VAMOOSE_CLIENT_ID not set: register an Entra app",
+			"KIBBLE-LINE b1:1 CODE=1",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusGap,
+		WantLines:  []Status{StatusPass, StatusGap, StatusPass},
+	}, { // Test 2b: a credential-shaped name without missing wording still
+		// fails, so a real error naming a token is not swallowed.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"vamoose: MY_TOKEN was rejected by the parser",
+			"KIBBLE-LINE b1:1 CODE=1",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusFail,
+		WantLines:  []Status{StatusPass, StatusFail, StatusPass},
+	}, { // Test 2c: when the document names the setting, supplying it is the
+		// reader's job, so the same failure is a skip and not a gap.
+		Plan: &Plan{
+			Repo: "repo", Binaries: []string{"tool"},
+			Steps: []PlanStep{{ID: "b1", Lines: []PlanLine{
+				{Cmd: "export VAMOOSE_CLIENT_ID=<application-client-id>", Skip: "placeholder"},
+				{Cmd: "tool ask"},
+				{Cmd: "tool check", NonzeroOK: true},
+			}}},
+		},
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"vamoose: VAMOOSE_CLIENT_ID not set: register an Entra app",
+			"KIBBLE-LINE b1:1 CODE=1",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusPass,
+		WantLines:  []Status{StatusSkipped, StatusSkipped, StatusPass},
+	}, { // Test 3: a named setting the document omits is a gap, so this
+		// fixture's key reports rather than disappearing into a skip.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
 			"KIBBLE-STEP b1 START",
@@ -79,8 +124,8 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=2",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+		WantStatus: StatusGap,
+		WantLines:  []Status{StatusPass, StatusGap, StatusPass},
 	}, { // Test 4: a wrapped 124 is a hang, and it wins over pass lines.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -142,7 +187,11 @@ func TestClassifyExample(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			res := classifyExample(step, examplePlan(), test.Out, test.Wrapped, 0)
+			plan := test.Plan
+			if plan == nil {
+				plan = examplePlan()
+			}
+			res := classifyExample(step, plan, test.Out, test.Wrapped, 0)
 			if res.Status != test.WantStatus {
 				t.Errorf("status = %s, want %s (detail %q)", res.Status, test.WantStatus, res.Detail)
 			}
@@ -260,6 +309,21 @@ func TestResolveDependentFailures(t *testing.T) {
 			{Cmd: "tool stats", Status: StatusFail, output: "panic: bad state"},
 		}}},
 		Want: []Status{StatusFail},
+	}, { // Test 3: a failure citing a line the document's own gap stopped is
+		// a skip, so the gap is reported once instead of once per dependent
+		// command. The gap itself stays a gap.
+		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
+			{Cmd: "tool recall x", Status: StatusFail,
+				output: "no index found: run `tool reindex` first"},
+			{Cmd: "tool reindex", Status: StatusGap},
+		}}},
+		Want: []Status{StatusSkipped, StatusGap},
+	}, { // Test 4: a failure after a gap in the same family is a skip too.
+		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
+			{Cmd: "tool index build", Status: StatusGap},
+			{Cmd: "tool index query", Status: StatusFail, output: "no index"},
+		}}},
+		Want: []Status{StatusGap, StatusSkipped},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

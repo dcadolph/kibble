@@ -85,7 +85,7 @@ myrepo  go-install  PASS    28s   myrepo version 1.4.0
 | `-workers`  | `3`           | Max concurrent installs.                        |
 | `-json`     | `false`       | Emit results as JSON to stdout.                 |
 | `-version`  | `false`       | Print the version and exit.                     |
-| `-strict`   | `false`       | Also fail on timeouts and smoke-test failures.  |
+| `-strict`   | `false`       | Also fail on timeouts, smoke failures, drift, and gaps. |
 | `-examples` | `true`        | Replay README example blocks in the container.  |
 | `-plan`     | `false`       | Print the example plans as JSON and exit.       |
 | `-suggest`  | `false`       | Propose a `.kibble.yml` using a model and exit. |
@@ -116,6 +116,16 @@ there, the step is a `SKIP` naming the missing tool rather than a `FAIL`. A verd
 your docs is never a verdict about kibble's own gaps. When kibble itself cannot run a
 step, because the daemon is unreachable or an image will not pull, that is `ERROR`, kept
 separate from `FAIL` for the same reason.
+
+A `SKIP` says kibble could not judge the line. A `GAP` says it did judge it, and the
+document is incomplete: the line names a file, directory, or setting that no documented
+step creates. `cp skill/SKILL.md ~/.claude/skills/tool/SKILL.md` fails for every reader
+when nothing creates that directory first, and a command that exits reporting a setting
+the document never mentions is the same kind of hole. Both used to disappear into the
+same silent skip as a placeholder the reader is meant to fill in, which is the difference
+a gap draws: a placeholder is your reader's job, a gap is yours. Because a document can
+also expect a reader to bring their own file, a gap reports and counts but does not fail
+a run unless `-strict` is set.
 
 After a successful install, kibble compares the README against the binary itself. Every
 flag cited on a line that invokes the binary, every flag documented in a markdown flag
@@ -237,7 +247,7 @@ jobs:
         with:
           repo: .
           # version: v0.3.0   # pin a version, or leave for latest
-          # args: -strict      # fail on timeouts and smoke failures too
+          # args: -strict      # fail on timeouts, smoke failures, drift, and gaps too
 ```
 
 The runner already has Docker, so kibble spins its clean-room containers there.

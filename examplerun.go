@@ -60,6 +60,17 @@ var (
 	reCredErr = regexp.MustCompile(
 		`(?i)api[_ ]?key|credential|unauthorized|forbidden|\b401\b|\b403\b` +
 			`|not (logged|signed) in|\blog ?in\b|authenticat|missing (token|key)`)
+	// reSettingName matches an environment setting a tool names in its own
+	// error, such as VAMOOSE_CLIENT_ID or VAMOOSE_BAMBOOHR_*. Matching the
+	// shape rather than a list of suffixes keeps the rule from needing a new
+	// entry for every credential a tool invents.
+	reSettingName = regexp.MustCompile(`\b[A-Z][A-Z0-9]{2,}(_[A-Z0-9*]+)+\b`)
+	// reMissingPhrase matches the wording that says a required setting is
+	// absent. The name alone is not enough: a document may legitimately print
+	// a variable it already set, so the tool must also say it is missing.
+	reMissingPhrase = regexp.MustCompile(
+		`(?i)\b(not set|unset|is required|are required|missing|not configured` +
+			`|no .{0,20}configured|please set|must set|\bset\b .{0,20}or\b)\b`)
 	// reNetErr matches errors that mean the command needed a network
 	// service the container does not run.
 	reNetErr = regexp.MustCompile(
@@ -68,7 +79,8 @@ var (
 	// fresh session often cannot avoid: the docs query dates and terms that
 	// have no entries yet.
 	reNoData = regexp.MustCompile(
-		`(?i)\bno (entries|results|matches|data|records)\b|\bfound no\b|\bnothing (found|to (show|report))\b`)
+		`(?i)\bno (entries|results|matches|data|records)\b|\bfound no\b` +
+			`|\bnothing (found|to (show|report))\b|\bno \w+(\s\w+)? found\b`)
 	// reEmptyInput matches a command that rejected the empty input the
 	// session's stubbed editor produced.
 	reEmptyInput = regexp.MustCompile(
@@ -458,6 +470,7 @@ func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[strin
 func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[string]bool,
 	done bool, have map[string]bool) (*exampleRun, Status, string) {
 	run := &exampleRun{}
+	documented := documentedSettings(plan)
 	ended := false
 	for _, s := range plan.Steps {
 		es := exampleStep{ID: s.ID, Heading: s.Heading}
@@ -468,6 +481,9 @@ func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[stri
 			switch {
 			case l.Skip != "":
 				lr.Status = StatusSkipped
+				if l.Gap {
+					lr.Status = StatusGap
+				}
 				lr.Detail = l.Skip
 			case !seen && (ended || done):
 				lr.Status = StatusSkipped
@@ -477,7 +493,7 @@ func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[stri
 				lr.Detail = "session ended while this line ran"
 				ended = true
 			default:
-				lr = classifyLineResult(lr, l, o, wrapped[key])
+				lr = classifyLineResult(lr, l, o, wrapped[key], documented)
 			}
 			es.Lines = append(es.Lines, lr)
 		}
@@ -517,11 +533,13 @@ func resolveMissingBinaries(run *exampleRun, plan *Plan, have map[string]bool) {
 	}
 }
 
-// resolveDependentFailures downgrades failures caused by skipped lines: a
-// failure whose output names a skipped command needed that command, and a
-// failure in the same step and subcommand family as an earlier skipped line
-// follows a recipe the session could not fully run. Both are skips, not
-// documentation failures.
+// resolveDependentFailures downgrades failures caused by lines that never
+// ran: a failure whose output names such a command needed it, and a failure
+// in the same step and subcommand family as an earlier one follows a recipe
+// the session could not fully run. Both are skips, not documentation
+// failures. A gap counts as not having run, since the document's own hole
+// stopped the line, and reporting the same hole once per dependent command
+// would bury the one line worth fixing.
 func resolveDependentFailures(run *exampleRun, plan *Plan) {
 	bins := map[string]bool{}
 	for _, b := range plan.Binaries {
@@ -530,7 +548,7 @@ func resolveDependentFailures(run *exampleRun, plan *Plan) {
 	var skippedCmds []string
 	for _, s := range run.Steps {
 		for _, l := range s.Lines {
-			if l.Status != StatusSkipped {
+			if l.Status != StatusSkipped && l.Status != StatusGap {
 				continue
 			}
 			if bin, sub := invokedBinary(l.Cmd, bins); bin != "" && sub != "" {
@@ -547,12 +565,12 @@ func resolveDependentFailures(run *exampleRun, plan *Plan) {
 			}
 			if cited := citedSkipped(l.output, skippedCmds); cited != "" {
 				l.Status = StatusSkipped
-				l.Detail = fmt.Sprintf("needs `%s`, which was skipped", cited)
+				l.Detail = fmt.Sprintf("needs `%s`, which did not run", cited)
 				continue
 			}
 			if prior := earlierSkipInFamily(s.Lines[:li], l.Cmd, bins); prior != "" {
 				l.Status = StatusSkipped
-				l.Detail = fmt.Sprintf("follows `%s`, which was skipped", prior)
+				l.Detail = fmt.Sprintf("follows `%s`, which did not run", prior)
 			}
 		}
 	}
@@ -576,7 +594,7 @@ func earlierSkipInFamily(prior []lineResult, cmd string, bins map[string]bool) s
 		return ""
 	}
 	for _, p := range prior {
-		if p.Status != StatusSkipped {
+		if p.Status != StatusSkipped && p.Status != StatusGap {
 			continue
 		}
 		if pb, ps := invokedBinary(p.Cmd, bins); pb == bin && ps == sub {
@@ -590,8 +608,8 @@ func earlierSkipInFamily(prior []lineResult, cmd string, bins map[string]bool) s
 // the first failure names the broken line, a timeout names the hang, a pass
 // counts coverage, and a run with nothing to do says why.
 func summarize(run *exampleRun) (Status, string) {
-	ran, skipped := 0, 0
-	var firstFail, firstTimeout, firstSkip string
+	ran, skipped, gaps := 0, 0, 0
+	var firstFail, firstTimeout, firstSkip, firstGap string
 	for _, s := range run.Steps {
 		for _, l := range s.Lines {
 			switch l.Status {
@@ -601,6 +619,11 @@ func summarize(run *exampleRun) (Status, string) {
 				skipped++
 				if firstSkip == "" {
 					firstSkip = l.Detail
+				}
+			case StatusGap:
+				gaps++
+				if firstGap == "" {
+					firstGap = fmt.Sprintf("%s %q %s", s.ID, l.Cmd, l.Detail)
 				}
 			case StatusTimeout:
 				if firstTimeout == "" {
@@ -618,6 +641,9 @@ func summarize(run *exampleRun) (Status, string) {
 		return StatusFail, firstFail
 	case firstTimeout != "":
 		return StatusTimeout, firstTimeout
+	case gaps > 0:
+		return StatusGap, fmt.Sprintf("%d %s, first: %s",
+			gaps, plural(gaps, "documentation gap", "documentation gaps"), firstGap)
 	case ran > 0:
 		return StatusPass, fmt.Sprintf("%d lines ran, %d skipped", ran, skipped)
 	default:
@@ -632,7 +658,8 @@ func summarize(run *exampleRun) (Status, string) {
 // classifyLineResult turns one recorded exit into a line result. Errors that
 // only mean the container lacks a terminal, credentials, a network service,
 // a helper command, or data are honest skips, not documentation failures.
-func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool) lineResult {
+func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
+	documented map[string]bool) lineResult {
 	lr.Code = o.code
 	tail := lastLine(strings.Split(o.output, "\n"))
 	switch {
@@ -654,6 +681,17 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool) 
 	case reTTYErr.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Detail = "needs a terminal, which the container lacks"
+	case undocumentedSetting(o.output, documented) != "":
+		// The tool named a setting the document never mentions, so the reader
+		// is not missing an account, they are missing a step nobody wrote down.
+		lr.Status = StatusGap
+		lr.Detail = fmt.Sprintf("needs %s, which no documented step sets: %s",
+			undocumentedSetting(o.output, documented), tail)
+	case reSettingName.MatchString(o.output) && reMissingPhrase.MatchString(o.output):
+		// The document names this setting, so supplying it is the reader's
+		// job and the container simply cannot.
+		lr.Status = StatusSkipped
+		lr.Detail = "needs a setting the reader supplies: " + tail
 	case reCredErr.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Detail = "needs credentials a clean container lacks"
@@ -728,4 +766,59 @@ func repoTar(dir string) []byte {
 	})
 	_ = tw.Close()
 	return buf.Bytes()
+}
+
+// plural picks the singular or plural word for n.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// documentedSettings collects every environment setting the document names,
+// including in lines that do not run, so a placeholder export still counts as
+// the document telling the reader what to supply.
+func documentedSettings(plan *Plan) map[string]bool {
+	out := map[string]bool{}
+	if plan == nil {
+		return out
+	}
+	for _, s := range plan.Steps {
+		for _, l := range s.Lines {
+			for _, m := range reSettingName.FindAllString(l.Cmd, -1) {
+				out[m] = true
+			}
+		}
+	}
+	return out
+}
+
+// undocumentedSetting returns the first setting a failure names that the
+// document never mentions, or empty when the output names none or the
+// document covers them all. A wildcard such as VAMOOSE_BAMBOOHR_* counts as
+// documented when the document names anything sharing its prefix.
+func undocumentedSetting(output string, documented map[string]bool) string {
+	if !reMissingPhrase.MatchString(output) {
+		return ""
+	}
+	for _, m := range reSettingName.FindAllString(output, -1) {
+		if documented[m] {
+			continue
+		}
+		if prefix := strings.TrimSuffix(m, "*"); prefix != m {
+			covered := false
+			for d := range documented {
+				if strings.HasPrefix(d, prefix) {
+					covered = true
+					break
+				}
+			}
+			if covered {
+				continue
+			}
+		}
+		return m
+	}
+	return ""
 }

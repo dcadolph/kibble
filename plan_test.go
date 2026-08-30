@@ -15,6 +15,7 @@ import (
 type planLine struct {
 	Cmd       string
 	Skip      bool
+	Gap       bool
 	NonzeroOK bool
 }
 
@@ -25,7 +26,8 @@ func projectPlan(p *Plan) [][]planLine {
 		var step []planLine
 		for _, l := range s.Lines {
 			step = append(step, planLine{
-				Cmd: flatten(l.Cmd), Skip: l.Skip != "", NonzeroOK: l.NonzeroOK,
+				Cmd: flatten(l.Cmd), Skip: l.Skip != "", Gap: l.Gap,
+				NonzeroOK: l.NonzeroOK,
 			})
 		}
 		out = append(out, step)
@@ -51,13 +53,31 @@ func TestBuildPlan(t *testing.T) {
 	}, { // Test 1: placeholders skip the line.
 		Markdown:  "```sh\ntool add --key <api-key>\n```\n",
 		WantSteps: [][]planLine{{{Cmd: "tool add --key <api-key>", Skip: true}}},
-	}, { // Test 2: a login line poisons later invocations, info lines exempt.
+	}, { // Test 2: a login line skips itself but no longer skips what follows.
+		// The executor downgrades a real credential failure to a skip, so a
+		// later line runs and is judged on its own output instead of being
+		// assumed broken, which is where most of a document's coverage went.
 		Markdown: "```sh\ntool login\ntool sync\ntool --version\n```\n",
 		WantSteps: [][]planLine{{
 			{Cmd: "tool login", Skip: true},
-			{Cmd: "tool sync", Skip: true},
+			{Cmd: "tool sync"},
 			{Cmd: "tool --version"},
 		}},
+	}, { // Test 2a: a file no documented line creates is the document's gap.
+		Markdown:  "```sh\ntool run ./secrets\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "tool run ./secrets", Skip: true, Gap: true}}},
+	}, { // Test 2b: an unset variable is not a gap. An interactive shell
+		// provides names such as HISTFILE that no documented line assigns, so
+		// the document is right and only the container is not that shell.
+		Markdown:  "```sh\ntool run --token $TOKEN\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "tool run --token $TOKEN", Skip: true}}},
+	}, { // Test 2c: a placeholder is the reader's to fill in, so it is not a gap.
+		Markdown:  "```sh\ntool add --key <api-key>\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "tool add --key <api-key>", Skip: true}}},
+	}, { // Test 2d: a documented line that creates the file clears the gap.
+		Markdown:     "```sh\ntouch data.txt\ntool run data.txt\n```\n",
+		WantSteps:    [][]planLine{{{Cmd: "touch data.txt"}, {Cmd: "tool run data.txt"}}},
+		WantFixtures: []string{"data.txt"},
 	}, { // Test 3: two-column usage blocks lose the description column.
 		Markdown: "```\ntool add \"x\"      Append an entry to today.\n" +
 			"tool list          Print every entry.\n```\n",
@@ -80,7 +100,7 @@ func TestBuildPlan(t *testing.T) {
 	}, { // Test 7: structured missing files skip, localhost skips.
 		Markdown: "```sh\ntool load data.csv\ntool ping --base-url http://localhost:9\n```\n",
 		WantSteps: [][]planLine{{
-			{Cmd: "tool load data.csv", Skip: true},
+			{Cmd: "tool load data.csv", Skip: true, Gap: true},
 			{Cmd: "tool ping --base-url http://localhost:9", Skip: true},
 		}},
 	}, { // Test 8: a skipped export poisons lines expanding its variable.
@@ -186,7 +206,7 @@ func TestBuildPlanRepoTree(t *testing.T) {
 	plan := buildPlan("repo", dir, md, []string{"tool"}, nil, nil)
 	want := [][]planLine{{
 		{Cmd: "tool index --file examples/people.csv"},
-		{Cmd: "tool index --file missing.csv", Skip: true},
+		{Cmd: "tool index --file missing.csv", Skip: true, Gap: true},
 	}}
 	if diff := cmp.Diff(want, projectPlan(plan)); diff != "" {
 		t.Errorf("steps mismatch (-want +got):\n%s", diff)

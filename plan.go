@@ -76,6 +76,9 @@ type PlanLine struct {
 	Cmd string `json:"cmd"`
 	// Skip is why the line does not run; empty means it runs.
 	Skip string `json:"skip,omitempty"`
+	// Gap marks a Skip whose cause is the document rather than the
+	// container: the line names something no documented step creates.
+	Gap bool `json:"gap,omitempty"`
 	// NonzeroOK accepts a nonzero exit as documented behavior.
 	NonzeroOK bool `json:"nonzeroOk,omitempty"`
 	// Line is the 1-based README line the command sits on, 0 when unknown.
@@ -229,7 +232,6 @@ func buildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 		binaries: map[string]bool{},
 		tree:     repoTree(dir),
 		created:  map[string]bool{},
-		poisoned: map[string]bool{},
 		badVars:  map[string]bool{},
 		setVars:  map[string]bool{},
 		packages: map[string]bool{},
@@ -309,9 +311,6 @@ type planner struct {
 	tree map[string]bool
 	// created is the set of paths earlier lines or fixtures produce.
 	created map[string]bool
-	// poisoned marks binaries whose documented sign-in was skipped, so
-	// later invocations skip instead of failing on missing credentials.
-	poisoned map[string]bool
 	// badVars holds variables assigned by skipped lines; later lines that
 	// expand them skip instead of running with an empty value.
 	badVars map[string]bool
@@ -388,7 +387,7 @@ func (pl *planner) addBlock(block codeBlock) {
 		if shownErr[strings.TrimSpace(flat)] {
 			line.NonzeroOK = true
 		}
-		line.Skip = pl.skipReason(flat)
+		line.Skip, line.Gap = pl.skipReason(flat)
 		if line.Skip == "" && lostDir {
 			line.Skip = "follows a skipped cd, so it would run in the wrong directory"
 		}
@@ -489,68 +488,64 @@ func (pl *planner) qualifies(lines []string) bool {
 // when it can. The checks run in order of how specific their reason is.
 // Substitutions have already been applied, so a placeholder that survives
 // here is one the reader was meant to fill in.
-func (pl *planner) skipReason(flat string) string {
+func (pl *planner) skipReason(flat string) (string, bool) {
 	if rePlaceholder.MatchString(commandHead(flat)) {
-		return "docs use a placeholder the reader must fill in"
+		return "docs use a placeholder the reader must fill in", false
 	}
 	if reLocalhost.MatchString(flat) {
-		return "needs a local service the docs assume is running"
+		return "needs a local service the docs assume is running", false
 	}
 	bin, sub := invokedBinary(flat, pl.binaries)
 	if bin != "" && reLogin.MatchString(flat) {
-		pl.poisoned[bin] = true
-		return "needs an interactive sign-in"
-	}
-	if bin != "" && pl.poisoned[bin] && !isInfoInvocation(flat) {
-		return "needs the sign-in the docs run first, which was skipped"
+		return "needs an interactive sign-in", false
 	}
 	if bin != "" && sub == "audio" {
-		return "records audio, which the container cannot"
+		return "records audio, which the container cannot", false
 	}
 	if bin != "" && interactiveSubs[sub] {
-		return "starts an interactive or long-running session the container cannot judge"
+		return "starts an interactive or long-running session the container cannot judge", false
 	}
 	if hasBareStdinDash(flat) {
-		return "reads stdin, which the session does not provide"
+		return "reads stdin, which the session does not provide", false
 	}
 	if reGitState.MatchString(flat) {
-		return "needs git history or a remote, which the fresh session repo lacks"
+		return "needs git history or a remote, which the fresh session repo lacks", false
 	}
 	if dir := systemCd(flat); dir != "" {
-		return fmt.Sprintf("changes into %s, which only the reader's system has", dir)
+		return fmt.Sprintf("changes into %s, which only the reader's system has", dir), false
 	}
 	if reFishSource.MatchString(flat) {
-		return "written for the fish shell, and the session runs bash"
+		return "written for the fish shell, and the session runs bash", false
 	}
 	if reForeignShellFile.MatchString(flat) {
-		return "written for another shell, and the session runs bash"
+		return "written for another shell, and the session runs bash", false
 	}
 	if sh := foreignShellFlag(flat); sh != "" {
-		return fmt.Sprintf("asks for the %s shell, which the container does not have", sh)
+		return fmt.Sprintf("asks for the %s shell, which the container does not have", sh), false
 	}
 	if reKernelPath.MatchString(flat) {
-		return "touches kernel interfaces the container does not expose"
+		return "touches kernel interfaces the container does not expose", false
 	}
 	if miss := pl.missingGlob(flat); miss != "" {
-		return fmt.Sprintf("globs %s, which the docs never create", miss)
+		return fmt.Sprintf("globs %s, which the docs never create", miss), true
 	}
 	if bin != "" && bareWordPlaceholder(flat) != "" {
 		return fmt.Sprintf("docs use %q as a placeholder the reader must fill in",
-			bareWordPlaceholder(flat))
+			bareWordPlaceholder(flat)), false
 	}
 	expandable := withoutSingleQuoted(flat)
 	for v := range pl.badVars {
 		if strings.Contains(expandable, "$"+v) || strings.Contains(expandable, "${"+v+"}") {
-			return fmt.Sprintf("expands $%s, which a skipped line was to set", v)
+			return fmt.Sprintf("expands $%s, which a skipped line was to set", v), false
 		}
 	}
 	if v := pl.unsetVar(flat); v != "" {
-		return fmt.Sprintf("expands $%s, which the docs never set", v)
+		return fmt.Sprintf("expands $%s, which the docs never set", v), false
 	}
 	if path := pl.missingFile(flat); path != "" {
-		return fmt.Sprintf("references %s, which the docs never create", path)
+		return fmt.Sprintf("references %s, which the docs never create", path), true
 	}
-	return ""
+	return "", false
 }
 
 // reVarExpansion matches a shell variable expansion such as $HOME or ${HOME}.
@@ -852,6 +847,7 @@ func (pl *planner) applyRules(line *PlanLine, step *PlanStep, flat string) {
 		}
 		if rule.Skip != "" {
 			line.Skip = rule.Skip
+			line.Gap = false
 		}
 		if rule.Run {
 			line.Skip = ""
@@ -1078,14 +1074,6 @@ func trailingComment(flat string) string {
 		return flat[i:]
 	}
 	return ""
-}
-
-// isInfoInvocation reports whether a line only asks a binary about itself,
-// which works without the sign-in the rest of the docs need.
-func isInfoInvocation(flat string) bool {
-	f := stripComment(flat)
-	return strings.Contains(f, "--help") || strings.Contains(f, "--version") ||
-		strings.Contains(f, " version") || strings.Contains(f, " help")
 }
 
 // hasBareStdinDash reports whether a line passes a bare - argument with no

@@ -33,6 +33,13 @@ func TestAnyFail(t *testing.T) {
 		Results: []Result{res(StatusDrift)}, Strict: false, Want: false,
 	}, { // Test 6: doc drift fails under strict.
 		Results: []Result{res(StatusDrift)}, Strict: true, Want: true,
+	}, { // Test 7: a documentation gap reports but does not fail by default,
+		// since a document may expect the reader to bring their own file.
+		Results: []Result{res(StatusGap)}, Strict: false, Want: false,
+	}, { // Test 8: a documentation gap fails under strict.
+		Results: []Result{res(StatusGap)}, Strict: true, Want: true,
+	}, { // Test 9: a gap alongside a real failure still fails.
+		Results: []Result{res(StatusGap), res(StatusFail)}, Strict: false, Want: true,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
