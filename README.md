@@ -127,6 +127,12 @@ a gap draws: a placeholder is your reader's job, a gap is yours. Because a docum
 also expect a reader to bring their own file, a gap reports and counts but does not fail
 a run unless `-strict` is set.
 
+Some documents name a file the reader is meant to supply, such as a calendar export or a
+profile they write themselves. That reads as a gap because kibble cannot tell it from a
+step somebody forgot. Settle it in `.kibble.yml`: give the session a fixture when a small
+valid file makes the line run for real, or a step rule with a `skip` reason when only the
+reader can supply the thing.
+
 After a successful install, kibble compares the README against the binary itself. Every
 flag cited on a line that invokes the binary, every flag documented in a markdown flag
 table, and every subcommand those lines call, is checked against the collected `--help`

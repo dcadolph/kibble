@@ -172,6 +172,29 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-DONE"),
 		WantStatus: StatusPass,
 		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+	}, { // Test 8a: a tool that asks for an interactive terminal skips.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"tool: connect needs an interactive terminal; use 'tool index' for scripts",
+			"KIBBLE-LINE b1:1 CODE=1",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusPass,
+		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+	}, { // Test 8b: a tool that aborts an interactive approval changed
+		// nothing, so the document is not broken.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"Aborted. Nothing was changed.",
+			"KIBBLE-LINE b1:1 CODE=8",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusPass,
+		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
 	}, { // Test 9: a missing system dependency skips, not fails.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
