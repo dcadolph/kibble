@@ -54,7 +54,9 @@ type lineResult struct {
 var (
 	// reTTYErr matches errors that mean the command needed a terminal.
 	reTTYErr = regexp.MustCompile(
-		`(?i)/dev/tty|not a (tty|terminal)|terminal is required|requires a terminal|no tty`)
+		`(?i)/dev/tty|not a (tty|terminal)|terminal is required|requires a terminal|no tty` +
+			`|needs an interactive terminal|interactive terminal|must be run interactively` +
+			`|not interactive|requires a controlling terminal`)
 	// reCredErr matches errors that mean the command needed credentials a
 	// clean container cannot have.
 	reCredErr = regexp.MustCompile(
@@ -70,7 +72,8 @@ var (
 	// a variable it already set, so the tool must also say it is missing.
 	reMissingPhrase = regexp.MustCompile(
 		`(?i)\b(not set|unset|is required|are required|missing|not configured` +
-			`|no .{0,20}configured|please set|must set|\bset\b .{0,20}or\b)\b`)
+			`|no .{0,20}configured|please set|must set)\b` +
+			`|\bset [A-Z][A-Z0-9_*]{2,}`)
 	// reNetErr matches errors that mean the command needed a network
 	// service the container does not run.
 	reNetErr = regexp.MustCompile(
@@ -80,11 +83,19 @@ var (
 	// have no entries yet.
 	reNoData = regexp.MustCompile(
 		`(?i)\bno (entries|results|matches|data|records)\b|\bfound no\b` +
-			`|\bnothing (found|to (show|report))\b|\bno \w+(\s\w+)? found\b`)
+			`|\bnothing (found|to (show|report))\b|\bno \w+(\s\w+)? found\b` +
+			`|\bno [a-z]+ (backups?|snapshots?|indexes|indices)\b`)
 	// reEmptyInput matches a command that rejected the empty input the
 	// session's stubbed editor produced.
 	reEmptyInput = regexp.MustCompile(
 		`(?i)\b(entry|body|input|message|text) is empty\b|\bempty (entry|body|input|message)\b`)
+	// reNoChange matches a tool reporting it changed nothing. A session that
+	// cannot answer an interactive approval sees this for any command whose
+	// docs assume a person is watching, and a tool that changed nothing did
+	// not break the document.
+	reNoChange = regexp.MustCompile(
+		`(?i)\bnothing was changed\b|\bno changes (were )?made\b` +
+			`|\baborted by (the )?user\b|\bnothing to (do|change|commit)\b`)
 	// reNoExec matches the Go exec error for a missing helper program.
 	reNoExec = regexp.MustCompile(`executable file not found`)
 	// reMissingDep matches a tool reporting that a system dependency it needs
@@ -141,7 +152,8 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 	start := time.Now()
 	name := containerName()
 	cmd := exec.CommandContext(ctx,
-		"docker", "run", "--rm", "-i", "--name", name, image, "bash", "-c", script)
+		"docker", "run", "--rm", "-i", "--name", name,
+		"-e", "GOTOOLCHAIN=auto", image, "bash", "-c", script)
 	cmd.Cancel = removeContainerFunc(cmd, name)
 	cmd.Stdin = bytes.NewReader(repoTar(step.dir))
 	out, _ := cmd.CombinedOutput()
@@ -698,6 +710,9 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 	case reNetErr.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Detail = "needs a network service the container lacks"
+	case reNoChange.MatchString(o.output):
+		lr.Status = StatusSkipped
+		lr.Detail = "changed nothing, since the session cannot approve it: " + tail
 	case reNoData.MatchString(o.output) || tail == "not found":
 		lr.Status = StatusSkipped
 		lr.Detail = "query found no data in the fresh session"
@@ -783,6 +798,9 @@ func documentedSettings(plan *Plan) map[string]bool {
 	out := map[string]bool{}
 	if plan == nil {
 		return out
+	}
+	for _, n := range plan.Settings {
+		out[n] = true
 	}
 	for _, s := range plan.Steps {
 		for _, l := range s.Lines {

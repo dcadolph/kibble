@@ -121,8 +121,12 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	image := d.imageFor(step)
 	start := time.Now()
 	name := containerName()
+	// The official Go images pin GOTOOLCHAIN=local, so a module asking for a
+	// newer Go than the image ships fails to install. A reader running the
+	// default fetches that toolchain, so the session matches them instead.
 	cmd := exec.CommandContext(ctx,
-		"docker", "run", "--rm", "--name", name, image, "bash", "-c", script)
+		"docker", "run", "--rm", "--name", name,
+		"-e", "GOTOOLCHAIN=auto", image, "bash", "-c", script)
 	cmd.Cancel = removeContainerFunc(cmd, name)
 	out, _ := cmd.CombinedOutput()
 	if ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) {
@@ -139,6 +143,12 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 		if name, missing := missingCommand(string(out)); missing {
 			res.Status = StatusSkipped
 			res.Detail = fmt.Sprintf("recipe needs %s, which %s does not provide", name, image)
+		} else if m := reNewerToolchain.FindStringSubmatch(string(out)); m != nil {
+			// The module asks for a newer toolchain than the image ships and
+			// the session pins GOTOOLCHAIN, so the install a reader would get
+			// was never attempted. That is kibble's gap, not the document's.
+			res.Status = StatusSkipped
+			res.Detail = fmt.Sprintf("needs Go %s, newer than %s provides", m[1], image)
 		} else if reNetworkError.MatchString(string(out)) {
 			res.Status = StatusError
 			res.Detail = "network error during the step, result unknown: " + res.Detail
@@ -149,6 +159,11 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 
 // reNetworkError matches container output that names a network failure, so a
 // flaky connection is reported as kibble's error rather than broken docs.
+// reNewerToolchain matches a module requiring a newer Go than the image ships,
+// such as "requires go >= 1.26.6 (running go 1.26.5)". A reader running the
+// default GOTOOLCHAIN would fetch that toolchain, so the document is not wrong.
+var reNewerToolchain = regexp.MustCompile(`requires go >= ([0-9][0-9.]*)`)
+
 var reNetworkError = regexp.MustCompile(
 	`Connection refused|Could not resolve host|Temporary failure in name resolution|Network is unreachable|TLS handshake timeout|connection reset by peer|Connection timed out`)
 

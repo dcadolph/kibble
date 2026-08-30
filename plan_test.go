@@ -40,6 +40,7 @@ func TestBuildPlan(t *testing.T) {
 	tests := []struct {
 		Markdown     string
 		Cfg          *ExamplesConfig
+		Module       string
 		WantSteps    [][]planLine
 		WantFixtures []string
 		WantPackages []string
@@ -76,8 +77,36 @@ func TestBuildPlan(t *testing.T) {
 		WantSteps: [][]planLine{{{Cmd: "tool add --key <api-key>", Skip: true}}},
 	}, { // Test 2d: a documented line that creates the file clears the gap.
 		Markdown:     "```sh\ntouch data.txt\ntool run data.txt\n```\n",
-		WantSteps:    [][]planLine{{{Cmd: "touch data.txt"}, {Cmd: "tool run data.txt"}}},
-		WantFixtures: []string{"data.txt"},
+		WantSteps: [][]planLine{{{Cmd: "touch data.txt"}, {Cmd: "tool run data.txt"}}},
+	}, { // Test 2e: a copy's destination is what the line produces, so it is
+		// not a missing input even though nothing created it first.
+		Markdown: "```sh\nmkdir -p ~/.config/tool\ncp conf.md ~/.config/tool/conf.md\n```\n",
+		WantSteps: [][]planLine{{
+			{Cmd: "mkdir -p ~/.config/tool"},
+			{Cmd: "cp conf.md ~/.config/tool/conf.md"},
+		}},
+		WantFixtures: []string{"conf.md"},
+	}, { // Test 2f: `go get` of the repository's own module documents library
+		// use in the reader's project, so running it here would add the module
+		// to itself. That is the session's wrong directory, not a doc bug.
+		Markdown:  "```sh\ngo get example.com/tool/sanitize\n```\n",
+		Module:    "example.com/tool",
+		WantSteps: [][]planLine{{{Cmd: "go get example.com/tool/sanitize", Skip: true}}},
+	}, { // Test 2g: a line naming a remote-tracking revision needs history the
+		// session's copy of the repository does not have.
+		Markdown:  "```sh\ntool --base origin/main~4\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "tool --base origin/main~4", Skip: true}}},
+	}, { // Test 2h: a path under the reader's home is theirs, not the
+		// document's to create, and an interactive flag cannot be answered.
+		// Bare -i is left alone: it means in-place far more often than it
+		// means interactive, and skipping it breaks the lines that follow.
+		Markdown: "```sh\ntool ingest git ~/src/project\ntool ask --interactive\ntool fix -i notes.md\n```\n",
+		WantSteps: [][]planLine{{
+			{Cmd: "tool ingest git ~/src/project", Skip: true},
+			{Cmd: "tool ask --interactive", Skip: true},
+			{Cmd: "tool fix -i notes.md"},
+		}},
+		WantFixtures: []string{"notes.md"},
 	}, { // Test 3: two-column usage blocks lose the description column.
 		Markdown: "```\ntool add \"x\"      Append an entry to today.\n" +
 			"tool list          Print every entry.\n```\n",
@@ -171,7 +200,15 @@ func TestBuildPlan(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			plan := buildPlan("repo", "", test.Markdown, []string{"tool"},
+			dir := ""
+			if test.Module != "" {
+				dir = t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, "go.mod"),
+					[]byte("module "+test.Module+"\n"), 0o600); err != nil {
+					t.Fatalf("write go.mod: %v", err)
+				}
+			}
+			plan := buildPlan("repo", dir, test.Markdown, []string{"tool"},
 				[]PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}}, test.Cfg)
 			if diff := cmp.Diff(test.WantSteps, projectPlan(plan), cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("steps mismatch (-want +got):\n%s", diff)

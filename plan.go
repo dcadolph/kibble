@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -28,6 +29,10 @@ type Plan struct {
 	Fixtures []Fixture `json:"fixtures,omitempty"`
 	// Steps are the example blocks in documented order.
 	Steps []PlanStep `json:"steps,omitempty"`
+	// Settings are environment names the document mentions anywhere, prose
+	// and tables included. A tool that fails asking for one of these is
+	// asking the reader for something the document already told them about.
+	Settings []string `json:"settings,omitempty"`
 	// Excluded counts code blocks that are not shell recipes.
 	Excluded int `json:"excluded,omitempty"`
 }
@@ -187,7 +192,8 @@ var (
 	// no commits and no remotes, so these commands fail there even when the
 	// docs are right.
 	reGitState = regexp.MustCompile(
-		`\bgit\s+(-\S+\s+)*(fetch|pull|push|show|describe|log|rebase|merge|cherry-pick|revert|blame|bisect|shortlog|submodule)\b|\bgit\b[^|;&]*\b(origin|upstream)\b`)
+		`\bgit\s+(-\S+\s+)*(fetch|pull|push|show|describe|log|rebase|merge|cherry-pick|revert|blame|bisect|shortlog|submodule)\b|\bgit\b[^|;&]*\b(origin|upstream)\b` +
+			`|\b(origin|upstream)/[A-Za-z0-9._/-]+`)
 	// reLocalhost matches a reference to a service on the local machine,
 	// which a clean container does not have.
 	reLocalhost = regexp.MustCompile(`\blocalhost\b|127\.0\.0\.1`)
@@ -208,6 +214,10 @@ var (
 	// file is never faked, only reported as absent.
 	reHomeFileArg = regexp.MustCompile(
 		`^~/[\w.][\w./+-]*\.(md|txt|yaml|yml|json|toml|ini|conf|cfg|env|sh|rc)$`)
+	// reHomePathArg matches any path under the reader's home directory, such
+	// as ~/src/project. The container's home holds none of it, and a document
+	// citing one is showing the reader where their own work lives.
+	reHomePathArg = regexp.MustCompile(`^~/[\w.][\w./+-]*$`)
 	// reCreatedToken matches a token a line creates: a redirect target, an
 	// -o argument, or the arguments of mkdir, touch, cp, or mv.
 	reCreatedToken = regexp.MustCompile(
@@ -231,6 +241,7 @@ func buildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 		plan:     p,
 		binaries: map[string]bool{},
 		tree:     repoTree(dir),
+		module:   moduledPath(dir),
 		created:  map[string]bool{},
 		badVars:  map[string]bool{},
 		setVars:  map[string]bool{},
@@ -260,6 +271,7 @@ func buildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 			pl.packages[pkg] = true
 		}
 	}
+	pl.plan.Settings = documentedSettingNames(markdown)
 	for _, block := range codeBlocks(markdown) {
 		if block.Span || !shellLangs[block.Lang] {
 			continue
@@ -311,6 +323,8 @@ type planner struct {
 	tree map[string]bool
 	// created is the set of paths earlier lines or fixtures produce.
 	created map[string]bool
+	// module is the repository's own Go module path, empty when it has none.
+	module string
 	// badVars holds variables assigned by skipped lines; later lines that
 	// expand them skip instead of running with an empty value.
 	badVars map[string]bool
@@ -495,6 +509,9 @@ func (pl *planner) skipReason(flat string) (string, bool) {
 	if reLocalhost.MatchString(flat) {
 		return "needs a local service the docs assume is running", false
 	}
+	if pl.getsOwnModule(flat) {
+		return "adds this module to the reader's own project, not to itself", false
+	}
 	bin, sub := invokedBinary(flat, pl.binaries)
 	if bin != "" && reLogin.MatchString(flat) {
 		return "needs an interactive sign-in", false
@@ -504,6 +521,9 @@ func (pl *planner) skipReason(flat string) (string, bool) {
 	}
 	if bin != "" && interactiveSubs[sub] {
 		return "starts an interactive or long-running session the container cannot judge", false
+	}
+	if bin != "" && interactiveFlag(flat) {
+		return "asks for an interactive session the container cannot hold", false
 	}
 	if hasBareStdinDash(flat) {
 		return "reads stdin, which the session does not provide", false
@@ -544,6 +564,9 @@ func (pl *planner) skipReason(flat string) (string, bool) {
 	}
 	if path := pl.missingFile(flat); path != "" {
 		return fmt.Sprintf("references %s, which the docs never create", path), true
+	}
+	if p := pl.missingHomePath(flat); p != "" {
+		return fmt.Sprintf("reads %s, which only the reader's machine has", p), false
 	}
 	return "", false
 }
@@ -871,7 +894,7 @@ func (pl *planner) missingFile(flat string) string {
 	flat = stripComment(flat)
 	fields := strings.Fields(flat)
 	for i, raw := range fields {
-		if i == 0 {
+		if i == 0 || isOutputArg(fields, i) {
 			continue
 		}
 		tok := raw
@@ -934,6 +957,23 @@ func (pl *planner) recordCreated(flat string) {
 
 // createsToken reports whether the line itself creates the token, such as a
 // redirect target, so the target of `echo x > f.yaml` is not marked missing.
+// isOutputArg reports whether a command writes the argument at i rather than
+// reading it. A copy's destination and a mkdir's path are things the line
+// produces, so requiring them to exist first would report the document as
+// incomplete for a step that is doing the creating.
+func isOutputArg(fields []string, i int) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "mkdir", "touch", "mktemp":
+		return true
+	case "cp", "mv", "install", "ln":
+		return i == len(fields)-1
+	}
+	return false
+}
+
 func createsToken(flat, tok string) bool {
 	for _, m := range reCreatedToken.FindAllStringSubmatch(flat, -1) {
 		for _, t := range m[1:] {
@@ -1122,4 +1162,99 @@ func repoTree(dir string) map[string]bool {
 		return nil
 	})
 	return tree
+}
+
+// reSettingMention matches an environment setting named anywhere in the
+// document. Readers are commonly told about a variable in a table or a
+// sentence rather than in a runnable line, and a document that names one has
+// told the reader what to supply.
+var reSettingMention = regexp.MustCompile(`\b[A-Z][A-Z0-9]{2,}(_[A-Z0-9*]+)+\b`)
+
+// documentedSettingNames collects every environment setting the document
+// mentions, in any context.
+func documentedSettingNames(markdown string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range reSettingMention.FindAllString(markdown, -1) {
+		if !seen[m] {
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// moduledPath returns the repository's own Go module path, or empty when the
+// directory has no go.mod.
+func moduledPath(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
+}
+
+// getsOwnModule reports whether a line asks Go to fetch the repository's own
+// module. A library documents `go get <its own path>` for the reader to run
+// inside their project; run inside the repository it would add the module to
+// itself, which Go refuses. The document is right and the session is simply
+// standing in the wrong directory.
+func (pl *planner) getsOwnModule(flat string) bool {
+	if pl.module == "" {
+		return false
+	}
+	fields := strings.Fields(stripComment(flat))
+	if len(fields) < 3 || fields[0] != "go" {
+		return false
+	}
+	if fields[1] != "get" && fields[1] != "install" {
+		return false
+	}
+	for _, tok := range fields[2:] {
+		path, _, _ := strings.Cut(tok, "@")
+		if path == pl.module || strings.HasPrefix(path, pl.module+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// interactiveFlag reports whether a line asks a binary to run interactively.
+// Only the long form counts: bare -i means in-place to sed and cipher,
+// ignore-case to grep, and interactive to git rebase, so reading it as a
+// prompt skips working lines and breaks the ones that follow them. A repo
+// whose -i does mean interactive says so in .kibble.yml.
+func interactiveFlag(flat string) bool {
+	for _, f := range strings.Fields(stripComment(flat)) {
+		if f == "--interactive" {
+			return true
+		}
+	}
+	return false
+}
+
+// missingHomePath returns the first path under the reader's home directory
+// that no documented step creates. A document naming ~/src/project is telling
+// the reader where their own work lives, not describing a file it ships.
+func (pl *planner) missingHomePath(flat string) string {
+	fields := strings.Fields(stripComment(flat))
+	for i, tok := range fields {
+		if i == 0 || isOutputArg(fields, i) {
+			continue
+		}
+		if !reHomePathArg.MatchString(tok) || pl.created[tok] {
+			continue
+		}
+		return tok
+	}
+	return ""
 }
