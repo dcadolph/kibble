@@ -133,6 +133,16 @@ step somebody forgot. Settle it in `.kibble.yml`: give the session a fixture whe
 valid file makes the line run for real, or a step rule with a `skip` reason when only the
 reader can supply the thing.
 
+Drift runs in both directions. The check below asks whether every flag and subcommand the
+docs cite exists in the binary. The reverse question, whether every command the binary
+advertises appears in the docs, is `doc-coverage`, and it catches the more common rot: a
+feature ships and nobody writes it down. The public surface is whatever `--help` prints,
+so a command a parser hides is deliberately private and never counted, and no allowlist is
+needed to say so. A command missing from every document is a `GAP`. A command documented
+somewhere but not in the README is reported as a count beside the total, never as a
+failure, because which commands earn README space is an editorial call and one finding per
+command would bury the one worth reading.
+
 After a successful install, kibble compares the README against the binary itself. Every
 flag cited on a line that invokes the binary, every flag documented in a markdown flag
 table, and every subcommand those lines call, is checked against the collected `--help`
