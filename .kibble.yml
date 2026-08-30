@@ -1,0 +1,12 @@
+# Settings kibble uses when it replays its own README in a clean container.
+# ./myrepo stands in for whatever repository the reader points kibble at, so
+# the session has nothing to supply there. It is also the one path kibble must
+# never run for real on itself: doing so would start a container from inside a
+# container, which is not what the documentation is asking a reader to do.
+version: 1
+examples:
+  steps:
+    - match: "./myrepo"
+      skip: "stands in for the reader's own repository"
+    - match: "./repo-a"
+      skip: "stands in for one of the reader's own repositories"
