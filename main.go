@@ -107,6 +107,7 @@ func main() {
 		os.Exit(130)
 	}
 	results = append(results, flagChecks(results)...)
+	results = append(results, docCoverageChecks(results)...)
 	results = append(results, problems...)
 
 	report(os.Stdout, results, cfg.JSON)
