@@ -140,6 +140,7 @@ var interactiveSubs = map[string]bool{
 	"demo": true, "serve": true, "server": true, "daemon": true, "app": true,
 	"tui": true, "dashboard": true, "repl": true, "console": true, "web": true,
 	"record": true, "watch": true, "attach": true, "shell": true, "top": true,
+	"bot": true, "listen": true, "proxy": true, "gateway": true, "agent": true,
 }
 
 // findingSubs are subcommands whose documented behavior is to exit nonzero
@@ -182,7 +183,8 @@ var (
 	// values that trail off in an ellipsis. The ellipsis is ignored after a
 	// slash so a Go package pattern such as ./... is not mistaken for one.
 	rePlaceholder = regexp.MustCompile(
-		`<[^<>\s]+>|(^|[^${])\{[A-Za-z][A-Za-z0-9_]*\}|(^|\s)\[[^\[\]\s]+\](\s|$)` +
+		`<[^<>\s]+>|=<[^<>]+>|(^|[^${])\{[A-Za-z][A-Za-z0-9_]*\}|(^|\s)\[[^\[\]\s]+\](\s|$)` +
+			`|\[[^\[\]]*--[^\[\]]*\]` +
 			`|\bxxxx\b|\*\*\*|\bpath/to/|/(home|Users)/(user|you|me|username|yourname)\b` +
 			`|(^|[^/])\.\.\.($|[\s'".])`)
 	// reLogin matches a command that starts an interactive sign-in.
@@ -736,6 +738,11 @@ var upperPlaceholderWords = map[string]bool{
 // left to run.
 var reUpperPlaceholder = regexp.MustCompile(`^[A-Z][A-Z0-9_]*(FILE|DIR|DIRECTORY|PATH|NAME)$`)
 
+// reUpperArg matches an all-caps positional argument such as TOPIC or SUBJECT.
+// A reference page prints a synopsis rather than a command a reader copies
+// whole, and the capitals are the convention that says so.
+var reUpperArg = regexp.MustCompile(`^[A-Z][A-Z0-9_]+$`)
+
 // bareWordPlaceholder returns the first positional token that is a
 // conventional placeholder word, or empty when none is. The command word
 // itself is exempt, since a tool could be named pattern.
@@ -746,7 +753,8 @@ func bareWordPlaceholder(flat string) string {
 		if i == 0 || strings.HasPrefix(tok, "-") {
 			continue
 		}
-		if placeholderWords[tok] || upperPlaceholderWords[tok] || reUpperPlaceholder.MatchString(tok) {
+		if placeholderWords[tok] || upperPlaceholderWords[tok] ||
+			reUpperPlaceholder.MatchString(tok) || reUpperArg.MatchString(tok) {
 			return tok
 		}
 	}

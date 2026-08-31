@@ -107,6 +107,17 @@ func TestBuildPlan(t *testing.T) {
 			{Cmd: "tool fix -i notes.md"},
 		}},
 		WantFixtures: []string{"notes.md"},
+	}, { // Test 2i: an assignment whose value is a bracketed placeholder is
+		// skipped. Bash would read the brackets as redirects and hang.
+		Markdown:  "```sh\nSECRET_KEY=<from openssl rand -base64 32>\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "SECRET_KEY=<from openssl rand -base64 32>", Skip: true}}},
+	}, { // Test 2j: a reference page prints a synopsis rather than a command a
+		// reader copies whole, and the capitals and brackets say so.
+		Markdown: "```sh\ntool related TOPIC [--limit N]\ntool serve\n```\n",
+		WantSteps: [][]planLine{{
+			{Cmd: "tool related TOPIC [--limit N]", Skip: true},
+			{Cmd: "tool serve", Skip: true},
+		}},
 	}, { // Test 3: two-column usage blocks lose the description column.
 		Markdown: "```\ntool add \"x\"      Append an entry to today.\n" +
 			"tool list          Print every entry.\n```\n",
