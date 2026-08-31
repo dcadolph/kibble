@@ -227,6 +227,12 @@ to run, skip, or run in the background with a readiness probe. Every choice live
 file, so the run stays reproducible and the engine stays the thing that decides pass or
 fail. Set `disable: true` to turn example checks off for a repository entirely.
 
+A tool that watches or serves is the case worth configuring first. kibble skips the
+documented binary invoked bare, since the smoke test already proved it runs, but an
+invocation with arguments such as `nodemon -e js,pug` starts a watcher that never returns
+and costs the line timeout before the run moves on. Mark those `background: true` with a
+`readyLog`, or `skip` them.
+
 The most common use is a scanner or linter whose whole job is to exit nonzero when it
 finds something. Point it at real code and it does exactly that, which is the tool working,
 not the docs breaking. One `nonzeroOk` line settles it.

@@ -118,6 +118,39 @@ func TestBuildPlan(t *testing.T) {
 			{Cmd: "tool related TOPIC [--limit N]", Skip: true},
 			{Cmd: "tool serve", Skip: true},
 		}},
+	}, { // Test 2k: a bracketed placeholder holds words, not just one token,
+		// and running it starts whatever the reader was meant to substitute.
+		// A shell test opens with a space, so it is not mistaken for one.
+		Markdown: "```sh\ntool [your node app]\ntool run\n```\n",
+		WantSteps: [][]planLine{{
+			{Cmd: "tool [your node app]", Skip: true},
+			{Cmd: "tool run"},
+		}},
+	}, { // Test 2l: sourcing another shell's completions cannot work in bash,
+		// though generating them is fine.
+		Markdown: "```sh\nsource <(tool --generate complete-zsh)\ntool run\n```\n",
+		WantSteps: [][]planLine{{
+			{Cmd: "source <(tool --generate complete-zsh)", Skip: true},
+			{Cmd: "tool run"},
+		}},
+	}, { // Test 2m: a home path a line reads is the reader's, but one an
+		// output flag names is written by the line and the container can hold it.
+		Markdown: "```sh\ncat $HOME/.toolrc\ntool run --out $HOME/out.txt\n```\n",
+		WantSteps: [][]planLine{{
+			{Cmd: "cat $HOME/.toolrc", Skip: true},
+			{Cmd: "tool run --out $HOME/out.txt"},
+		}},
+	}, { // Test 2n: the documented binary on its own is the smoke test again,
+		// and for a watcher it never returns.
+		Markdown:  "```sh\ntool\ntool run\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "tool", Skip: true}, {Cmd: "tool run"}}},
+	}, { // Test 2o: a block that shows a command failing is teaching why the
+		// corrected form follows, so the demonstrated failure is the document
+		// working, whatever words the tool chose for the complaint.
+		Markdown: "```\n$ tool run '\\n'\nthe literal is not allowed in a regex\n```\n",
+		WantSteps: [][]planLine{{
+			{Cmd: "tool run '\\n'", NonzeroOK: true},
+		}},
 	}, { // Test 3: two-column usage blocks lose the description column.
 		Markdown: "```\ntool add \"x\"      Append an entry to today.\n" +
 			"tool list          Print every entry.\n```\n",

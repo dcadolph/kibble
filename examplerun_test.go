@@ -214,6 +214,40 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-DONE"),
 		WantStatus: StatusPass,
 		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+	}, { // Test 8d: a search that matches nothing exits 1 and says nothing,
+		// which settles nothing about the document either way.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"KIBBLE-LINE b1:1 CODE=1",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusPass,
+		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+	}, { // Test 8e: an exit 1 that printed a real error is still a failure.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"tool: cannot parse config at line 3",
+			"KIBBLE-LINE b1:1 CODE=1",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusFail,
+		WantLines:  []Status{StatusPass, StatusFail, StatusPass},
+	}, { // Test 8f: a capability left out of this build is the install's
+		// shape, not a mistake in the line.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"rg: PCRE2 is not available in this build of ripgrep",
+			"KIBBLE-LINE b1:1 CODE=2",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusPass,
+		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
 	}, { // Test 9: a missing system dependency skips, not fails.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",

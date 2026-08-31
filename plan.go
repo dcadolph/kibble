@@ -184,7 +184,7 @@ var (
 	// slash so a Go package pattern such as ./... is not mistaken for one.
 	rePlaceholder = regexp.MustCompile(
 		`<[^<>\s]+>|=<[^<>]+>|(^|[^${])\{[A-Za-z][A-Za-z0-9_]*\}|(^|\s)\[[^\[\]\s]+\](\s|$)` +
-			`|\[[^\[\]]*--[^\[\]]*\]` +
+			`|\[[^\[\]]*--[^\[\]]*\]|\[[A-Za-z][^\[\]]*\]` +
 			`|\bxxxx\b|\*\*\*|\bpath/to/|/(home|Users)/(user|you|me|username|yourname)\b` +
 			`|(^|[^/])\.\.\.($|[\s'".])`)
 	// reLogin matches a command that starts an interactive sign-in.
@@ -219,7 +219,7 @@ var (
 	// reHomePathArg matches any path under the reader's home directory, such
 	// as ~/src/project. The container's home holds none of it, and a document
 	// citing one is showing the reader where their own work lives.
-	reHomePathArg = regexp.MustCompile(`^~/[\w.][\w./+-]*$`)
+	reHomePathArg = regexp.MustCompile(`^(~|\$HOME|\$\{HOME\})/[\w.][\w./+-]*$`)
 	// reCreatedToken matches a token a line creates: a redirect target, an
 	// -o argument, or the arguments of mkdir, touch, cp, or mv.
 	reCreatedToken = regexp.MustCompile(
@@ -431,7 +431,11 @@ func (pl *planner) addBlock(block codeBlock) {
 
 // reShownError matches output a doc displays under a command to demonstrate
 // it failing, such as a usage screen or an error message.
-var reShownError = regexp.MustCompile(`^(USAGE:|usage:|[Ee]rror[: ])`)
+var reShownError = regexp.MustCompile(
+	`^(USAGE:|usage:|[Ee]rror[: ])` +
+		`|\b(is not allowed|not supported|cannot be|could not|unable to|` +
+		`failed to|invalid |unknown |no such |must be |not permitted|` +
+		`is required|not recognized)`)
 
 // shownFailures returns the commands of a prompted block whose displayed
 // output is an error. Docs sometimes show a command failing on purpose, to
@@ -524,6 +528,12 @@ func (pl *planner) skipReason(flat string) (string, bool) {
 	if bin != "" && interactiveSubs[sub] {
 		return "starts an interactive or long-running session the container cannot judge", false
 	}
+	// A documented binary invoked bare is "run the tool", which the smoke test
+	// already settled. For a watcher or a server it never returns, and waiting
+	// out the timeout buys nothing the install step did not already prove.
+	if bin != "" && len(strings.Fields(stripComment(flat))) == 1 {
+		return "runs the tool with no arguments, which the install already proved", false
+	}
 	if bin != "" && interactiveFlag(flat) {
 		return "asks for an interactive session the container cannot hold", false
 	}
@@ -541,6 +551,9 @@ func (pl *planner) skipReason(flat string) (string, bool) {
 	}
 	if reForeignShellFile.MatchString(flat) {
 		return "written for another shell, and the session runs bash", false
+	}
+	if reForeignShellGen.MatchString(flat) {
+		return "sources another shell's completions, and the session runs bash", false
 	}
 	if sh := foreignShellFlag(flat); sh != "" {
 		return fmt.Sprintf("asks for the %s shell, which the container does not have", sh), false
@@ -655,6 +668,12 @@ var reFishSource = regexp.MustCompile(`\|\s*source\s*$`)
 // shell: nushell, fish, PowerShell, xonsh, tcsh, csh, elvish. bash cannot
 // execute any of them.
 var reForeignShellFile = regexp.MustCompile(`(^|\s)(source|\.)\s+\S+\.(nu|fish|ps1|xsh|tcsh|csh|elv)\b`)
+
+// reForeignShellGen matches sourcing completions generated for another shell,
+// as in source <(rg --generate complete-zsh). The generator runs fine; it is
+// the sourcing of another shell's syntax that the session cannot do.
+var reForeignShellGen = regexp.MustCompile(
+	`(^|\s)(source|\.)\s[^\n]*\b(zsh|fish|ksh|csh|tcsh|elvish|nushell|powershell|pwsh)\b`)
 
 // foreignShells are shells a documented `--shell NAME` flag can name that the
 // session's bash image does not provide, as in a benchmark run under zsh.
@@ -1124,6 +1143,13 @@ func trailingComment(flat string) string {
 	return ""
 }
 
+// outputFlags name a flag whose value is a path the command writes.
+var outputFlags = map[string]bool{
+	"-o": true, "--out": true, "--output": true, "--outfile": true,
+	"--out-dir": true, "--output-dir": true, "--dest": true,
+	"--destination": true, "--to": true, "--target": true, "--log": true,
+}
+
 // hasBareStdinDash reports whether a line passes a bare - argument with no
 // pipe feeding it, meaning it would block reading the session's empty stdin.
 func hasBareStdinDash(flat string) bool {
@@ -1257,6 +1283,11 @@ func (pl *planner) missingHomePath(flat string) string {
 	fields := strings.Fields(stripComment(flat))
 	for i, tok := range fields {
 		if i == 0 || isOutputArg(fields, i) {
+			continue
+		}
+		// A path given to an output flag is one the line writes, not one the
+		// reader must already have, and the container's home can hold it.
+		if i > 0 && outputFlags[strings.TrimSuffix(fields[i-1], "=")] {
 			continue
 		}
 		if !reHomePathArg.MatchString(tok) || pl.created[tok] {
