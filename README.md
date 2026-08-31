@@ -86,7 +86,7 @@ myrepo  go-install  PASS    28s   myrepo version 1.4.0
 | `-json`     | `false`       | Emit results as JSON to stdout.                 |
 | `-version`  | `false`       | Print the version and exit.                     |
 | `-strict`   | `false`       | Also fail on timeouts, smoke failures, drift, and gaps. |
-| `-examples` | `true`        | Replay README example blocks in the container.  |
+| `-examples` | `true`        | Replay each document's example blocks in the container. |
 | `-plan`     | `false`       | Print the example plans as JSON and exit.       |
 | `-suggest`  | `false`       | Propose a `.kibble.yml` using a model and exit. |
 
@@ -161,13 +161,19 @@ somewhere but not in the README is reported as a count beside the total, never a
 failure, because which commands earn README space is an editorial call and one finding per
 command would bury the one worth reading.
 
-After a successful install, kibble compares the README against the binary itself. Every
-flag cited on a line that invokes the binary, every flag documented in a markdown flag
-table, and every subcommand those lines call, is checked against the collected `--help`
-output. A flag the binary no longer has, or a subcommand it rejects, is reported as
-`DRIFT`. A rejected subcommand is caught by the exit code of its own help probe rather
-than by matching one command framework's wording, so the check is not tied to the
-library a tool happens to use.
+After a successful install, kibble compares the documentation against the binary itself.
+Every flag cited on a line that invokes the binary, every flag documented in a markdown
+flag table, and every subcommand those lines call, is checked against the collected
+`--help` output. A flag the binary no longer has, or a subcommand it rejects, is reported
+as `DRIFT`.
+
+A rejection has to be a parser naming that subcommand as the one it does not have. The
+exit code is not enough on its own: a subcommand that takes arguments rather than flags
+answers `--help` by complaining about the argument and exiting nonzero, while plainly
+existing. Reading the code alone condemns every such subcommand, and matching the words
+loosely condemns them too, because the complaint says "unknown subcommand" about the
+argument. So the name in the message is what decides, and a probe that settles nothing
+leaves the subcommand alone.
 
 The comparison needs a name to attribute cited flags to, so it covers the installs that
 name their binary up front: every `go install`, whose binary follows from the module
@@ -209,9 +215,10 @@ finds something, is recognized and passes on that exit.
 
 When the heuristics cannot settle a call, a `.kibble.yml` at the repository root does.
 It writes fixtures with real contents, exports environment, substitutes placeholder text,
-installs extra packages, and forces a specific line to run, skip, or run in the
-background with a readiness probe. Every choice lives in the file, so the run stays
-reproducible and the engine stays the thing that decides pass or fail.
+installs extra packages, chooses which documents are replayed, and forces a specific line
+to run, skip, or run in the background with a readiness probe. Every choice lives in the
+file, so the run stays reproducible and the engine stays the thing that decides pass or
+fail. Set `disable: true` to turn example checks off for a repository entirely.
 
 The most common use is a scanner or linter whose whole job is to exit nonzero when it
 finds something. Point it at real code and it does exactly that, which is the tool working,
@@ -221,6 +228,10 @@ not the docs breaking. One `nonzeroOk` line settles it.
 version: 1
 examples:
   packages: [age]
+  docs: [walkthrough.md]        # replay a guide the naming convention misses
+  skipDocs: [docs/wip.md]       # leave one the convention picks up
+  env:
+    TOOL_PROFILE: ci            # exported for every document's session
   substitutions:
     "<api-key>": test-key-1234
   fixtures:
