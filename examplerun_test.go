@@ -1,7 +1,12 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -191,6 +196,20 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:0 CODE=0",
 			"Aborted. Nothing was changed.",
 			"KIBBLE-LINE b1:1 CODE=8",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusPass,
+		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+	}, { // Test 8c: a Makefile reaching for a tool the image lacks skips.
+		// dash reports it without the word command, and make exits 2 rather
+		// than 127, so neither of the older signals fires.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"sh: 1: zip: not found",
+			"make: *** [Makefile:70: extension-package] Error 127",
+			"KIBBLE-LINE b1:1 CODE=2",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
 		WantStatus: StatusPass,
@@ -517,5 +536,48 @@ func TestResolveMissingBinaries(t *testing.T) {
 				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// TestRepoTar checks that generated directories are left out of the session
+// stream. Streaming them wastes the budget on output nobody documents and can
+// push the source a document needs past the cap.
+func TestRepoTar(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	files := map[string]string{
+		"wasm/main.go":                   "package main",
+		"README.md":                      "# T",
+		"node_modules/pkg/index.js":      "x",
+		"jetbrains/build/reports/a.html": "<html>",
+		".git/config":                    "[core]",
+		"target/debug/app":               "bin",
+	}
+	for name, body := range files {
+		full := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	data, truncated := repoTar(dir)
+	if truncated {
+		t.Error("small tree reported as truncated")
+	}
+	var got []string
+	tr := tar.NewReader(bytes.NewReader(data))
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break
+		}
+		got = append(got, h.Name)
+	}
+	sort.Strings(got)
+	want := []string{"README.md", "wasm/main.go"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("streamed files mismatch (-want +got):\n%s", diff)
 	}
 }

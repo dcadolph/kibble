@@ -115,7 +115,11 @@ the run falls back to `-image`, and if the recipe then reaches for a command tha
 there, the step is a `SKIP` naming the missing tool rather than a `FAIL`. A verdict about
 your docs is never a verdict about kibble's own gaps. When kibble itself cannot run a
 step, because the daemon is unreachable or an image will not pull, that is `ERROR`, kept
-separate from `FAIL` for the same reason.
+separate from `FAIL` for the same reason. A repository too large to stream whole is an
+`ERROR` too: a file kibble failed to deliver is indistinguishable from one the docs never
+create, and guessing between them is the one mistake this tool must not make. Generated
+directories such as `node_modules`, `vendor`, `build`, and `target` are left out of that
+stream, so the budget goes to source a document might actually name.
 
 A `SKIP` says kibble could not judge the line. A `GAP` says it did judge it, and the
 document is incomplete: the line names a file, directory, or setting that no documented
