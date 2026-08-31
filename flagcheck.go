@@ -14,6 +14,11 @@ type Usage struct {
 	Flags []string
 	// Subs are the cited subcommand names.
 	Subs []string
+	// FlagSub maps a cited flag to the subcommand it was cited on, empty for
+	// a flag cited on the bare binary. Without it a flag missing from the
+	// collected help cannot be told apart from a flag whose subcommand was
+	// never probed, and the second is not drift.
+	FlagSub map[string]string
 }
 
 var (
@@ -76,6 +81,10 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 				if key := bin + "|" + name; !flagSeen[key] {
 					flagSeen[key] = true
 					use.Flags = append(use.Flags, name)
+					if use.FlagSub == nil {
+						use.FlagSub = map[string]string{}
+					}
+					use.FlagSub[name] = sub
 				}
 			}
 		}
@@ -148,22 +157,39 @@ func helpFlags(helpText string) map[string]bool {
 	return out
 }
 
-// probeExcuses are exit codes from a subcommand help probe that say nothing
-// about the docs: the probe timed out, or the binary was not there to run.
-var probeExcuses = map[int]bool{124: true, 127: true}
+// reUsageScreen matches output that is a usage screen rather than a
+// complaint. A parser built on the standard library's flag package answers
+// --help by printing usage and exiting nonzero, so the exit code alone says
+// nothing about whether the subcommand exists.
+var reUsageScreen = regexp.MustCompile(`(?im)^\s*(usage|options|flags|arguments|commands):`)
 
-// rejectedSub reports whether the binary rejected a subcommand the README
-// cites. The probe's own exit code is the general signal, since a command
-// framework rejects an unknown subcommand nonzero whatever it prints; the
-// wording match catches the case where a binary answers a bad subcommand with
-// its usage screen and exits clean.
+// unknownNamed builds a pattern for a parser saying it does not have the
+// subcommand that was probed. Naming matters: a subcommand that exists but
+// takes no --help answers "schedule: unknown subcommand \"--help\"", which
+// says the argument was wrong, not the subcommand.
+func unknownNamed(leaf string) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)(unknown|invalid|unrecognized|no such) ` +
+		`(command|subcommand)[^\n]{0,16}\b` + regexp.QuoteMeta(leaf) + `\b`)
+}
+
+// rejectedSub reports whether the binary rejected a subcommand the docs cite.
+// A nonzero probe is not enough on its own: a subcommand that answers with its
+// own usage screen exists, whatever it exits with. Only a parser saying so, or
+// a nonzero probe that printed no usage at all, counts as a rejection.
 func rejectedSub(r Result, sub string) bool {
 	parts := strings.Fields(sub)
-	if strings.Contains(r.helpText, fmt.Sprintf("unknown command %q", parts[len(parts)-1])) {
+	leaf := parts[len(parts)-1]
+	if strings.Contains(r.helpText, fmt.Sprintf("unknown command %q", leaf)) {
 		return true
 	}
-	code, probed := r.subCodes[sub]
-	return probed && code != 0 && !probeExcuses[code]
+	if _, probed := r.subCodes[sub]; !probed {
+		return false
+	}
+	// The exit code alone proves nothing. A subcommand that takes arguments
+	// rather than flags exits nonzero on --help while plainly existing, so a
+	// rejection has to be a parser naming this subcommand as the unknown one.
+	named := unknownNamed(leaf)
+	return named.MatchString(r.helpBySub[sub]) || named.MatchString(r.helpText)
 }
 
 // flagChecks derives one flag-check result per binary whose install succeeded
@@ -188,12 +214,23 @@ func flagChecks(results []Result) []Result {
 			out = append(out, check)
 			continue
 		}
-		var missing []string
+		var missing, unverifiable []string
 		for _, f := range r.Step.Usage.Flags {
-			if !known[f] {
-				missing = append(missing, "--"+f)
+			if known[f] {
+				continue
 			}
+			// A flag cited on a subcommand kibble never got help for is
+			// unverifiable, not missing, and so is one a flag table lists
+			// without ever invoking it. Reporting either as drift blames the
+			// document for a screen the probe did not collect.
+			owner, attributed := r.Step.Usage.FlagSub[f]
+			if !attributed || (owner != "" && !helpfulSub(r, owner)) {
+				unverifiable = append(unverifiable, "--"+f)
+				continue
+			}
+			missing = append(missing, "--"+f)
 		}
+		sort.Strings(unverifiable)
 		var badSubs []string
 		for _, s := range r.Step.Usage.Subs {
 			if rejectedSub(r, s) {
@@ -206,7 +243,11 @@ func flagChecks(results []Result) []Result {
 		case len(missing) == 0 && len(badSubs) == 0:
 			check.Status = StatusPass
 			check.Detail = fmt.Sprintf("%d cited flags ok, %d subcommands cited",
-				len(r.Step.Usage.Flags), len(r.Step.Usage.Subs))
+				len(r.Step.Usage.Flags)-len(unverifiable), len(r.Step.Usage.Subs))
+			if len(unverifiable) > 0 {
+				check.Detail += fmt.Sprintf(", %d unverified (%s)",
+					len(unverifiable), strings.Join(unverifiable, " "))
+			}
 		default:
 			check.Status = StatusDrift
 			var parts []string
@@ -221,4 +262,14 @@ func flagChecks(results []Result) []Result {
 		out = append(out, check)
 	}
 	return out
+}
+
+// helpfulSub reports whether a subcommand's help probe produced a screen worth
+// checking a flag against. A probe that never ran, or that answered with
+// nothing resembling usage, cannot settle whether a flag exists.
+func helpfulSub(r Result, sub string) bool {
+	if _, probed := r.subCodes[sub]; !probed {
+		return false
+	}
+	return reUsageScreen.MatchString(r.helpBySub[sub])
 }

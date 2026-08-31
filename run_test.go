@@ -194,3 +194,35 @@ func TestTruncate(t *testing.T) {
 		})
 	}
 }
+
+// TestFailureLine checks that a build wrapper's own summary is skipped in
+// favor of the line that says what actually broke.
+func TestFailureLine(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Lines []string
+		Want  string
+	}{{ // Test 0: make prints its summary after the real error.
+		Lines: []string{"go: cannot find module for ./wasm",
+			"make: *** [Makefile:56: wasm] Error 1"},
+		Want: "go: cannot find module for ./wasm",
+	}, { // Test 1: nested make adds more summary lines, all skipped.
+		Lines: []string{"cc: fatal error: no input files",
+			"make[1]: *** [all] Error 1", "make: *** [build] Error 2"},
+		Want: "cc: fatal error: no input files",
+	}, { // Test 2: a plain failure keeps its last line.
+		Lines: []string{"setting up", "boom: file corrupted"},
+		Want:  "boom: file corrupted",
+	}, { // Test 3: nothing but wrapper summaries falls back to the last line.
+		Lines: []string{"make: *** [all] Error 1"},
+		Want:  "make: *** [all] Error 1",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if got := failureLine(test.Lines); got != test.Want {
+				t.Errorf("failureLine = %q, want %q", got, test.Want)
+			}
+		})
+	}
+}

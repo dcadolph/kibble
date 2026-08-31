@@ -112,13 +112,47 @@ func TestFlagChecks(t *testing.T) {
 			helpText: help,
 		},
 		WantStatus: StatusPass,
-	}, { // Test 1: a cited flag missing from every help screen is drift.
+	}, { // Test 1: a flag cited on the bare binary and missing from the help
+		// is drift, since the root screen is the one that settles it.
 		Result: Result{
-			Step:     InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{Flags: []string{"nope"}}},
+			Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
+				Flags: []string{"nope"}, FlagSub: map[string]string{"nope": ""}}},
 			Status:   StatusPass,
 			helpText: help,
 		},
 		WantStatus: StatusDrift, WantDetail: "missing --nope",
+	}, { // Test 1a: a flag cited on a subcommand whose help never arrived is
+		// unverified, not drift. Blaming the document for a screen the probe
+		// failed to collect is how a checker starts crying wolf.
+		Result: Result{
+			Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
+				Flags: []string{"every"}, FlagSub: map[string]string{"every": "schedule add"}}},
+			Status:   StatusPass,
+			helpText: help,
+		},
+		WantStatus: StatusPass,
+		WantDetail: "0 cited flags ok, 0 subcommands cited, 1 unverified (--every)",
+	}, { // Test 1b: a flag a table lists without ever invoking it cannot be
+		// attributed to a screen, so it is unverified too.
+		Result: Result{
+			Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
+				Flags: []string{"allow-orphan"}}},
+			Status:   StatusPass,
+			helpText: help,
+		},
+		WantStatus: StatusPass,
+		WantDetail: "0 cited flags ok, 0 subcommands cited, 1 unverified (--allow-orphan)",
+	}, { // Test 1c: a flag cited on a subcommand that did answer with usage
+		// is settled by that screen, so a missing flag is drift.
+		Result: Result{
+			Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
+				Flags: []string{"gone"}, FlagSub: map[string]string{"gone": "walk"}}},
+			Status:    StatusPass,
+			helpText:  help,
+			subCodes:  map[string]int{"walk": 0},
+			helpBySub: map[string]string{"walk": "Usage: tool walk\n  --keep  keep going\n"},
+		},
+		WantStatus: StatusDrift, WantDetail: "missing --gone",
 	}, { // Test 2: a rejected subcommand is drift.
 		Result: Result{
 			Step:     InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{Subs: []string{"sync"}}},
@@ -173,14 +207,25 @@ func TestFlagChecks(t *testing.T) {
 func TestRejectedSub(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		HelpText string
-		SubCodes map[string]int
-		Sub      string
-		Want     bool
+		HelpText  string
+		HelpBySub map[string]string
+		SubCodes  map[string]int
+		Sub       string
+		Want      bool
 	}{{ // Test 0: a subcommand the binary accepted is not drift.
 		SubCodes: map[string]int{"scan": 0}, Sub: "scan", Want: false,
-	}, { // Test 1: a nonzero probe means the binary rejected the subcommand.
-		SubCodes: map[string]int{"bogus": 1}, Sub: "bogus", Want: true,
+	}, { // Test 1: a parser naming this subcommand as unknown is a rejection.
+		SubCodes:  map[string]int{"bogus": 1}, Sub: "bogus", Want: true,
+		HelpBySub: map[string]string{"bogus": `unknown subcommand "bogus"`},
+	}, { // Test 1a: a nonzero probe on its own is not. A subcommand that takes
+		// arguments rather than flags exits nonzero on --help while existing,
+		// and its message names the argument, not itself.
+		SubCodes: map[string]int{"schedule": 1}, Sub: "schedule", Want: false,
+		HelpBySub: map[string]string{
+			"schedule": `vamoose: schedule: unknown subcommand "--help"; use add, list, or remove`},
+	}, { // Test 1b: another shape of the same thing.
+		SubCodes:  map[string]int{"run": 1}, Sub: "run", Want: false,
+		HelpBySub: map[string]string{"run": `vamoose: run: unknown workflow: "--help"`},
 	}, { // Test 2: a probe that timed out says nothing about the docs.
 		SubCodes: map[string]int{"serve": 124}, Sub: "serve", Want: false,
 	}, { // Test 3: a probe that found no binary says nothing about the docs.
@@ -190,13 +235,15 @@ func TestRejectedSub(t *testing.T) {
 		SubCodes: map[string]int{"gone": 0}, Sub: "gone", Want: true,
 	}, { // Test 5: a subcommand the probe never reached is not judged.
 		SubCodes: map[string]int{}, Sub: "scan", Want: false,
-	}, { // Test 6: a nested subcommand is judged on its own probe.
-		SubCodes: map[string]int{"walk rotate": 2}, Sub: "walk rotate", Want: true,
+	}, { // Test 6: a nested subcommand is judged on its own probe, by name.
+		SubCodes:  map[string]int{"walk rotate": 2}, Sub: "walk rotate", Want: true,
+		HelpBySub: map[string]string{"walk rotate": `Error: unknown command "rotate"`},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			r := Result{helpText: test.HelpText, subCodes: test.SubCodes}
+			r := Result{helpText: test.HelpText, subCodes: test.SubCodes,
+				helpBySub: test.HelpBySub}
 			if got := rejectedSub(r, test.Sub); got != test.Want {
 				t.Errorf("rejectedSub(%q) = %v, want %v", test.Sub, got, test.Want)
 			}
