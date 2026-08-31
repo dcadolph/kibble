@@ -46,7 +46,17 @@ func checkBrew(step InstallStep, fetch Fetcher) Result {
 	var urls []string
 	switch len(parts) {
 	case 1:
-		urls = []string{fmt.Sprintf("https://formulae.brew.sh/api/formula/%s.json", target)}
+		// A core name can be a formula or an alias of one: `brew install rich`
+		// resolves through homebrew-core's Aliases directory to rich-cli, so a
+		// name missing from the formula API can still be exactly what a reader
+		// should type. Checking only canonical names called a working documented
+		// line broken, in public, which is the one mistake this tool must never
+		// make.
+		urls = []string{
+			fmt.Sprintf("https://formulae.brew.sh/api/formula/%s.json", target),
+			fmt.Sprintf("https://raw.githubusercontent.com/Homebrew/homebrew-core/HEAD/Aliases/%s", target),
+			fmt.Sprintf("https://formulae.brew.sh/api/cask/%s.json", target),
+		}
 	case 3:
 		base := fmt.Sprintf("https://raw.githubusercontent.com/%s/homebrew-%s/HEAD", parts[0], parts[1])
 		urls = []string{
