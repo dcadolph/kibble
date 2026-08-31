@@ -45,6 +45,9 @@ type config struct {
 	Suggest bool
 	// MCP reports whether to serve the Model Context Protocol over stdio.
 	MCP bool
+	// BrewInstall runs documented brew installs instead of checking that the
+	// formula exists.
+	BrewInstall bool
 }
 
 // main parses flags, collects install steps, runs them, and reports.
@@ -61,6 +64,8 @@ func main() {
 	flag.BoolVar(&cfg.Plan, "plan", false, "print the example plans as JSON and exit")
 	flag.BoolVar(&cfg.Suggest, "suggest", false,
 		"propose a .kibble.yml using a configured model and exit")
+	flag.BoolVar(&cfg.BrewInstall, "brew-install", false,
+		"run documented brew installs for real instead of checking the formula exists")
 	flag.BoolVar(&cfg.MCP, "mcp", false,
 		"serve the Model Context Protocol over stdio so an agent can drive kibble")
 	flag.Parse()
@@ -128,7 +133,7 @@ func main() {
 		}
 	}
 
-	runner := &DockerRunner{Image: cfg.Image, Timeout: cfg.Timeout}
+	runner := &DockerRunner{Image: cfg.Image, Timeout: cfg.Timeout, BrewInstall: cfg.BrewInstall}
 	results := runAll(ctx, runner, steps, cfg.Workers)
 	if ctx.Err() != nil {
 		fmt.Fprintln(os.Stderr, "kibble: interrupted")

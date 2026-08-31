@@ -261,3 +261,56 @@ func TestClassifyProbeSegments(t *testing.T) {
 		t.Errorf("accepted probe screen not captured: %q", res.helpByFlag["json"])
 	}
 }
+
+// TestBrewInstallGuards checks the two documented lines a real install refuses
+// to run. Both refusals are skips, because a step kibble declined to run has
+// no verdict to report.
+func TestBrewInstallGuards(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Module     string
+		WantDetail string
+	}{{ // Test 0: a cask installs a macOS application, which a Linux
+		// container cannot judge either way.
+		Module:     "cask:alacritty",
+		WantDetail: "installs on macOS",
+	}, { // Test 1: a name carrying shell characters is never handed to a
+		// shell, since the formula field comes out of a document.
+		Module:     "wget; rm -rf /",
+		WantDetail: "shell characters",
+	}}
+	d := &DockerRunner{BrewInstall: true, Timeout: time.Minute}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			got := d.runBrewInstall(t.Context(), InstallStep{Kind: "brew", Module: test.Module})
+			if got.Status != StatusSkipped {
+				t.Errorf("status = %s, want %s", got.Status, StatusSkipped)
+			}
+			if !strings.Contains(got.Detail, test.WantDetail) {
+				t.Errorf("detail = %q, want it to mention %q", got.Detail, test.WantDetail)
+			}
+		})
+	}
+}
+
+// TestBrewInstallScriptShape checks the install script asks brew which binary
+// the formula installed rather than guessing. `brew install rich` resolves an
+// alias to rich-cli and installs a binary named rich, and the formula's
+// dependencies install binaries of their own, so neither the documented name
+// nor the first new file in the bin directory is reliably the tool.
+func TestBrewInstallScriptShape(t *testing.T) {
+	t.Parallel()
+	script := fmt.Sprintf(brewInstallScript, 300, "rich", "rich")
+	for _, want := range []string{
+		`timeout 300 brew install rich`,
+		`brew list --verbose rich`,
+		`before=$(ls "$(brew --prefix)/bin"`,
+		`comm -13`,
+		"printf 'NOBIN=1\\n'",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %q", want)
+		}
+	}
+}

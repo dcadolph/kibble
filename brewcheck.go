@@ -57,8 +57,10 @@ func checkBrew(step InstallStep, fetch Fetcher) Result {
 			res.Status = StatusPass
 			res.Detail = "cask exists (install not attempted)"
 		default:
-			res.Status = StatusFail
-			res.Detail = fmt.Sprintf("cask not found for %q", name)
+			// Same reasoning as a missing formula: an index is not an install.
+			res.Status = StatusGap
+			res.Detail = fmt.Sprintf(
+				"no cask named %q in the cask index; run with -brew-install to settle it", name)
 		}
 		return res
 	}
@@ -108,8 +110,15 @@ func checkBrew(step InstallStep, fetch Fetcher) Result {
 		}
 	}
 	if sawNotFound {
-		res.Status = StatusFail
-		res.Detail = fmt.Sprintf("formula not found for %q", target)
+		// An index says a name is absent; only an install says a documented
+		// line is broken. The namespace has formulas, casks, aliases, and
+		// taps, and `brew install rich` resolving through an alias is exactly
+		// the working line this check once called broken in public. So a
+		// missing name is reported and left for a person or for -brew-install,
+		// and never fails a build on its own.
+		res.Status = StatusGap
+		res.Detail = fmt.Sprintf(
+			"no formula, cask, or alias named %q in the checked namespaces; run with -brew-install to settle it", target)
 		return res
 	}
 	res.Status = StatusSkipped

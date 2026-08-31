@@ -91,6 +91,10 @@ type DockerRunner struct {
 	// Fetch checks URLs for the brew formula verification. When nil, a
 	// default HTTP client is used.
 	Fetch Fetcher
+	// BrewInstall runs documented brew installs for real instead of checking
+	// that the formula exists. Slower by minutes, and the only way a brew
+	// step earns the right to fail a build.
+	BrewInstall bool
 }
 
 // Run executes the step: go-install and git-clone run in a fresh container
@@ -108,6 +112,9 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 		}
 		return res
 	case "brew":
+		if d.BrewInstall {
+			return d.runBrewInstall(ctx, step)
+		}
 		fetch := d.Fetch
 		if fetch == nil {
 			fetch = defaultFetcher()
@@ -117,12 +124,6 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 		res.Duration = time.Since(start)
 		return res
 	case "git-clone":
-		if strings.HasPrefix(step.Module, "git://github.com") {
-			return Result{
-				Step: step, Status: StatusFail,
-				Detail: "clone uses git://, which GitHub turned off in 2022, so this fails for every reader",
-			}
-		}
 		script = cloneScriptFor(step, int(d.Timeout.Seconds()))
 	default:
 		if _, isPkg := pkgKinds[step.Kind]; isPkg {
@@ -170,18 +171,24 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 		} else if reNetworkError.MatchString(string(out)) {
 			res.Status = StatusError
 			res.Detail = "network error during the step, result unknown: " + res.Detail
+		} else if strings.HasPrefix(step.Module, "git://github.com") {
+			// The clone ran and failed, so the verdict is earned. Git's own
+			// message does not say why, and the reason is worth stating: the
+			// unencrypted protocol has been off since 2022 and no reader can
+			// get past it.
+			res.Detail = "clone uses git://, which GitHub turned off in 2022, so this fails for every reader"
 		}
 	}
 	return res
 }
 
-// reNetworkError matches container output that names a network failure, so a
-// flaky connection is reported as kibble's error rather than broken docs.
 // reNewerToolchain matches a module requiring a newer Go than the image ships,
 // such as "requires go >= 1.26.6 (running go 1.26.5)". A reader running the
 // default GOTOOLCHAIN would fetch that toolchain, so the document is not wrong.
 var reNewerToolchain = regexp.MustCompile(`requires go >= ([0-9][0-9.]*)`)
 
+// reNetworkError matches container output that names a network failure, so a
+// flaky connection is reported as kibble's error rather than broken docs.
 var reNetworkError = regexp.MustCompile(
 	`Connection refused|Could not resolve host|Temporary failure in name resolution|Network is unreachable|TLS handshake timeout|connection reset by peer|Connection timed out`)
 
@@ -434,6 +441,81 @@ func hardenedArgs() []string {
 // containerSeq numbers containers within one run so every step gets a name
 // kibble can tear down on its own.
 var containerSeq atomic.Uint64
+
+// brewImage is the Homebrew project's own Linux image, so a documented brew
+// install runs against the real package manager rather than a guess about it.
+const brewImage = "homebrew/brew"
+
+// brewInstallScript runs the documented formula install and smoke-tests the
+// binary the formula itself installed. Brew is asked which file that is, since
+// a formula pulls in dependencies that install binaries of their own: taking
+// whatever appeared in the bin directory smoke-tested a compiler shipped with
+// rich's dependencies instead of rich. The bin diff remains as the fallback for
+// a formula brew will not list.
+const brewInstallScript = `set -u
+before=$(ls "$(brew --prefix)/bin" 2>/dev/null | sort)
+out=$(timeout %d brew install %s 2>&1); code=$?
+if [ "$code" -ne 0 ]; then
+  printf 'BUILDCODE=%%d\n' "$code"
+  printf '%%s\n' "$out" | tail -n 3
+  exit 0
+fi
+printf 'BUILDCODE=0\n'
+bin=$(brew list --verbose %s 2>/dev/null | grep -E '/bin/[^/]+$' | head -n1)
+if [ -z "$bin" ]; then
+  after=$(ls "$(brew --prefix)/bin" 2>/dev/null | sort)
+  b=$(comm -13 <(printf '%%s\n' "$before") <(printf '%%s\n' "$after") | head -n1)
+  [ -n "$b" ] && bin="$(brew --prefix)/bin/$b"
+fi
+if [ -z "$bin" ]; then
+  printf 'NOBIN=1\n'
+  exit 0
+fi
+sout=$(timeout 15 "$bin" --version 2>&1); scode=$?
+if [ "$scode" -ne 0 ]; then sout=$(timeout 15 "$bin" --help 2>&1); scode=$?; fi
+printf 'SMOKECODE=%%d\n' "$scode"
+printf 'SMOKELINE=%%s\n' "$(printf '%%s' "$sout" | head -n1 | cut -c1-70)"
+`
+
+// runBrewInstall installs a documented formula for real. Only an install that
+// actually ran can call a documented brew line broken: the formula namespace
+// has aliases, casks, and taps, and asking an index about a name instead of
+// installing it is how a working line gets accused.
+func (d *DockerRunner) runBrewInstall(ctx context.Context, step InstallStep) Result {
+	start := time.Now()
+	// A cask installs applications on macOS. A Linux container cannot judge
+	// one, and saying so is the honest answer.
+	if name, ok := strings.CutPrefix(step.Module, "cask:"); ok {
+		return Result{
+			Step: step, Status: StatusSkipped, Duration: time.Since(start),
+			Detail: fmt.Sprintf("%s is a cask, which installs on macOS rather than in this container", name),
+		}
+	}
+	if strings.ContainsAny(step.Module, "$`;&|<>()") {
+		return Result{
+			Step: step, Status: StatusSkipped, Duration: time.Since(start),
+			Detail: "formula name has shell characters, so it is not run",
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, d.Timeout+2*time.Minute)
+	defer cancel()
+	script := fmt.Sprintf(brewInstallScript, int(d.Timeout.Seconds()), step.Module, step.Module)
+	name := containerName()
+	args := append([]string{"run", "--rm", "--name", name},
+		append(hardenedArgs(), brewImage, "bash", "-c", script)...)
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Cancel = removeContainerFunc(cmd, name)
+	out, _ := cmd.CombinedOutput()
+	if ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) {
+		return Result{
+			Step: step, Status: StatusError, Duration: time.Since(start),
+			Detail: "run was interrupted, so this step has no verdict",
+		}
+	}
+	res := classify(step, string(out), time.Since(start))
+	res.Image = brewImage
+	return res
+}
 
 // containerName returns a container name unique to this process and step.
 func containerName() string {

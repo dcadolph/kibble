@@ -149,7 +149,7 @@ func planTool(_ context.Context, _ *mcpsdk.CallToolRequest, in planInput) (
 }
 
 // checkToolFor builds the tool that runs the documented steps, carrying the
-// image, timeout, and worker settings the command line was started with.
+// image, timeout, worker, and brew settings the command line was started with.
 func checkToolFor(cfg config) func(context.Context, *mcpsdk.CallToolRequest, checkInput) (
 	*mcpsdk.CallToolResult, checkOutput, error) {
 	return func(ctx context.Context, _ *mcpsdk.CallToolRequest, in checkInput) (
@@ -163,7 +163,7 @@ func checkToolFor(cfg config) func(context.Context, *mcpsdk.CallToolRequest, che
 				return nil, checkOutput{}, fmt.Errorf("kibble needs Docker to run install steps: %w", err)
 			}
 		}
-		runner := &DockerRunner{Image: cfg.Image, Timeout: cfg.Timeout}
+		runner := &DockerRunner{Image: cfg.Image, Timeout: cfg.Timeout, BrewInstall: cfg.BrewInstall}
 		results := runAll(ctx, runner, steps, cfg.Workers)
 		results = append(results, flagChecks(results)...)
 		results = append(results, docCoverageChecks(results)...)
