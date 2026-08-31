@@ -2,7 +2,10 @@ name: release
 
 on:
   push:
-    tags: ["v*"]
+    # Only version tags. The v1 alias moves to every release, and matching it
+    # here built a second, wrongly named set of archives and filed them under
+    # a release nobody cut.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   workflow_dispatch:
 
 permissions:
@@ -23,5 +26,9 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
+          # Pin the version rather than letting it be inferred. The v1 alias
+          # points at the same commit as the release tag, and git describe
+          # can pick either, which is how kibble_1_linux_amd64.tar.gz happens.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
