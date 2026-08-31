@@ -1,0 +1,14 @@
+# The integration corpus: real repositories kibble runs against on a schedule,
+# each pinned to a commit and to the verdict counts a person verified by hand.
+# A drifting count means kibble's judgment changed, not the repository, which
+# is exactly the regression this exists to catch. Columns are tab-separated:
+# name	clone URL	pinned commit	expected pass,fail,gap counts
+# Brew checks reach formulae.brew.sh, so a network blip can turn one PASS into
+# a SKIP and move a count for a week. A red corpus run whose only drift is one
+# fewer pass deserves a rerun before it deserves a bug hunt.
+ripgrep	https://github.com/BurntSushi/ripgrep.git	3fce3b5bb0236da2df6d99672afb8a719642eca7	4,2,0
+nodemon	https://github.com/remy/nodemon.git	5de021f6cd5c71814b6c2d1c60af3cc01fa2cc69	2,0,1
+fd	https://github.com/sharkdp/fd.git	cdea7f56331ebc7bb799aa9f718a6eee9a4a1cfc	6,0,0
+glow	https://github.com/charmbracelet/glow.git	e3970c813d93da1ea84edfca90c289d9afb82242	5,0,1
+httpie	https://github.com/httpie/cli.git	5b604c37c6c67e18e7c3e9aee6c88a8c22b98345	0,0,0
+rich-cli	https://github.com/Textualize/rich-cli.git	46f4d2469097be395558768714a5f07ebccf1412	2,1,1
