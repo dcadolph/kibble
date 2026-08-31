@@ -92,6 +92,7 @@ myrepo  go-install  PASS    28s   myrepo version 1.4.0
 | `-examples` | `true`        | Replay each document's example blocks in the container. |
 | `-plan`     | `false`       | Print the example plans as JSON and exit.       |
 | `-suggest`  | `false`       | Propose a `.kibble.yml` using a model and exit. |
+| `-mcp`      | `false`       | Serve the Model Context Protocol over stdio.    |
 
 ## What it checks today
 
@@ -262,6 +263,32 @@ examples:
     - match: mytool demo          # force a line the planner would skip
       run: true
 ```
+
+### Drive it from an agent
+
+`kibble -mcp` serves the Model Context Protocol over stdio, so an agent checks a
+repository's documentation with the same engine and the same verdicts the command line
+gives. Point a client at the binary:
+
+```json
+{
+  "mcpServers": {
+    "kibble": { "command": "kibble", "args": ["-mcp"] }
+  }
+}
+```
+
+Two tools, and which one to reach for is the whole design. `plan_docs` answers what kibble
+would run and why it would leave the rest alone. It takes milliseconds, needs no Docker,
+and is the right first call: an agent asking "why is this line skipped" gets the reason
+without spending a container. `check_docs` runs the documented steps for real, which pulls
+images and builds the project, so it costs minutes and belongs in the same place a CI run
+does.
+
+There is deliberately no tool for writing a `.kibble.yml`. `plan_docs` returns every skip
+with its reason, and the caller is already a model, so it can write a better config than
+kibble's own prompt would. Wrapping a model call inside a tool call for a model is a layer
+that only adds cost.
 
 ### Let a model write the config
 
