@@ -14,7 +14,7 @@ var (
 	// reCommandsHeading matches the heading a command-line parser prints above
 	// its subcommand list. Cobra says "Available Commands:", clap and argparse
 	// say "Commands:" or "SUBCOMMANDS:", so all three are recognized.
-	reCommandsHeading = regexp.MustCompile(`(?i)^\s*(available\s+)?(sub)?commands:\s*$`)
+	reCommandsHeading = regexp.MustCompile(`(?i)^\s*(\w+\s+)?(sub)?commands:\s*$`)
 	// reCommandEntry matches one entry in that list: an indented name followed
 	// by its one-line description.
 	reCommandEntry = regexp.MustCompile(`^\s+([a-z][a-z0-9_-]*)(\s{2,}\S|\s*$)`)
@@ -27,22 +27,21 @@ var (
 // help is deliberately not part of the public surface, so reading help rather
 // than the source is what separates "chose not to document" from "forgot to".
 func helpCommands(helpText string) []string {
-	lines := strings.Split(helpText, "\n")
+	// Grouped help such as docker's prints several command lists under
+	// headings like "Management Commands:", so every list in the screen
+	// counts. A blank line or a different heading only closes the current
+	// list; a later commands heading opens the next one.
 	var out []string
 	seen := map[string]bool{}
 	inList := false
-	for _, line := range lines {
+	for _, line := range strings.Split(helpText, "\n") {
 		switch {
 		case reCommandsHeading.MatchString(line):
 			inList = true
 		case !inList:
 			continue
-		case strings.TrimSpace(line) == "":
-			if len(out) > 0 {
-				return out
-			}
-		case reOtherHeading.MatchString(line):
-			return out
+		case strings.TrimSpace(line) == "" || reOtherHeading.MatchString(line):
+			inList = false
 		default:
 			m := reCommandEntry.FindStringSubmatch(line)
 			if m == nil {
@@ -148,7 +147,11 @@ func docCoverageChecks(results []Result) []Result {
 		if r.Status != StatusPass && r.Status != StatusPassBuild {
 			continue
 		}
-		cmds := helpCommands(r.helpText)
+		root := r.helpRoot
+		if root == "" {
+			root = r.helpText
+		}
+		cmds := helpCommands(root)
 		check := Result{
 			Step: InstallStep{
 				Repo: r.Step.Repo, Kind: "doc-coverage", Binary: r.Step.Binary,

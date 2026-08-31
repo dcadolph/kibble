@@ -281,3 +281,86 @@ func TestHelpIsPartial(t *testing.T) {
 		})
 	}
 }
+
+// TestSynopsisNotCited checks that a signature line contributes no flag
+// citations: split on its pipes, a synopsis strands flags on the parent
+// command, and that mis-attribution once probed a real flag in the wrong
+// position and convicted it.
+func TestSynopsisNotCited(t *testing.T) {
+	t.Parallel()
+	md := "```sh\ntool schedule [add <workflow> --every <dur> | list | remove <index>]\n" +
+		"tool schedule add pto --every 168h\n```\n"
+	got := extractUsage([]string{"tool"}, md)
+	use := got["tool"]
+	if use == nil {
+		t.Fatal("no usage extracted")
+	}
+	if owner := use.FlagSub["every"]; owner != "schedule add" {
+		t.Errorf("every attributed to %q, want %q from the real invocation", owner, "schedule add")
+	}
+}
+
+// TestFlagRejectedPosition checks that a parser complaining about an unknown
+// subcommand never convicts a flag, since the probe put it in that position.
+func TestFlagRejectedPosition(t *testing.T) {
+	t.Parallel()
+	probe := `vamoose: schedule: unknown subcommand "--every"; use add, list, or remove`
+	if flagRejected(probe, "every") {
+		t.Error("a subcommand-position complaint convicted the flag")
+	}
+	if !flagRejected(`unknown flag: --every`, "every") {
+		t.Error("a real flag rejection was not recognized")
+	}
+}
+
+// TestFlagProbeOutranksScreens checks that the binary's own answer to a
+// probed flag beats what any help screen shows, in both directions.
+func TestFlagProbeOutranksScreens(t *testing.T) {
+	t.Parallel()
+	help := "Usage of tool:\n  -json emit JSON\n"
+	tests := []struct {
+		Probe      string
+		WantStatus Status
+		WantDetail string
+	}{{ // Test 0: a hidden but valid flag parses cleanly under the probe, so
+		// a screen that omits it cannot turn it into an accusation.
+		Probe:      "Usage of tool:\n  -json emit JSON\n",
+		WantStatus: StatusPass,
+		WantDetail: "2 cited flags ok, 0 subcommands cited",
+	}, { // Test 1: the parser refusing the flag by name convicts it.
+		Probe:      `unknown flag: --debug`,
+		WantStatus: StatusDrift,
+		WantDetail: "missing --debug",
+	}, { // Test 2: a probe that fails without naming the flag got past the
+		// parser, which is acceptance where it counts: parsers reject unknown
+		// flags first and by name, so a later error is the tool's own.
+		Probe:      "tool: config not found",
+		WantStatus: StatusPass,
+		WantDetail: "2 cited flags ok, 0 subcommands cited",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			r := Result{
+				Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
+					Flags:   []string{"json", "debug"},
+					FlagSub: map[string]string{"json": "", "debug": ""},
+				}},
+				Status:     StatusPass,
+				helpText:   help,
+				helpByFlag: map[string]string{"debug": test.Probe},
+			}
+			got := flagChecks([]Result{r})
+			if len(got) != 1 {
+				t.Fatalf("got %d checks, want 1", len(got))
+			}
+			if got[0].Status != test.WantStatus {
+				t.Errorf("status = %s, want %s (detail %q)",
+					got[0].Status, test.WantStatus, got[0].Detail)
+			}
+			if got[0].Detail != test.WantDetail {
+				t.Errorf("detail = %q, want %q", got[0].Detail, test.WantDetail)
+			}
+		})
+	}
+}

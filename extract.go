@@ -62,7 +62,11 @@ var (
 	// leading flags such as `-v` before the module path.
 	reGoInstall = regexp.MustCompile(`\bgo\s+install\s+(?:-\S+\s+)*(\S+@\S+)`)
 	// reBrew matches a `brew install <target>` invocation.
-	reBrew = regexp.MustCompile(`\bbrew\s+install\s+(\S+)`)
+	// reBrew captures the flags and the first target of a brew install. Flags
+	// come first so `brew install --cask alacritty` names alacritty, not
+	// --cask; reading a flag as the formula accused working docs of citing a
+	// formula that does not exist.
+	reBrew = regexp.MustCompile(`\bbrew\s+install\s+((?:-[\w-]+\s+)*)(\S+)`)
 	// reGitClone matches a `git clone <target>` invocation.
 	reGitClone = regexp.MustCompile(`\bgit\s+clone\s+(\S+)`)
 )
@@ -196,9 +200,13 @@ func classifyLine(repo, line string) (InstallStep, string, bool) {
 		}, repo + "|go|" + mod, true
 	}
 	if m := reBrew.FindStringSubmatch(line); m != nil {
+		target := m[2]
+		if strings.Contains(m[1], "--cask") {
+			target = "cask:" + target
+		}
 		return InstallStep{
-			Repo: repo, Kind: "brew", Raw: strings.TrimSpace(line), Module: m[1], Run: true,
-		}, repo + "|brew|" + m[1], true
+			Repo: repo, Kind: "brew", Raw: strings.TrimSpace(line), Module: target, Run: true,
+		}, repo + "|brew|" + target, true
 	}
 	if kind, pkg, ok := classifyPackage(line); ok {
 		return InstallStep{

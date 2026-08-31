@@ -18,7 +18,25 @@ func TestCheckBrew(t *testing.T) {
 		Err        error
 		WantStatus Status
 		WantURL    string
-	}{{ // Test 0a: a core alias is a working documented name. `brew install
+	}{{ // Test 0c: a documented cask install is looked up as a cask, not read
+		// as a formula named --cask.
+		Target: "cask:alacritty",
+		Codes: map[string]int{
+			"formulae.brew.sh/api/cask/alacritty.json": 200,
+		},
+		WantStatus: StatusPass,
+	}, { // Test 0d: a cask lookup the network drops is a skip, never a failure.
+		Target:     "cask:alacritty",
+		Err:        errors.New("dial tcp: timeout"),
+		WantStatus: StatusSkipped,
+	}, { // Test 0e: a tap alias is a working documented name, the same as a
+		// core alias.
+		Target: "dcadolph/tap/short",
+		Codes: map[string]int{
+			"raw.githubusercontent.com/dcadolph/homebrew-tap/HEAD/Aliases/short": 200,
+		},
+		WantStatus: StatusPass,
+	}, { // Test 0a: a core alias is a working documented name. `brew install
 		// rich` resolves through Aliases/rich to rich-cli, and calling it
 		// broken was a public false positive this case pins against.
 		Target: "rich",

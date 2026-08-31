@@ -42,6 +42,26 @@ func defaultFetcher() Fetcher {
 func checkBrew(step InstallStep, fetch Fetcher) Result {
 	res := Result{Step: step}
 	target := step.Module
+	// A cask-flagged install is looked up in the cask namespace only, since
+	// formulas and casks are separate namespaces that happen to share names.
+	if name, ok := strings.CutPrefix(target, "cask:"); ok {
+		code, err := fetch.Status(
+			fmt.Sprintf("https://formulae.brew.sh/api/cask/%s.json", name))
+		switch {
+		case err != nil:
+			// A network blip says nothing about the docs, so it is never
+			// an accusation.
+			res.Status = StatusSkipped
+			res.Detail = "cask lookup unreachable"
+		case code >= 200 && code < 300:
+			res.Status = StatusPass
+			res.Detail = "cask exists (install not attempted)"
+		default:
+			res.Status = StatusFail
+			res.Detail = fmt.Sprintf("cask not found for %q", name)
+		}
+		return res
+	}
 	parts := strings.Split(target, "/")
 	var urls []string
 	switch len(parts) {
@@ -63,6 +83,9 @@ func checkBrew(step InstallStep, fetch Fetcher) Result {
 			fmt.Sprintf("%s/Formula/%s.rb", base, parts[2]),
 			fmt.Sprintf("%s/Casks/%s.rb", base, parts[2]),
 			fmt.Sprintf("%s/%s.rb", base, parts[2]),
+			// A tap can alias its formulas the same way homebrew-core does,
+			// and an alias is a working documented name.
+			fmt.Sprintf("%s/Aliases/%s", base, parts[2]),
 		}
 	default:
 		res.Status = StatusSkipped
