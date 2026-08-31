@@ -46,7 +46,8 @@ reports which steps a brand-new user could actually complete.
 - Never blames a document for a tool kibble lacks: a missing toolchain is a skip with a
   reason, so a red result means the documented steps are broken, not that kibble was
   short a compiler.
-- Verifies each documented brew formula exists in its tap, without installing it.
+- Checks each documented brew formula against its tap, and with `-brew-install` runs the
+  install for real in a Homebrew container and smoke-tests what lands.
 - Smoke-tests the binary (`--version`, then `--help`) to confirm it runs, not just builds.
 - Checks that every flag and subcommand the README cites still exists in the binary's
   help output, and reports what has drifted.
@@ -101,16 +102,26 @@ myrepo  go-install  PASS    28s   myrepo version 1.4.0
 | `-plan`     | `false`       | Print the example plans as JSON and exit.       |
 | `-suggest`  | `false`       | Propose a `.kibble.yml` using a model and exit. |
 | `-mcp`      | `false`       | Serve the Model Context Protocol over stdio.    |
+| `-brew-install` | `false`   | Run documented brew installs for real instead of checking the formula exists. |
 
 ## What it checks today
 
 kibble verifies `go install` steps end to end: the module resolves, it builds from zero,
 and the binary runs. A `git clone` step runs as the documented recipe, meaning the clone
 line plus the lines that follow it in the same code block, such as `cd` and
-`make install`, and whatever the recipe produces is smoke-tested. A brew step
-is verified against its tap, so a renamed or missing formula is caught, but nothing is
-installed. A build that exceeds the timeout is reported as `TIMEOUT`, never as a failure,
-so a slow network does not fail a build that would otherwise pass.
+`make install`, and whatever the recipe produces is smoke-tested. A build that exceeds
+the timeout is reported as `TIMEOUT`, never as a failure, so a slow network does not fail
+a build that would otherwise pass.
+
+A brew step is looked up in its tap by default: the formula API, the cask index, and the
+alias directories, since `brew install rich` resolves through an alias to `rich-cli` and
+a name absent from the canonical list can still be exactly what a reader should type. A
+lookup that finds nothing reports `GAP` and never `FAIL`, because an index can say a name
+is not indexed and cannot say a documented line is broken. `-brew-install` settles it: the
+line runs in Homebrew's own Linux container, the bin directory is diffed around the
+install, and whatever appeared is smoke-tested. Only that run can fail a brew step. It
+costs minutes per formula, so it is opt-in, and a documented cask is skipped with its
+reason, since a cask installs a macOS application a Linux container cannot judge.
 
 A package install runs the documented line verbatim, so what kibble verifies is the
 command a reader would actually type, flags and all. The bin directory is compared before
@@ -141,7 +152,14 @@ the document never mentions is the same kind of hole. Both used to disappear int
 same silent skip as a placeholder the reader is meant to fill in, which is the difference
 a gap draws: a placeholder is your reader's job, a gap is yours. Because a document can
 also expect a reader to bring their own file, a gap reports and counts but does not fail
-a run unless `-strict` is set.
+a run unless `-strict` is set. A brew name that no index knows lands here too: the
+document may be fine and the lookup short, and the difference is settled by installing it,
+not by asserting one.
+
+`FAIL` is reserved for a documented line that was executed and did not work. Nothing
+kibble merely looked up can produce one. That rule exists because it was broken once, in
+public: an index that knew only canonical formula names called `brew install rich` broken
+when the line works, and the check had never run it.
 
 Instructions outlive the README they started in. A docs tree is where install and usage
 steps go once the front page fills up, and it rots faster because nobody reads it on the
@@ -397,7 +415,6 @@ documentation and verifying the expected counts first.
 
 ## Roadmap
 
-- Install brew formulas for real instead of only verifying they exist.
 - JUnit XML output for CI systems that are not GitHub.
 
 ## Why "kibble"

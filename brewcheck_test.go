@@ -57,10 +57,16 @@ func TestCheckBrew(t *testing.T) {
 			"raw.githubusercontent.com/dcadolph/homebrew-whodar/HEAD/whodar.rb":         200,
 		},
 		WantStatus: StatusPass,
-	}, { // Test 2: a missing tap formula fails.
+	}, { // Test 2: a name missing from every index is reported, not convicted.
+		// An index lookup cannot tell a broken line from a name it does not
+		// index, so it reports a gap and leaves the verdict to -brew-install.
 		Target:     "dcadolph/tap/nope",
 		Codes:      map[string]int{},
-		WantStatus: StatusFail,
+		WantStatus: StatusGap,
+	}, { // Test 2c: a missing cask is a gap for the same reason.
+		Target:     "cask:nope",
+		Codes:      map[string]int{},
+		WantStatus: StatusGap,
 	}, { // Test 2b: a cask-only tap is found under Casks.
 		Target: "dcadolph/whodar/whodar",
 		Codes: map[string]int{
