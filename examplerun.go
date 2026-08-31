@@ -162,9 +162,9 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 
 	start := time.Now()
 	name := containerName()
-	cmd := exec.CommandContext(ctx,
-		"docker", "run", "--rm", "-i", "--name", name,
-		"-e", "GOTOOLCHAIN=auto", image, "bash", "-c", script)
+	args := append([]string{"run", "--rm", "-i", "--name", name},
+		append(hardenedArgs(), "-e", "GOTOOLCHAIN=auto", image, "bash", "-c", script)...)
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Cancel = removeContainerFunc(cmd, name)
 	repo, truncated := repoTar(step.dir)
 	if truncated {

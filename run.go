@@ -134,9 +134,9 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	// The official Go images pin GOTOOLCHAIN=local, so a module asking for a
 	// newer Go than the image ships fails to install. A reader running the
 	// default fetches that toolchain, so the session matches them instead.
-	cmd := exec.CommandContext(ctx,
-		"docker", "run", "--rm", "--name", name,
-		"-e", "GOTOOLCHAIN=auto", image, "bash", "-c", script)
+	args := append([]string{"run", "--rm", "--name", name},
+		append(hardenedArgs(), "-e", "GOTOOLCHAIN=auto", image, "bash", "-c", script)...)
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Cancel = removeContainerFunc(cmd, name)
 	out, _ := cmd.CombinedOutput()
 	if ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) {
@@ -342,6 +342,27 @@ func helpProbe(step InstallStep) string {
 	}
 	b.WriteString("printf '" + markerLead + "KIBBLE-HELP-END\\n'\n")
 	return b.String()
+}
+
+// hardenedArgs are the docker flags every kibble container runs under. A
+// documented command is text from a repository, which makes it untrusted
+// input, so the container gets no capability the session does not need and
+// bounded memory and process counts. The capabilities kept are the minimal
+// set apt needs, since sessions install Debian packages the docs depend on.
+// Network stays on because verifying an install is fetching it; that is a
+// conscious tradeoff the README's security section owns.
+func hardenedArgs() []string {
+	return []string{
+		"--memory=4g",
+		"--pids-limit=1024",
+		"--security-opt", "no-new-privileges",
+		"--cap-drop", "ALL",
+		"--cap-add", "CHOWN",
+		"--cap-add", "DAC_OVERRIDE",
+		"--cap-add", "FOWNER",
+		"--cap-add", "SETGID",
+		"--cap-add", "SETUID",
+	}
 }
 
 // containerSeq numbers containers within one run so every step gets a name

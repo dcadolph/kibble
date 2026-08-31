@@ -340,19 +340,60 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dcadolph/kibble@v1
+      - uses: dcadolph/kibble@v0.16.0
         with:
           repo: .
-          # version: v0.3.0   # pin a version, or leave for latest
-          # args: -strict      # fail on timeouts, smoke failures, drift, and gaps too
+          # args: -strict   # fail on timeouts, smoke failures, drift, and gaps too
 ```
 
 The runner already has Docker, so kibble spins its clean-room containers there.
+
+The action downloads the released binary for the version you pinned and verifies its
+checksum against the release's `checksums.txt` before running it, so a CI log can say
+which kibble produced its verdict. With no `version` input, the version is the ref the
+action was pinned at: `@v0.16.0` runs kibble v0.16.0. Pinning `@v1` follows the latest
+release, which is convenient and is also the tradeoff it sounds like.
 
 In a workflow, kibble speaks GitHub natively. A failed install or example is annotated on
 the exact README line that broke, so it shows up inline in the pull request the way a
 failing test does. Doc drift becomes a warning annotation, and the job summary gets the
 full results table, readable without opening a log.
+
+## Security model
+
+kibble executes commands it read out of a repository's documentation. That is the
+product, and it means **a README is untrusted input**: anyone who can change the docs can
+change what runs. Treat a kibble run the way you treat a build script.
+
+Every command runs inside a fresh container that is removed afterward, with bounded
+memory and process counts, `no-new-privileges`, and every Linux capability dropped except
+the handful `apt` needs to install the packages the docs depend on. Nothing from the host
+is mounted in; the repository is streamed in as a tar of its working tree.
+
+The boundary that stays open is the network, because verifying an install *is* fetching
+it: `go install`, `cargo install`, and `npm install -g` are network operations. A
+malicious documented command can therefore reach out from inside the container. The
+container is disposable and unprivileged, but Docker isolation is a wall, not a
+guarantee. So:
+
+- Running kibble on your own repository in CI is the designed case: anyone who can edit
+  your README can already edit your workflows.
+- Running kibble against a repository you do not trust is running that repository's
+  chosen commands on your Docker daemon. Do it the way you would run their Makefile:
+  in a sandbox you are prepared to lose.
+- Default kibble never contacts a model provider. Only `-suggest` does, it sends only
+  the documented lines the engine could not settle, and the Ollama route keeps even
+  that on your own machine.
+
+## The corpus
+
+`corpus/repos.tsv` pins real repositories, ripgrep and nodemon and friends, each to a
+commit and to the verdict counts a person verified by hand. A scheduled workflow runs
+kibble against all of them and fails when any count moves, because a moved count means
+kibble's judgment changed, not the repository. This is the regression suite for the part
+unit tests cannot reach: the rules can all do exactly what they say and still be wrong
+about a repository nobody anticipated. Adding an entry means reading that repository's
+documentation and verifying the expected counts first.
 
 ## Roadmap
 
