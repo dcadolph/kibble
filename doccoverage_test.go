@@ -30,11 +30,13 @@ func TestHelpCommands(t *testing.T) {
 	}, { // Test 2: clap and argparse use a bare Commands heading.
 		Help: "Commands:\n  build    Build it\n  ship     Ship it\n\nOptions:\n  -h\n",
 		Want: []string{"build", "ship"},
-	}, { // Test 3: only the first list is read, so a subcommand's own screen
-		// later in the corpus does not add to the root surface.
-		Help: "Available Commands:\n  walk    Walk a tree\n\nFlags:\n  -h\n\n" +
-			"Available Commands:\n  rotate  Rotate a key\n",
-		Want: []string{"walk"},
+	}, { // Test 3: grouped help such as docker's lists commands under several
+		// headings, and every group is part of the public surface. Keeping a
+		// subcommand's own screen out of the root surface is the root-screen
+		// segmentation's job, not this parser's.
+		Help: "Management Commands:\n  builder  Manage builds\n\n" +
+			"Commands:\n  attach   Attach local streams\n  run      Run a command\n",
+		Want: []string{"builder", "attach", "run"},
 	}, { // Test 4: a binary with no command list yields nothing.
 		Help: "Usage: tool [options]\n\nOptions:\n  -h, --help\n",
 		Want: nil,

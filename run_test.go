@@ -226,3 +226,38 @@ func TestFailureLine(t *testing.T) {
 		})
 	}
 }
+
+// TestClassifyProbeSegments checks that the root screen, subcommand screens,
+// and flag probes each land in their own segment. A tool with no subcommands
+// once had its whole root screen mistaken for the first probe's output and
+// trimmed out of the corpus.
+func TestClassifyProbeSegments(t *testing.T) {
+	t.Parallel()
+	out := strings.Join([]string{
+		"BUILDCODE=0",
+		"SMOKECODE=0",
+		"SMOKELINE=tool 1.0",
+		"KIBBLE-HELP-START",
+		"Usage of tool:",
+		"  -json emit JSON",
+		"KIBBLE-ROOT-END",
+		"unknown flag: --nope",
+		"KIBBLE-FLAG --nope CODE=1",
+		"Usage of tool:",
+		"KIBBLE-FLAG --json CODE=0",
+		"KIBBLE-HELP-END",
+	}, "\n")
+	res := classify(InstallStep{Repo: "r", Kind: "go-install"}, out, 0)
+	if !strings.Contains(res.helpRoot, "-json emit JSON") {
+		t.Errorf("helpRoot lost the root screen: %q", res.helpRoot)
+	}
+	if strings.Contains(res.helpText, "--nope") {
+		t.Errorf("a probe's rejection leaked into the corpus: %q", res.helpText)
+	}
+	if !strings.Contains(res.helpByFlag["nope"], "unknown flag") {
+		t.Errorf("probe screen not captured: %q", res.helpByFlag["nope"])
+	}
+	if res.helpByFlag["json"] == "" || !strings.Contains(res.helpByFlag["json"], "Usage") {
+		t.Errorf("accepted probe screen not captured: %q", res.helpByFlag["json"])
+	}
+}

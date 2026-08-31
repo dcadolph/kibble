@@ -40,6 +40,13 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 	for _, line := range codeLines(markdown) {
 		line = stripComment(line)
 		for _, seg := range splitSegments(line) {
+			// A synopsis such as `tool schedule [add <workflow> --every <dur>]`
+			// is a signature, not an invocation. Splitting it on pipes strands
+			// its flags on the parent command, and that mis-attribution once
+			// probed a real flag in the wrong position and convicted it.
+			if strings.ContainsAny(seg, "[]<>") {
+				continue
+			}
 			fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(seg), "$ "))
 			if len(fields) == 0 {
 				continue
@@ -208,7 +215,7 @@ func flagChecks(results []Result) []Result {
 			},
 		}
 		known := helpFlags(r.helpText)
-		if len(known) == 0 {
+		if len(known) == 0 && len(r.helpByFlag) == 0 {
 			check.Status = StatusSkipped
 			check.Detail = "no help output to check against"
 			out = append(out, check)
@@ -217,6 +224,16 @@ func flagChecks(results []Result) []Result {
 		var missing, unverifiable []string
 		for _, f := range r.Step.Usage.Flags {
 			if known[f] {
+				continue
+			}
+			// The binary's own answer outranks any screen: a probe ran the
+			// flag for real, so acceptance clears a flag help hides, and a
+			// rejection that names the flag convicts it even when the help
+			// was partial. A screen is metadata; the probe is the tool.
+			if probe, probed := r.helpByFlag[f]; probed {
+				if flagRejected(probe, f) {
+					missing = append(missing, "--"+f)
+				}
 				continue
 			}
 			// A flag cited on a subcommand kibble never got help for is
@@ -286,6 +303,35 @@ func helpIsPartial(helpText string) bool {
 		if !helpTopicStopwords[m[1]] {
 			return true
 		}
+	}
+	return false
+}
+
+// reFlagRejection matches the words a parser uses to refuse a flag. The flag
+// itself must sit on the same line, since a usage screen printed after the
+// error mentions every flag the tool has.
+var reFlagRejection = regexp.MustCompile(
+	`(?i)\b(unknown|unrecognized|invalid|unexpected|not recognized)\b` +
+		`|wasn't expected|not expected`)
+
+// flagRejected reports whether a probe's output is the binary refusing this
+// flag by name. Naming matters here the way it does for subcommands: a probe
+// can fail for reasons that have nothing to do with the flag, and only the
+// parser pointing at it convicts.
+func flagRejected(probe, name string) bool {
+	dashed := "--" + name
+	for _, line := range strings.Split(probe, "\n") {
+		if !strings.Contains(line, dashed) || !reFlagRejection.MatchString(line) {
+			continue
+		}
+		// A parser calling the flag an unknown COMMAND is complaining about
+		// where it landed, not about the flag: the probe put it in a
+		// subcommand position the binary routes differently. That is the
+		// probe's mistake to absorb, never the document's.
+		if strings.Contains(line, "command") {
+			continue
+		}
+		return true
 	}
 	return false
 }

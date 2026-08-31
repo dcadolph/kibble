@@ -56,10 +56,18 @@ type Result struct {
 	Image string
 	// helpText is the help output collected for flag checking.
 	helpText string
+	// helpRoot is the binary's own help screen, before any subcommand probe.
+	// Doc coverage reads the public surface from here alone, since a
+	// subcommand's screen lists that subcommand's children, not the root's.
+	helpRoot string
 	// helpBySub is each probed subcommand's own help screen. Keeping the
 	// screens apart is what lets a check say whether a subcommand answered
 	// at all, rather than searching one pile of text and guessing.
 	helpBySub map[string]string
+	// helpByFlag is what the binary said when each cited flag was probed
+	// against it, keyed by the flag name without dashes. A help screen is
+	// metadata; this is the binary's own answer.
+	helpByFlag map[string]string
 	// subCodes maps each cited subcommand to the exit code its help probe
 	// returned, so a subcommand the binary rejects is caught by its exit
 	// rather than by one framework's wording for the error.
@@ -335,13 +343,71 @@ func helpProbe(step InstallStep) string {
 	b.WriteString("printf '" + markerLead + "KIBBLE-HELP-START\\n'\n")
 	b.WriteString(`kh=$(timeout 15 "$bin" --help 2>&1)` + "\n")
 	b.WriteString(`printf '%s\n' "$kh" | head -n 200` + "\n")
+	// The root screen ends here, said out loud. Without this boundary the
+	// first probe's output shares a segment with the root screen, and a tool
+	// with nothing to probe before its flags once had its whole help corpus
+	// mistaken for probe output and trimmed away.
+	b.WriteString("printf '" + markerLead + "KIBBLE-ROOT-END\\n'\n")
 	for _, s := range subs {
 		fmt.Fprintf(&b, `kh=$(timeout 15 "$bin" %s --help 2>&1); kc=$?`+"\n", s)
 		b.WriteString(`printf '%s\n' "$kh" | head -n 200` + "\n")
 		fmt.Fprintf(&b, "printf '"+markerLead+"KIBBLE-SUB %s CODE=%%d\\n' \"$kc\"\n", s)
 	}
+	// Every cited flag is probed against the binary itself, because a help
+	// screen is metadata and a binary can accept flags its help hides. The
+	// probe runs `bin <sub> <flag> --help`: an unknown flag makes the parser
+	// reject it by name before help can fire, and a hidden but valid one
+	// parses cleanly. Only that named rejection convicts, so a screen that
+	// omits a working flag can no longer turn into an accusation.
+	for _, f := range probeFlags(step.Usage) {
+		flag := "--" + f.name
+		args := flag
+		if f.owner != "" {
+			args = f.owner + " " + flag
+		}
+		fmt.Fprintf(&b, `kh=$(timeout 10 "$bin" %s --help 2>&1); kc=$?`+"\n", args)
+		b.WriteString(`printf '%s\n' "$kh" | head -n 40` + "\n")
+		fmt.Fprintf(&b, "printf '"+markerLead+"KIBBLE-FLAG %s CODE=%%d\\n' \"$kc\"\n", flag)
+	}
 	b.WriteString("printf '" + markerLead + "KIBBLE-HELP-END\\n'\n")
 	return b.String()
+}
+
+// probedFlag names one cited flag and the subcommand it was cited on.
+type probedFlag struct {
+	// name is the flag without dashes.
+	name string
+	// owner is the citing subcommand, empty for the bare binary.
+	owner string
+}
+
+// probeFlags returns the cited flags safe to hand to the shell, capped so a
+// flag-heavy document cannot stretch the probe unboundedly.
+func probeFlags(u *Usage) []probedFlag {
+	var out []probedFlag
+	for _, f := range u.Flags {
+		if len(out) >= 16 {
+			break
+		}
+		if !reSubName.MatchString(strings.ToLower(f)) {
+			continue
+		}
+		owner := u.FlagSub[f]
+		safe := owner == ""
+		if owner != "" {
+			safe = true
+			for _, tok := range strings.Fields(owner) {
+				if !reSubName.MatchString(tok) {
+					safe = false
+					break
+				}
+			}
+		}
+		if safe {
+			out = append(out, probedFlag{name: f, owner: owner})
+		}
+	}
+	return out
 }
 
 // hardenedArgs are the docker flags every kibble container runs under. A
@@ -439,6 +505,7 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 	inHelp := false
 	subCodes := map[string]int{}
 	helpBySub := map[string]string{}
+	helpByFlag := map[string]string{}
 	var tail, help, cur []string
 	for _, line := range strings.Split(out, "\n") {
 		switch {
@@ -446,10 +513,22 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 			inHelp = true
 		case strings.HasPrefix(line, "KIBBLE-HELP-END"):
 			inHelp = false
+		case strings.HasPrefix(line, "KIBBLE-ROOT-END"):
+			res.helpRoot = strings.Join(help, "\n")
+			cur = nil
 		case reSubMarker.MatchString(line):
 			m := reSubMarker.FindStringSubmatch(line)
 			subCodes[m[1]], _ = strconv.Atoi(m[2])
 			helpBySub[m[1]] = strings.Join(cur, "\n")
+			cur = nil
+		case reFlagMarker.MatchString(line):
+			m := reFlagMarker.FindStringSubmatch(line)
+			name := strings.TrimLeft(m[1], "-")
+			// A probe screen never joins the help corpus: an unknown-flag
+			// error quotes the flag, and a corpus holding that quote would
+			// count the missing flag as known and blind the check.
+			help = help[:len(help)-len(cur)]
+			helpByFlag[name] = strings.Join(cur, "\n")
 			cur = nil
 		case inHelp:
 			help = append(help, line)
@@ -469,8 +548,14 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 		}
 	}
 	res.helpText = strings.Join(help, "\n")
+	if res.helpRoot == "" {
+		res.helpRoot = res.helpText
+	}
 	if len(helpBySub) > 0 {
 		res.helpBySub = helpBySub
+	}
+	if len(helpByFlag) > 0 {
+		res.helpByFlag = helpByFlag
 	}
 	if len(subCodes) > 0 {
 		res.subCodes = subCodes
@@ -504,6 +589,10 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 // reSubMarker parses a KIBBLE-SUB marker into the cited subcommand and the
 // exit code its help probe returned.
 var reSubMarker = regexp.MustCompile(`^KIBBLE-SUB (.+) CODE=(-?\d+)$`)
+
+// reFlagMarker parses a KIBBLE-FLAG marker into the probed flag and the exit
+// code the binary answered with.
+var reFlagMarker = regexp.MustCompile(`^KIBBLE-FLAG (--?\S+) CODE=(-?\d+)$`)
 
 // reArchMismatch matches the errors a binary built for another architecture
 // produces, so an emulation artifact of the host is not reported as the tool
