@@ -83,10 +83,18 @@ func main() {
 		return
 	}
 
+	// With no path, check the directory the reader is standing in, the way
+	// git and cargo do. A repository is recognized by having a README, since
+	// that is the document kibble exists to run. Anywhere else, say how to
+	// use it rather than reporting nothing found.
 	paths := flag.Args()
 	if len(paths) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: kibble [flags] <repo-path>...")
-		os.Exit(2)
+		if _, _, err := readREADME("."); err != nil {
+			fmt.Fprintln(os.Stderr, "usage: kibble [flags] [repo-path...]")
+			fmt.Fprintln(os.Stderr, "with no path, kibble checks the current directory")
+			os.Exit(2)
+		}
+		paths = []string{"."}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -197,7 +205,7 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan, []Result) {
 	var plans []*Plan
 	var problems []Result
 	for _, p := range paths {
-		repo := filepath.Base(filepath.Clean(p))
+		repo := repoName(p)
 		md, name, err := readREADME(p)
 		if err != nil {
 			problems = append(problems, Result{
@@ -472,4 +480,19 @@ func anyFail(results []Result, strict bool) bool {
 		}
 	}
 	return false
+}
+
+// repoName is the name a report calls a repository. A relative path such as
+// "." or ".." names nothing a reader recognizes, so it resolves to the
+// directory's real name before falling back to the path as given.
+func repoName(path string) string {
+	clean := filepath.Base(filepath.Clean(path))
+	if clean != "." && clean != ".." && clean != string(filepath.Separator) {
+		return clean
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return clean
+	}
+	return filepath.Base(abs)
 }
