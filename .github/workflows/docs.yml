@@ -8,7 +8,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check install docs
-        uses: ./
+      - uses: actions/setup-go@v5
         with:
-          repo: .
+          go-version-file: go.mod
+      # The self-check builds kibble from the commit under test rather than
+      # going through the action, which installs a released binary and would
+      # quietly verify last release's judgment instead of this change's.
+      - name: Check install docs with this commit's kibble
+        run: |
+          go build -o /tmp/kibble .
+          /tmp/kibble .
