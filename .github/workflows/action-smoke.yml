@@ -1,0 +1,31 @@
+name: action-smoke
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Assets attach after the release publishes, so wait for them before
+      # exercising the download path the action's users take.
+      - name: Wait for release assets
+        shell: bash
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          asset="kibble_${TAG#v}_linux_amd64.tar.gz"
+          url="https://github.com/dcadolph/kibble/releases/download/${TAG}/${asset}"
+          for i in $(seq 1 30); do
+            if curl -fsIL "$url" >/dev/null 2>&1; then exit 0; fi
+            sleep 10
+          done
+          echo "assets never appeared for ${TAG}" >&2
+          exit 1
+      - name: Run the action against this repository
+        uses: ./
+        with:
+          repo: .
+          version: ${{ github.event.release.tag_name }}

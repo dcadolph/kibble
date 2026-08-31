@@ -9,9 +9,12 @@ inputs:
     required: false
     default: "."
   version:
-    description: Version of kibble to install (a git tag, or latest).
+    description: >-
+      kibble release to run, such as v0.16.0. Defaults to the ref this action
+      was pinned at, so `uses: dcadolph/kibble@v0.16.0` runs kibble v0.16.0. A
+      non-release ref such as v1 resolves to the latest release.
     required: false
-    default: latest
+    default: ""
   args:
     description: Extra flags passed to kibble, for example -strict.
     required: false
@@ -19,13 +22,54 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: "1.26"
+    # A CI check should be able to say which kibble produced its verdict, so
+    # the binary comes from a pinned release with its checksum verified rather
+    # than being compiled from whatever the default branch holds today.
     - name: Install kibble
       shell: bash
-      run: go install github.com/dcadolph/kibble@${{ inputs.version }}
+      env:
+        REQUESTED: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+        version="${REQUESTED:-$ACTION_REF}"
+        if ! printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+          version=$(curl -fsSL https://api.github.com/repos/dcadolph/kibble/releases/latest \
+            | grep -o '"tag_name": *"[^"]*"' | head -n1 | sed 's/.*"\(v[^"]*\)"$/\1/')
+        fi
+        case "${RUNNER_OS}" in
+          Linux) goos=linux ;;
+          macOS) goos=darwin ;;
+          Windows) goos=windows ;;
+          *) echo "unsupported runner OS: ${RUNNER_OS}" >&2; exit 1 ;;
+        esac
+        case "${RUNNER_ARCH}" in
+          X64) goarch=amd64 ;;
+          ARM64) goarch=arm64 ;;
+          *) echo "unsupported runner arch: ${RUNNER_ARCH}" >&2; exit 1 ;;
+        esac
+        ext=tar.gz
+        if [ "$goos" = windows ]; then ext=zip; fi
+        asset="kibble_${version#v}_${goos}_${goarch}.${ext}"
+        base="https://github.com/dcadolph/kibble/releases/download/${version}"
+        dir=$(mktemp -d)
+        curl -fsSL -o "$dir/$asset" "$base/$asset"
+        curl -fsSL -o "$dir/checksums.txt" "$base/checksums.txt"
+        want=$(grep " ${asset}\$" "$dir/checksums.txt" | cut -d' ' -f1)
+        if command -v sha256sum >/dev/null 2>&1; then
+          got=$(sha256sum "$dir/$asset" | cut -d' ' -f1)
+        else
+          got=$(shasum -a 256 "$dir/$asset" | cut -d' ' -f1)
+        fi
+        if [ "$want" != "$got" ]; then
+          echo "checksum mismatch for $asset: want $want, got $got" >&2
+          exit 1
+        fi
+        tar -xf "$dir/$asset" -C "$dir"
+        bin="$dir/kibble"
+        if [ "$goos" = windows ]; then bin="$dir/kibble.exe"; fi
+        echo "$dir" >> "$GITHUB_PATH"
+        "$bin" -version
     - name: Run kibble
       shell: bash
-      run: $(go env GOPATH)/bin/kibble ${{ inputs.args }} "${{ inputs.repo }}"
+      run: kibble ${{ inputs.args }} "${{ inputs.repo }}"
