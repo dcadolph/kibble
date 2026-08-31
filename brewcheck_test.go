@@ -18,7 +18,16 @@ func TestCheckBrew(t *testing.T) {
 		Err        error
 		WantStatus Status
 		WantURL    string
-	}{{ // Test 0: a tap formula that exists passes.
+	}{{ // Test 0a: a core alias is a working documented name. `brew install
+		// rich` resolves through Aliases/rich to rich-cli, and calling it
+		// broken was a public false positive this case pins against.
+		Target: "rich",
+		Codes: map[string]int{
+			"formulae.brew.sh/api/formula/rich.json":                            404,
+			"raw.githubusercontent.com/Homebrew/homebrew-core/HEAD/Aliases/rich": 200,
+		},
+		WantStatus: StatusPass,
+	}, { // Test 0: a tap formula that exists passes.
 		Target:     "dcadolph/tap/slop-chop",
 		Codes:      map[string]int{"raw.githubusercontent.com/dcadolph/homebrew-tap/HEAD/Formula/slop-chop.rb": 200},
 		WantStatus: StatusPass,
