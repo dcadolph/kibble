@@ -250,3 +250,34 @@ func TestRejectedSub(t *testing.T) {
 		})
 	}
 }
+
+// TestHelpIsPartial checks that a help screen pointing at another page of
+// itself is recognized, so a flag kept on that page is not called drift.
+func TestHelpIsPartial(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Help string
+		Want bool
+	}{{ // Test 0: nodemon names a help page, so its screen is partial.
+		Help: "For advanced configuration use nodemon.json: nodemon --help config",
+		Want: true,
+	}, { // Test 1: a sentence telling a reader to run --help for more is not
+		// naming a page, so the screen still counts as whole.
+		Help: "Run tool --help for more information.",
+		Want: false,
+	}, { // Test 2: a plain help screen names no further page.
+		Help: "Usage: tool [options]\n  --json  emit JSON\n",
+		Want: false,
+	}, { // Test 3: a topic named with a hyphen still counts.
+		Help: "See tool --help advanced-usage for the rest.",
+		Want: true,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if got := helpIsPartial(test.Help); got != test.Want {
+				t.Errorf("helpIsPartial = %v, want %v", got, test.Want)
+			}
+		})
+	}
+}

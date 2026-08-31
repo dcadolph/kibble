@@ -101,6 +101,12 @@ var (
 	// and it says "zip: not found" without the word command. Requiring that
 	// word, or exit 127, misses every missing tool a Makefile reaches for.
 	reShellNotFound = regexp.MustCompile(`(?m)\b[\w.+-]+: (command )?not found\b`)
+	// reNotBuiltIn matches a tool reporting that an optional capability was
+	// not compiled into this build, as ripgrep does for PCRE2 when installed
+	// without the feature. The command is right; the build is smaller.
+	reNotBuiltIn = regexp.MustCompile(
+		`(?i)not available in this build|not compiled (in|with)|` +
+			`built without|requires the \S+ feature|feature is not enabled`)
 	// reNoExec matches the Go exec error for a missing helper program.
 	reNoExec = regexp.MustCompile(`executable file not found`)
 	// reMissingDep matches a tool reporting that a system dependency it needs
@@ -717,6 +723,9 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		reNoExec.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Detail = "invokes a command the container lacks: " + tail
+	case reNotBuiltIn.MatchString(o.output):
+		lr.Status = StatusSkipped
+		lr.Detail = "needs a build feature this install does not include: " + tail
 	case reMissingDep.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Detail = "needs a system dependency the container lacks: " + tail
@@ -743,6 +752,12 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 	case reNoChange.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Detail = "changed nothing, since the session cannot approve it: " + tail
+	case o.code == 1 && strings.TrimSpace(o.output) == "":
+		// A search reports no match by exiting 1 and saying nothing. Silence
+		// and a 1 settle nothing either way, so the line is not a verdict on
+		// the document.
+		lr.Status = StatusSkipped
+		lr.Detail = "exited 1 without output, as a search does when it matches nothing"
 	case reNoData.MatchString(o.output) || tail == "not found":
 		lr.Status = StatusSkipped
 		lr.Detail = "query found no data in the fresh session"

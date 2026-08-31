@@ -224,7 +224,8 @@ func flagChecks(results []Result) []Result {
 			// without ever invoking it. Reporting either as drift blames the
 			// document for a screen the probe did not collect.
 			owner, attributed := r.Step.Usage.FlagSub[f]
-			if !attributed || (owner != "" && !helpfulSub(r, owner)) {
+			if !attributed || helpIsPartial(r.helpText) ||
+				(owner != "" && !helpfulSub(r, owner)) {
 				unverifiable = append(unverifiable, "--"+f)
 				continue
 			}
@@ -262,6 +263,31 @@ func flagChecks(results []Result) []Result {
 		out = append(out, check)
 	}
 	return out
+}
+
+// reHelpTopic matches a help screen pointing at another page of itself, such
+// as nodemon's "nodemon --help config". A tool that pages its own help has not
+// shown its whole flag list on one screen.
+var reHelpTopic = regexp.MustCompile(`--help\s+([a-z][a-z0-9-]{1,})`)
+
+// helpTopicStopwords are the words that follow --help in a sentence rather
+// than naming a page, as in "see --help for more".
+var helpTopicStopwords = map[string]bool{
+	"for": true, "to": true, "with": true, "on": true, "about": true,
+	"and": true, "or": true, "output": true, "information": true, "usage": true,
+	"option": true, "options": true, "flag": true, "flags": true,
+}
+
+// helpIsPartial reports whether a help screen says it has more pages. A flag
+// missing from a partial screen is unverified rather than absent: the tool
+// keeps it on a page the probe never asked for.
+func helpIsPartial(helpText string) bool {
+	for _, m := range reHelpTopic.FindAllStringSubmatch(helpText, -1) {
+		if !helpTopicStopwords[m[1]] {
+			return true
+		}
+	}
+	return false
 }
 
 // helpfulSub reports whether a subcommand's help probe produced a screen worth

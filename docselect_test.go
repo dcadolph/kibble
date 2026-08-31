@@ -31,6 +31,10 @@ func TestReplayDocs(t *testing.T) {
 	}, { // Test 2: a top-level guide is replayed by name.
 		Files: map[string]string{"README.md": shell, "GETTING_STARTED.md": shell},
 		Want:  []string{"README.md", "GETTING_STARTED.md"},
+	}, { // Test 2a: a usage guide beside the README is where the commands a
+		// reader copies usually live, whatever the project calls it.
+		Files: map[string]string{"README.md": shell, "GUIDE.md": shell, "FAQ.md": shell},
+		Want:  []string{"README.md", "FAQ.md", "GUIDE.md"},
 	}, { // Test 3: a document with nothing to run costs a container and
 		// proves nothing.
 		Files: map[string]string{"README.md": shell, "docs/design.md": prose},

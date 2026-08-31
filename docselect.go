@@ -20,6 +20,9 @@ var replayNames = map[string]bool{
 	"getting_started": true, "getting-started": true, "gettingstarted": true,
 	"quickstart": true, "quick-start": true, "install": true,
 	"installation": true, "usage": true, "tutorial": true, "upgrading": true,
+	"guide": true, "user-guide": true, "user_guide": true, "userguide": true,
+	"howto": true, "how-to": true, "cookbook": true, "recipes": true,
+	"examples": true, "walkthrough": true, "migration": true, "faq": true,
 }
 
 // skipNames are documents that describe the project rather than instruct a
