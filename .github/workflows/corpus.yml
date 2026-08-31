@@ -1,0 +1,45 @@
+name: corpus
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+jobs:
+  corpus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Every corpus entry is a widely reviewed repository pinned to a commit,
+      # so the commands kibble executes here cannot change under us. Adding an
+      # entry means having read its documentation and verified the expected
+      # counts by hand first.
+      - name: Run kibble against the corpus
+        shell: bash
+        run: |
+          set -uo pipefail
+          go build -o /tmp/kibble .
+          status=0
+          while IFS=$'\t' read -r name url sha expect; do
+            case "$name" in ""|\#*) continue ;; esac
+            echo "::group::${name}"
+            dir="/tmp/corpus/${name}"
+            git init -q "$dir"
+            git -C "$dir" fetch -q --depth 1 "$url" "$sha"
+            git -C "$dir" checkout -q FETCH_HEAD
+            /tmp/kibble -json "$dir" > "/tmp/${name}.json" || true
+            got=$(jq -r '[([.[]|select(.status=="PASS")]|length),
+                          ([.[]|select(.status=="FAIL")]|length),
+                          ([.[]|select(.status=="GAP")]|length)]
+                         | map(tostring) | join(",")' \
+                  "/tmp/${name}.json")
+            if [ "$got" != "$expect" ]; then
+              echo "::error::${name}: verdicts moved: expected ${expect} (pass,fail,gap), got ${got}"
+              status=1
+            else
+              echo "${name}: ${got} as expected"
+            fi
+            echo "::endgroup::"
+          done < corpus/repos.tsv
+          exit "$status"
