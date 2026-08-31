@@ -64,12 +64,17 @@ Requires Docker, or a compatible runtime, on the host.
 
 ## Usage
 
-Point it at one or more repository directories:
+Point it at one or more repository directories, or none at all:
 
 ```sh
+kibble
 kibble ./myrepo
 kibble ./repo-a ./repo-b
 ```
+
+With no path it checks the directory you are standing in, so `cd` into a project and run
+it. There are no prompts. kibble's home is a CI job, and a tool that stops to ask a
+question there either hangs on a closed pipe or needs a flag to defeat it.
 
 Example output:
 
