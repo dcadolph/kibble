@@ -88,7 +88,13 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	var script string
 	switch step.Kind {
 	case "example":
-		return d.runExample(ctx, step)
+		res := d.runExample(ctx, step)
+		// Several documents can be replayed for one repository, so a result
+		// that is not about the README says which document it is about.
+		if step.doc != "" && step.doc != step.readme {
+			res.Detail = step.doc + ": " + res.Detail
+		}
+		return res
 	case "brew":
 		fetch := d.Fetch
 		if fetch == nil {

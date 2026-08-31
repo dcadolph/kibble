@@ -557,6 +557,19 @@ func resolveDependentFailures(run *exampleRun, plan *Plan) {
 	for _, b := range plan.Binaries {
 		bins[b] = true
 	}
+	// Commands that ran and passed, so a failure naming one of them is not
+	// excused by it.
+	passed := map[string]bool{}
+	for _, s := range run.Steps {
+		for _, l := range s.Lines {
+			if l.Status != StatusPass {
+				continue
+			}
+			if bin, sub := invokedBinary(l.Cmd, bins); bin != "" && sub != "" {
+				passed[bin+" "+sub] = true
+			}
+		}
+	}
 	var skippedCmds []string
 	for _, s := range run.Steps {
 		for _, l := range s.Lines {
@@ -583,6 +596,11 @@ func resolveDependentFailures(run *exampleRun, plan *Plan) {
 			if prior := earlierSkipInFamily(s.Lines[:li], l.Cmd, bins); prior != "" {
 				l.Status = StatusSkipped
 				l.Detail = fmt.Sprintf("follows `%s`, which did not run", prior)
+				continue
+			}
+			if need := namedSiblingNotRun(l.output, bins, passed); need != "" {
+				l.Status = StatusSkipped
+				l.Detail = fmt.Sprintf("says to run `%s` first, which did not run", need)
 			}
 		}
 	}
@@ -837,6 +855,24 @@ func undocumentedSetting(output string, documented map[string]bool) string {
 			}
 		}
 		return m
+	}
+	return ""
+}
+
+// namedSiblingNotRun returns a command of the same binary that a failure's
+// own output tells the reader to run, when that command never ran in this
+// session. A tool naming its own prerequisite is describing session state,
+// not a hole in the document: the document did run the equivalent step, and
+// the session skipped it for a reason it already reported.
+func namedSiblingNotRun(output string, bins map[string]bool, passed map[string]bool) string {
+	for bin := range bins {
+		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(bin) + `\s+([a-z][a-z0-9_-]+)`)
+		for _, m := range re.FindAllStringSubmatch(output, -1) {
+			cmd := bin + " " + m[1]
+			if !passed[cmd] {
+				return cmd
+			}
+		}
 	}
 	return ""
 }

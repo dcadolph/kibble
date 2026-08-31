@@ -38,6 +38,9 @@ type InstallStep struct {
 	// readme is the README file name the step was extracted from, so an
 	// annotation points at the file the repository actually has.
 	readme string
+	// doc is the document an example step replays, relative to the repository
+	// root. Empty on every other kind of step.
+	doc string
 }
 
 // Extractor finds install steps in README markdown.

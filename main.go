@@ -201,7 +201,7 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan, []Result) {
 		if !examples {
 			continue
 		}
-		step, plan, err := exampleStepFor(repo, p, md, sessionBinaries(repo, bins, installs), installs)
+		cfg, err := loadExamplesConfig(p)
 		if err != nil {
 			problems = append(problems, Result{
 				Step:   InstallStep{Repo: repo, Kind: "config", dir: p, readme: name},
@@ -210,13 +210,37 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan, []Result) {
 			})
 			continue
 		}
-		if plan == nil {
-			continue
-		}
-		plans = append(plans, plan)
-		if step != nil {
-			step.readme = name
-			out = append(out, *step)
+		// Instructions outlive the README they started in. A docs tree is
+		// where install and usage steps go once the front page fills up, and
+		// it rots faster because nobody reads it on the way past, so every
+		// document that walks a reader through commands gets its own session.
+		sessionBins := sessionBinaries(repo, bins, installs)
+		// Settings are documented once for a repository, often in the README,
+		// and every document's session inherits them. Reading only the
+		// document being replayed would report a key as undocumented because
+		// the page citing it is a different page.
+		repoSettings := documentedSettingNames(readDocSet(p, name).All)
+		for _, doc := range replayDocs(p, name, cfg) {
+			text := md
+			if doc != name {
+				body, rerr := os.ReadFile(filepath.Join(p, doc))
+				if rerr != nil {
+					continue
+				}
+				text = string(body)
+			}
+			step, plan, perr := exampleStepFor(repo, p, doc, text, sessionBins, installs, cfg)
+			if plan != nil {
+				plan.Settings = repoSettings
+			}
+			if perr != nil || plan == nil {
+				continue
+			}
+			plans = append(plans, plan)
+			if step != nil {
+				step.readme = name
+				out = append(out, *step)
+			}
 		}
 	}
 	return out, plans, problems
@@ -308,12 +332,8 @@ func sameEcosystem(installs []PlanInstall, dir string) []PlanInstall {
 // exampleStepFor builds a repo's example plan and, when it has steps, the
 // install step that runs it. A bad .kibble.yml is returned as an error rather
 // than dropped, so a config typo cannot pass as a green check.
-func exampleStepFor(repo, dir, md string, bins []string, installs []PlanInstall) (
-	*InstallStep, *Plan, error) {
-	cfg, err := loadExamplesConfig(dir)
-	if err != nil {
-		return nil, nil, err
-	}
+func exampleStepFor(repo, dir, doc, md string, bins []string, installs []PlanInstall,
+	cfg *ExamplesConfig) (*InstallStep, *Plan, error) {
 	if cfg != nil && cfg.Disable {
 		return nil, nil, nil
 	}
@@ -328,7 +348,7 @@ func exampleStepFor(repo, dir, md string, bins []string, installs []PlanInstall)
 	step := &InstallStep{
 		Repo: repo, Kind: "example", Run: true,
 		Raw:  fmt.Sprintf("%d blocks, %d lines", len(plan.Steps), lines),
-		plan: plan, dir: dir,
+		plan: plan, dir: dir, doc: doc,
 	}
 	return step, plan, nil
 }

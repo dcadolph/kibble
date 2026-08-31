@@ -127,6 +127,16 @@ a gap draws: a placeholder is your reader's job, a gap is yours. Because a docum
 also expect a reader to bring their own file, a gap reports and counts but does not fail
 a run unless `-strict` is set.
 
+Instructions outlive the README they started in. A docs tree is where install and usage
+steps go once the front page fills up, and it rots faster because nobody reads it on the
+way past, so every document that walks a reader through commands is replayed in its own
+session and reported under its own name. Kibble picks the README, the `docs/` tree, and
+top-level guides named for the job they do, such as `GETTING_STARTED.md` or `UPGRADING.md`.
+It leaves alone the documents that describe a project rather than instruct a reader:
+contributing guides, changelogs, security policies, decision records, and anything written
+for an agent. A document with no runnable recipe is skipped before a container is spent on
+it. Settle the rest in `.kibble.yml` with `docs` to add one and `skipDocs` to drop one.
+
 Some documents name a file the reader is meant to supply, such as a calendar export or a
 profile they write themselves. That reads as a gap because kibble cannot tell it from a
 step somebody forgot. Settle it in `.kibble.yml`: give the session a fixture when a small

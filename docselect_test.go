@@ -1,0 +1,71 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+)
+
+// TestReplayDocs checks which documents are chosen for replay. Selection is
+// conservative: a document run by mistake spends a container and reports a
+// failure about instructions nobody was following.
+func TestReplayDocs(t *testing.T) {
+	t.Parallel()
+	shell := "# T\n```sh\ntool run\n```\n"
+	prose := "# T\n\nNo commands here.\n"
+	tests := []struct {
+		Files map[string]string
+		Cfg   *ExamplesConfig
+		Want  []string
+	}{{ // Test 0: a docs tree is replayed beside the README.
+		Files: map[string]string{"README.md": shell, "docs/quickstart.md": shell},
+		Want:  []string{"README.md", "docs/quickstart.md"},
+	}, { // Test 1: a contributing guide tells maintainers to run tests, which
+		// is not what a reader is being asked to do.
+		Files: map[string]string{"README.md": shell, "CONTRIBUTING.md": shell},
+		Want:  []string{"README.md"},
+	}, { // Test 2: a top-level guide is replayed by name.
+		Files: map[string]string{"README.md": shell, "GETTING_STARTED.md": shell},
+		Want:  []string{"README.md", "GETTING_STARTED.md"},
+	}, { // Test 3: a document with nothing to run costs a container and
+		// proves nothing.
+		Files: map[string]string{"README.md": shell, "docs/design.md": prose},
+		Want:  []string{"README.md"},
+	}, { // Test 4: generated and vendored trees are left alone.
+		Files: map[string]string{"README.md": shell, "node_modules/pkg/docs/a.md": shell,
+			"site/docs/b.md": shell},
+		Want: []string{"README.md"},
+	}, { // Test 5: a repository adds what the convention misses.
+		Files: map[string]string{"README.md": shell, "walkthrough.md": shell},
+		Cfg:   &ExamplesConfig{Docs: []string{"walkthrough.md"}},
+		Want:  []string{"README.md", "walkthrough.md"},
+	}, { // Test 6: a repository drops what the convention picks up, but the
+		// README is never dropped.
+		Files: map[string]string{"README.md": shell, "docs/wip.md": shell},
+		Cfg:   &ExamplesConfig{SkipDocs: []string{"docs/wip.md", "README.md"}},
+		Want:  []string{"README.md"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, body := range test.Files {
+				full := filepath.Join(dir, name)
+				if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+				if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+					t.Fatalf("write %s: %v", name, err)
+				}
+			}
+			got := replayDocs(dir, "README.md", test.Cfg)
+			if diff := cmp.Diff(test.Want, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

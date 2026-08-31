@@ -33,6 +33,11 @@ type ExamplesConfig struct {
 	Substitutions map[string]string `yaml:"substitutions"`
 	// Steps are per-line rules matched by substring.
 	Steps []StepRule `yaml:"steps"`
+	// Docs are extra documents to replay, as paths relative to the repository
+	// root, for instructions the naming convention does not pick up.
+	Docs []string `yaml:"docs"`
+	// SkipDocs are documents the convention picks up that should not run.
+	SkipDocs []string `yaml:"skipDocs"`
 }
 
 // StepRule overrides the planner's judgment for lines matching a substring.

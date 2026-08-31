@@ -332,6 +332,23 @@ func TestResolveDependentFailures(t *testing.T) {
 			{Cmd: "tool stats", Status: StatusFail, output: "panic: bad state"},
 		}}},
 		Want: []Status{StatusFail},
+	}, { // Test 2a: a failure whose output tells the reader to run a sibling
+		// command that never ran is describing session state, not a hole in
+		// the document.
+		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
+			{Cmd: "tool login", Status: StatusSkipped},
+			{Cmd: "tool promote", Status: StatusFail,
+				output: "tool: no hold id: pass --id or run tool request first"},
+		}}},
+		Want: []Status{StatusSkipped, StatusSkipped},
+	}, { // Test 2b: the same failure stands when the named command did run
+		// and passed, since then the document's sequence really is broken.
+		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
+			{Cmd: "tool request", Status: StatusPass},
+			{Cmd: "tool promote", Status: StatusFail,
+				output: "tool: no hold id: pass --id or run tool request first"},
+		}}},
+		Want: []Status{StatusPass, StatusFail},
 	}, { // Test 3: a failure citing a line the document's own gap stopped is
 		// a skip, so the gap is reported once instead of once per dependent
 		// command. The gap itself stays a gap.
