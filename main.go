@@ -1,7 +1,8 @@
 // Command kibble verifies that a project's documented install steps actually
 // work for a fresh user, by running each in a clean container from zero.
-// It is the proving ground for your docs: kibble runs your README so your
-// users do not have to find out it is stale.
+// Eating your own dog food means using what you ship the way a stranger
+// would, and kibble is the bowl: it reads your README so your users do not
+// have to find out it is stale.
 package main
 
 import (

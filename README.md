@@ -4,7 +4,7 @@
 
 <h1 align="center">kibble</h1>
 
-<p align="center">The proving ground for your docs.</p>
+<p align="center">Dogfood your docs.</p>
 
 <p align="center">
   <a href="https://github.com/dcadolph/kibble/releases"><img
@@ -14,11 +14,14 @@
     src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
 </p>
 
+Eating your own dog food means using what you ship the way a stranger would. Nobody does
+it for documentation, because your machine already has everything installed and the
+instructions pass by inspection. kibble is the bowl: it runs your documented steps in a
+clean container from zero, as a reader with nothing would, so a broken install fails in
+CI instead of in their terminal.
+
 Your README tells people to run `go install ...`, then some setup, then a quickstart.
-Every one of those steps rots the moment the code moves, and you are the last to know
-because your machine already has everything installed. kibble eats your own dog food: it
-runs the documented steps in a clean container from zero, so a broken install fails in
-CI instead of in a new user's terminal.
+Every one of those rots the moment the code moves, and you are the last to know.
 
 ## What it does
 

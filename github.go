@@ -94,7 +94,7 @@ func writeStepSummary(results []Result) {
 		return
 	}
 	defer func() { _ = f.Close() }()
-	_, _ = fmt.Fprintln(f, "### kibble: docs proving ground")
+	_, _ = fmt.Fprintln(f, "### kibble: dogfooding your docs")
 	_, _ = fmt.Fprintln(f)
 	_, _ = fmt.Fprintln(f, "| Repo | Step | Status | Time | Detail |")
 	_, _ = fmt.Fprintln(f, "| ---- | ---- | ------ | ---- | ------ |")
