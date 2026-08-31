@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"text/tabwriter"
+	"strings"
 	"time"
 )
 
@@ -78,21 +78,28 @@ func reportJSON(w io.Writer, results []Result) {
 
 // reportTable writes a compact aligned table and a summary line.
 func reportTable(w io.Writer, results []Result) {
-	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "REPO\tKIND\tSTATUS\tTIME\tDETAIL")
+	c := newPalette(w)
 	var pass, fail, gap, other int
+	var total time.Duration
+	repo := ""
 	for _, r := range results {
+		if r.Step.Repo != repo {
+			repo = r.Step.Repo
+			_, _ = fmt.Fprintf(w, "\n%s\n", c.bold(repo))
+		}
 		detail := r.SmokeLine
 		if r.Detail != "" {
 			detail = r.Detail
 		}
-		detail = truncate(detail, 54)
+		detail = truncate(detail, 62)
 		if r.Image != "" {
-			detail += fmt.Sprintf("  (%s)", r.Image)
+			detail += c.dim(fmt.Sprintf("  (%s)", r.Image))
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			r.Step.Repo, r.Step.Kind, r.Status,
-			r.Duration.Round(time.Second), detail)
+		total += r.Duration
+		_, _ = fmt.Fprintf(w, "  %s %s %s  %s%s\n",
+			c.mark(r.Status), c.blue(fmt.Sprintf("%-13s", r.Step.Kind)),
+			c.dim(fmt.Sprintf("%5s", r.Duration.Round(time.Second))),
+			c.statusWord(r.Status), detail)
 		switch r.Status {
 		case StatusPass:
 			pass++
@@ -104,9 +111,24 @@ func reportTable(w io.Writer, results []Result) {
 			other++
 		}
 	}
-	_ = tw.Flush()
-	_, _ = fmt.Fprintf(w, "\n%d pass, %d fail, %d gap, %d other of %d checks\n",
-		pass, fail, gap, other, len(results))
+	_, _ = fmt.Fprintf(w, "\n%s\n", summaryLine(c, pass, fail, gap, other, len(results), total))
+}
+
+// summaryLine counts the run. A failure or a gap is colored so the eye lands
+// on it, and a count of zero stays plain so nothing shouts about nothing.
+func summaryLine(c palette, pass, fail, gap, other, checks int, total time.Duration) string {
+	parts := []string{c.green(fmt.Sprintf("%d passed", pass))}
+	if fail > 0 {
+		parts = append(parts, c.red(fmt.Sprintf("%d failed", fail)))
+	}
+	if gap > 0 {
+		parts = append(parts, c.yellow(fmt.Sprintf("%d gap", gap)))
+	}
+	if other > 0 {
+		parts = append(parts, c.dim(fmt.Sprintf("%d other", other)))
+	}
+	return fmt.Sprintf("%s  %s", strings.Join(parts, "  "),
+		c.dim(fmt.Sprintf("%d checks in %s", checks, total.Round(time.Second))))
 }
 
 // truncate shortens s to n runes, adding an ellipsis when it cuts.
