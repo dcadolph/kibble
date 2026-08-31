@@ -151,6 +151,10 @@ func TestBuildPlan(t *testing.T) {
 		WantSteps: [][]planLine{{
 			{Cmd: "tool run '\\n'", NonzeroOK: true},
 		}},
+	}, { // Test 2p: a notebook the docs never create is the reader's, the
+		// same as any other file argument, and running it is a false failure.
+		Markdown:  "```sh\ntool render notebook.ipynb\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "tool render notebook.ipynb", Skip: true, Gap: true}}},
 	}, { // Test 3: two-column usage blocks lose the description column.
 		Markdown: "```\ntool add \"x\"      Append an entry to today.\n" +
 			"tool list          Print every entry.\n```\n",

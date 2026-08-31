@@ -207,7 +207,7 @@ var (
 	// reFileArg matches a whole token that names a relative file with a
 	// known extension, so missing example files are caught before they run.
 	reFileArg = regexp.MustCompile(
-		`^\.?/?[\w][\w./+-]*\.(md|txt|yaml|yml|json|csv|ics|toml|ini|env|conf|cfg|xml|html|wav|png|jpg|gif|rb|py|js|go|rs|ts|tsx|jsx|c|h|cpp|hpp|java|kt|swift|sh|pl|lua|zig|pem|crt|key|der)$`)
+		`^\.?/?[\w][\w./+-]*\.(md|txt|yaml|yml|json|csv|ics|toml|ini|env|conf|cfg|xml|html|wav|png|jpg|gif|svg|pdf|ipynb|log|sql|proto|rb|py|js|go|rs|ts|tsx|jsx|c|h|cpp|hpp|java|kt|swift|sh|pl|lua|zig|pem|crt|key|der)$`)
 	// reDotSlashArg matches a whole ./-prefixed path token of any shape.
 	reDotSlashArg = regexp.MustCompile(`^\./[\w][\w./+-]*$`)
 	// reHomeFileArg matches a ~/-prefixed file token with a known extension, so
