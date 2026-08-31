@@ -418,3 +418,41 @@ func TestSkipHeuristics(t *testing.T) {
 		})
 	}
 }
+
+// TestDescribedAsWatcher checks that a document introducing a tool as one that
+// keeps running is recognized, and that watching mentioned away from the tool's
+// name is not, since a wrong call here costs a check that would have run.
+func TestDescribedAsWatcher(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Markdown string
+		Bin      string
+		Want     bool
+	}{{ // Test 0: nodemon's opening sentence says what it does.
+		Markdown: "# nodemon\n\nnodemon is a tool that helps develop Node.js based " +
+			"applications by automatically restarting the node application when file " +
+			"changes in the directory are detected.\n",
+		Bin: "nodemon", Want: true,
+	}, { // Test 1: a server is the same shape.
+		Markdown: "# hugo\n\nhugo builds your site and can serve it locally.\n",
+		Bin:      "hugo", Want: true,
+	}, { // Test 2: a search tool is not, though its docs mention files.
+		Markdown: "# ripgrep\n\nripgrep recursively searches directories for a regex " +
+			"pattern while respecting your gitignore.\n",
+		Bin: "rg", Want: false,
+	}, { // Test 3: watching mentioned far from the tool's name does not count.
+		Markdown: "# tool\n\ntool converts files.\n\n" + strings.Repeat("prose. ", 40) +
+			"You can watch the output directory yourself.\n",
+		Bin: "tool", Want: false,
+	}, { // Test 4: no binary, nothing to judge.
+		Markdown: "# tool\n\nit watches things.\n", Bin: "", Want: false,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if got := describedAsWatcher(test.Markdown, test.Bin); got != test.Want {
+				t.Errorf("describedAsWatcher(%q) = %v, want %v", test.Bin, got, test.Want)
+			}
+		})
+	}
+}

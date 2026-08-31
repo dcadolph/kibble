@@ -274,6 +274,12 @@ func buildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 		}
 	}
 	pl.plan.Settings = documentedSettingNames(markdown)
+	for b := range pl.binaries {
+		if describedAsWatcher(markdown, b) {
+			pl.watcher = true
+			break
+		}
+	}
 	for _, block := range codeBlocks(markdown) {
 		if block.Span || !shellLangs[block.Lang] {
 			continue
@@ -327,6 +333,9 @@ type planner struct {
 	created map[string]bool
 	// module is the repository's own Go module path, empty when it has none.
 	module string
+	// watcher marks a documented binary the document describes as watching,
+	// serving, or restarting, so its invocations never return on their own.
+	watcher bool
 	// badVars holds variables assigned by skipped lines; later lines that
 	// expand them skip instead of running with an empty value.
 	badVars map[string]bool
@@ -533,6 +542,12 @@ func (pl *planner) skipReason(flat string) (string, bool) {
 	// out the timeout buys nothing the install step did not already prove.
 	if bin != "" && len(strings.Fields(stripComment(flat))) == 1 {
 		return "runs the tool with no arguments, which the install already proved", false
+	}
+	// A tool the document introduces as watching or serving does not return,
+	// whatever arguments it is given, so every invocation but a question about
+	// the tool itself would run until the timeout and report nothing.
+	if bin != "" && pl.watcher && !isInfoInvocation(flat) {
+		return "the docs describe a tool that watches or serves, so it does not return", false
 	}
 	if bin != "" && interactiveFlag(flat) {
 		return "asks for an interactive session the container cannot hold", false
@@ -1296,4 +1311,65 @@ func (pl *planner) missingHomePath(flat string) string {
 		return tok
 	}
 	return ""
+}
+
+// reWatcherWord matches how a document describes a tool that keeps running:
+// it watches files, restarts something, serves, or listens.
+var reWatcherWord = regexp.MustCompile(
+	`(?i)\b(watch(es|ing)?|restart(s|ing)?|monitor(s|ing)?|serv(e|es|ing|er)|` +
+		`daemon|listen(s|ing)?|live[- ]reload|hot[- ]reload|file changes)\b`)
+
+// describedAsWatcher reports whether a document introduces a binary as a tool
+// that keeps running. The words have to sit near the tool's name, since a
+// document can mention watching for reasons that say nothing about the
+// command, and being wrong here costs a check that would have run.
+func describedAsWatcher(markdown, bin string) bool {
+	if bin == "" {
+		return false
+	}
+	// Only prose describes what a tool is. A code block containing `tool serve`
+	// says the tool has a serve subcommand, which is a different fact and one
+	// the interactive-subcommand rule already covers.
+	head := proseOnly(markdown)
+	if len(head) > 1500 {
+		head = head[:1500]
+	}
+	re, err := regexp.Compile(`(?i)\b` + regexp.QuoteMeta(bin) + `\b`)
+	if err != nil {
+		return false
+	}
+	for _, loc := range re.FindAllStringIndex(head, -1) {
+		start := max(0, loc[0]-40)
+		end := min(len(head), loc[1]+160)
+		if reWatcherWord.MatchString(head[start:end]) {
+			return true
+		}
+	}
+	return false
+}
+
+// isInfoInvocation reports whether a line only asks a binary about itself,
+// which returns even when running the tool would not.
+func isInfoInvocation(flat string) bool {
+	f := stripComment(flat)
+	return strings.Contains(f, "--help") || strings.Contains(f, "--version") ||
+		strings.Contains(f, " version") || strings.Contains(f, " help")
+}
+
+// proseOnly returns a document with its fenced code blocks removed, so a rule
+// about what a document says is not answered by what it demonstrates.
+func proseOnly(markdown string) string {
+	var b strings.Builder
+	fenced := false
+	for _, line := range strings.Split(markdown, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			continue
+		}
+		if !fenced {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }
