@@ -185,3 +185,37 @@ func TestCollectUsageBeyondGo(t *testing.T) {
 		})
 	}
 }
+
+// TestRepoName checks that a report names a repository something a reader
+// recognizes, whatever path was typed to reach it.
+func TestRepoName(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Path string
+		Want string
+	}{{ // Test 0: a named path keeps its name.
+		Path: "/src/dcadolph/preen", Want: "preen",
+	}, { // Test 1: a trailing slash changes nothing.
+		Path: "/src/dcadolph/preen/", Want: "preen",
+	}, { // Test 2: a relative path names the directory it lands in.
+		Path: ".", Want: filepath.Base(mustWD(t)),
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if got := repoName(test.Path); got != test.Want {
+				t.Errorf("repoName(%q) = %q, want %q", test.Path, got, test.Want)
+			}
+		})
+	}
+}
+
+// mustWD returns the working directory or fails the test.
+func mustWD(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	return wd
+}

@@ -25,6 +25,9 @@ Every one of those rots the moment the code moves, and you are the last to know.
 
 ## What it does
 
+The report is colored when a person is watching and plain the moment it is piped, so a
+build log never fills with escape sequences. `NO_COLOR` turns it off everywhere.
+
 kibble reads a repository's README, finds the install commands, and runs each one in a
 fresh container with nothing preinstalled. It smoke-tests the installed binary and
 reports which steps a brand-new user could actually complete.
