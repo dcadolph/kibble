@@ -228,11 +228,15 @@ to run, skip, or run in the background with a readiness probe. Every choice live
 file, so the run stays reproducible and the engine stays the thing that decides pass or
 fail. Set `disable: true` to turn example checks off for a repository entirely.
 
-A tool that watches or serves is the case worth configuring first. kibble skips the
-documented binary invoked bare, since the smoke test already proved it runs, but an
-invocation with arguments such as `nodemon -e js,pug` starts a watcher that never returns
-and costs the line timeout before the run moves on. Mark those `background: true` with a
-`readyLog`, or `skip` them.
+A tool that watches or serves is read from how its documentation introduces it. A README
+opening with "nodemon is a tool that helps develop Node.js based applications by
+automatically restarting the node application when file changes are detected" has said
+that every invocation runs until something stops it, so kibble skips them rather than
+waiting out the timeout on each one and learning nothing. Only prose counts: a code block
+containing `tool serve` says the tool has a serve subcommand, which is a different fact.
+Questions about the tool itself, `--version` and `--help`, still run. To have a watcher
+actually verified rather than skipped, give it `background: true` and a `readyLog`, which
+is the one thing kibble cannot infer.
 
 The most common use is a scanner or linter whose whole job is to exit nonzero when it
 finds something. Point it at real code and it does exactly that, which is the tool working,
