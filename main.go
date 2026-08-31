@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -41,6 +43,8 @@ type config struct {
 	Plan bool
 	// Suggest reports whether to propose a .kibble.yml and exit.
 	Suggest bool
+	// MCP reports whether to serve the Model Context Protocol over stdio.
+	MCP bool
 }
 
 // main parses flags, collects install steps, runs them, and reports.
@@ -53,11 +57,26 @@ func main() {
 	flag.BoolVar(&cfg.Version, "version", false, "print the version and exit")
 	flag.BoolVar(&cfg.Strict, "strict", false,
 		"also fail on timeouts, smoke-test failures, drift, and documentation gaps")
-	flag.BoolVar(&cfg.Examples, "examples", true, "replay README example blocks in the container")
+	flag.BoolVar(&cfg.Examples, "examples", true, "replay each document's example blocks in the container")
 	flag.BoolVar(&cfg.Plan, "plan", false, "print the example plans as JSON and exit")
 	flag.BoolVar(&cfg.Suggest, "suggest", false,
 		"propose a .kibble.yml using a configured model and exit")
+	flag.BoolVar(&cfg.MCP, "mcp", false,
+		"serve the Model Context Protocol over stdio so an agent can drive kibble")
 	flag.Parse()
+
+	if cfg.MCP {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		// A client closing the pipe ends the session, which is how a stdio
+		// server is meant to finish rather than a failure to report.
+		if err := serveMCP(ctx, cfg); err != nil && ctx.Err() == nil &&
+			!errors.Is(err, io.EOF) && !strings.Contains(err.Error(), "EOF") {
+			fmt.Fprintf(os.Stderr, "kibble: mcp server stopped: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if cfg.Version {
 		fmt.Println(kibbleVersion())
