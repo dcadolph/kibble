@@ -96,6 +96,11 @@ var (
 	reNoChange = regexp.MustCompile(
 		`(?i)\bnothing was changed\b|\bno changes (were )?made\b` +
 			`|\baborted by (the )?user\b|\bnothing to (do|change|commit)\b`)
+	// reShellNotFound matches a shell reporting a command it cannot find.
+	// dash is /bin/sh on Debian images, so it is what make runs recipes with,
+	// and it says "zip: not found" without the word command. Requiring that
+	// word, or exit 127, misses every missing tool a Makefile reaches for.
+	reShellNotFound = regexp.MustCompile(`(?m)\b[\w.+-]+: (command )?not found\b`)
 	// reNoExec matches the Go exec error for a missing helper program.
 	reNoExec = regexp.MustCompile(`executable file not found`)
 	// reMissingDep matches a tool reporting that a system dependency it needs
@@ -155,7 +160,14 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 		"docker", "run", "--rm", "-i", "--name", name,
 		"-e", "GOTOOLCHAIN=auto", image, "bash", "-c", script)
 	cmd.Cancel = removeContainerFunc(cmd, name)
-	cmd.Stdin = bytes.NewReader(repoTar(step.dir))
+	repo, truncated := repoTar(step.dir)
+	if truncated {
+		return Result{
+			Step: step, Status: StatusError, Duration: time.Since(start),
+			Detail: "repository too large to stream whole, so the examples have no verdict",
+		}
+	}
+	cmd.Stdin = bytes.NewReader(repo)
 	out, _ := cmd.CombinedOutput()
 	if ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) {
 		return Result{
@@ -701,7 +713,7 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 	case l.NonzeroOK:
 		lr.Status = StatusPass
 		lr.Detail = fmt.Sprintf("exit %d is documented behavior", o.code)
-	case o.code == 127 || strings.Contains(o.output, "command not found") ||
+	case o.code == 127 || reShellNotFound.MatchString(o.output) ||
 		reNoExec.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Detail = "invokes a command the container lacks: " + tail
@@ -745,15 +757,28 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 	return lr
 }
 
-// repoTar packs the repo working tree for the session, without .git and
-// without files over 2 MB, so documented example files exist in the
-// container. The stream is capped at 20 MB; a huge repo arrives truncated
-// and any file beyond the cap reads as missing, which is honest.
-func repoTar(dir string) []byte {
+// tarSkipDirs are directories a build produces or a package manager fills.
+// Streaming them wastes the budget on output nobody documents, and on a big
+// repository it pushes the source a document needs past the cap.
+var tarSkipDirs = map[string]bool{
+	".git": true, "node_modules": true, "vendor": true, "dist": true,
+	"build": true, "target": true, "out": true, ".gradle": true, ".idea": true,
+	".next": true, ".venv": true, "__pycache__": true, "coverage": true,
+	".terraform": true, ".tox": true, ".pytest_cache": true, ".mypy_cache": true,
+}
+
+// repoTar packs the repo working tree for the session, without generated
+// directories and without files over 2 MB, so documented example files exist
+// in the container. The stream is capped at 20 MB. Truncation is reported
+// rather than absorbed: a repository that arrives incomplete makes a document
+// look broken when the missing piece is kibble's, and a verdict on that is
+// worse than no verdict.
+func repoTar(dir string) ([]byte, bool) {
 	var buf bytes.Buffer
 	if dir == "" {
-		return buf.Bytes()
+		return buf.Bytes(), false
 	}
+	truncated := false
 	tw := tar.NewWriter(&buf)
 	total := int64(0)
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -761,7 +786,7 @@ func repoTar(dir string) []byte {
 			return nil
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" {
+			if tarSkipDirs[d.Name()] {
 				return filepath.SkipDir
 			}
 			return nil
@@ -774,6 +799,7 @@ func repoTar(dir string) []byte {
 			return nil
 		}
 		if total += info.Size(); total > 20<<20 {
+			truncated = true
 			return filepath.SkipAll
 		}
 		rel, err := filepath.Rel(dir, path)
@@ -798,7 +824,7 @@ func repoTar(dir string) []byte {
 		return nil
 	})
 	_ = tw.Close()
-	return buf.Bytes()
+	return buf.Bytes(), truncated
 }
 
 // plural picks the singular or plural word for n.
