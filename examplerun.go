@@ -691,7 +691,7 @@ func summarize(run *exampleRun) (Status, string) {
 func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 	documented map[string]bool) lineResult {
 	lr.Code = o.code
-	tail := lastLine(strings.Split(o.output, "\n"))
+	tail := failureLine(strings.Split(o.output, "\n"))
 	switch {
 	case wrapped && o.code == 124:
 		lr.Status = StatusTimeout

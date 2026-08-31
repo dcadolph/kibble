@@ -56,6 +56,10 @@ type Result struct {
 	Image string
 	// helpText is the help output collected for flag checking.
 	helpText string
+	// helpBySub is each probed subcommand's own help screen. Keeping the
+	// screens apart is what lets a check say whether a subcommand answered
+	// at all, rather than searching one pile of text and guessing.
+	helpBySub map[string]string
 	// subCodes maps each cited subcommand to the exit code its help probe
 	// returned, so a subcommand the binary rejects is caught by its exit
 	// rather than by one framework's wording for the error.
@@ -413,7 +417,8 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 	noBin := false
 	inHelp := false
 	subCodes := map[string]int{}
-	var tail, help []string
+	helpBySub := map[string]string{}
+	var tail, help, cur []string
 	for _, line := range strings.Split(out, "\n") {
 		switch {
 		case strings.HasPrefix(line, "KIBBLE-HELP-START"):
@@ -423,8 +428,11 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 		case reSubMarker.MatchString(line):
 			m := reSubMarker.FindStringSubmatch(line)
 			subCodes[m[1]], _ = strconv.Atoi(m[2])
+			helpBySub[m[1]] = strings.Join(cur, "\n")
+			cur = nil
 		case inHelp:
 			help = append(help, line)
+			cur = append(cur, line)
 		case strings.HasPrefix(line, "BUILDCODE="):
 			buildCode, _ = strconv.Atoi(strings.TrimPrefix(line, "BUILDCODE="))
 		case strings.HasPrefix(line, "SMOKECODE="):
@@ -440,6 +448,9 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 		}
 	}
 	res.helpText = strings.Join(help, "\n")
+	if len(helpBySub) > 0 {
+		res.helpBySub = helpBySub
+	}
 	if len(subCodes) > 0 {
 		res.subCodes = subCodes
 	}
@@ -484,4 +495,25 @@ func lastLine(lines []string) string {
 		return ""
 	}
 	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+// reWrapperSummary matches the closing line a build tool prints after the tool
+// it invoked has already reported the real error. It names the target that
+// failed and nothing about why.
+var reWrapperSummary = regexp.MustCompile(
+	`^(make(\[\d+\])?: (\*\*\*|Entering|Leaving)|npm ERR!|yarn ERR|` +
+		`error: could not compile|error: build failed|FAILED:|ninja: build stopped)`)
+
+// failureLine returns the most informative line of a failure. Reporting a
+// wrapper's summary hides the error a reader needs, so the summary is skipped
+// in favor of the last line that says what actually broke.
+func failureLine(lines []string) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || reWrapperSummary.MatchString(line) {
+			continue
+		}
+		return line
+	}
+	return lastLine(lines)
 }

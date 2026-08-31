@@ -143,6 +143,14 @@ step somebody forgot. Settle it in `.kibble.yml`: give the session a fixture whe
 valid file makes the line run for real, or a step rule with a `skip` reason when only the
 reader can supply the thing.
 
+Flags and subcommands are read from the whole documentation set, since a reference page
+cites more of a tool than its front page does and drifts faster. Two things keep that from
+inventing failures. A flag is judged against the screen of the subcommand it was cited on,
+so one cited on a subcommand whose help never arrived is reported as unverified rather than
+missing. And a subcommand counts as rejected only when a parser names it as the unknown
+one: a subcommand that takes arguments rather than flags exits nonzero on `--help` while
+plainly existing, and says so about the argument, not itself.
+
 Drift runs in both directions. The check below asks whether every flag and subcommand the
 docs cite exists in the binary. The reverse question, whether every command the binary
 advertises appears in the docs, is `doc-coverage`, and it catches the more common rot: a

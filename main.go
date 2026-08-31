@@ -189,7 +189,12 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan, []Result) {
 		}
 		steps := ex.Extract(repo, md)
 		bins, installs := sessionInstalls(p, steps)
-		usage := extractUsage(bins, md)
+		// Flags and subcommands are cited across the whole documentation set,
+		// not only the README, and a reference page drifts faster than a front
+		// page because nobody reads it on the way past. A flag cited on a
+		// subcommand whose help never arrived is reported as unverified rather
+		// than as drift, so reading more documents cannot invent a failure.
+		usage := extractUsage(bins, readDocSet(p, name).All)
 		for i := range steps {
 			steps[i].dir = p
 			steps[i].readme = name
