@@ -1278,10 +1278,10 @@ func (pl *planner) getsOwnModule(flat string) bool {
 }
 
 // interactiveFlag reports whether a line asks a binary to run interactively.
-// Only the long form counts: bare -i means in-place to sed and cipher,
-// ignore-case to grep, and interactive to git rebase, so reading it as a
-// prompt skips working lines and breaks the ones that follow them. A repo
-// whose -i does mean interactive says so in .kibble.yml.
+// Only the long form counts: bare -i means in-place to sed, ignore-case to
+// grep, and interactive to git rebase, so reading it as a prompt skips working
+// lines and breaks the ones that follow them. A repo whose -i does mean
+// interactive says so in .kibble.yml.
 func interactiveFlag(flat string) bool {
 	for _, f := range strings.Fields(stripComment(flat)) {
 		if f == "--interactive" {

@@ -63,9 +63,9 @@ var (
 		`(?i)api[_ ]?key|credential|unauthorized|forbidden|\b401\b|\b403\b` +
 			`|not (logged|signed) in|\blog ?in\b|authenticat|missing (token|key)`)
 	// reSettingName matches an environment setting a tool names in its own
-	// error, such as VAMOOSE_CLIENT_ID or VAMOOSE_BAMBOOHR_*. Matching the
-	// shape rather than a list of suffixes keeps the rule from needing a new
-	// entry for every credential a tool invents.
+	// error, such as MYTOOL_CLIENT_ID or MYTOOL_BACKEND_*. Matching the shape
+	// rather than a list of suffixes keeps the rule from needing a new entry
+	// for every credential a tool invents.
 	reSettingName = regexp.MustCompile(`\b[A-Z][A-Z0-9]{2,}(_[A-Z0-9*]+)+\b`)
 	// reMissingPhrase matches the wording that says a required setting is
 	// absent. The name alone is not enough: a document may legitimately print
@@ -873,7 +873,7 @@ func documentedSettings(plan *Plan) map[string]bool {
 
 // undocumentedSetting returns the first setting a failure names that the
 // document never mentions, or empty when the output names none or the
-// document covers them all. A wildcard such as VAMOOSE_BAMBOOHR_* counts as
+// document covers them all. A wildcard such as MYTOOL_BACKEND_* counts as
 // documented when the document names anything sharing its prefix.
 func undocumentedSetting(output string, documented map[string]bool) string {
 	if !reMissingPhrase.MatchString(output) {

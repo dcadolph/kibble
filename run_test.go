@@ -154,14 +154,14 @@ func TestRewriteSSH(t *testing.T) {
 		In   string
 		Want string
 	}{{ // Test 0: an ssh remote with .git suffix.
-		In:   "git clone git@github.com:dcadolph/slop-chop.git",
-		Want: "git clone https://github.com/dcadolph/slop-chop.git",
+		In:   "git clone git@github.com:example/mytool.git",
+		Want: "git clone https://github.com/example/mytool.git",
 	}, { // Test 1: an ssh remote without the suffix.
-		In:   "git clone git@github.com:dcadolph/midden",
-		Want: "git clone https://github.com/dcadolph/midden.git",
+		In:   "git clone git@github.com:example/other",
+		Want: "git clone https://github.com/example/other.git",
 	}, { // Test 2: an https remote is untouched.
-		In:   "git clone https://github.com/dcadolph/cipher && cd cipher",
-		Want: "git clone https://github.com/dcadolph/cipher && cd cipher",
+		In:   "git clone https://github.com/example/mytool && cd mytool",
+		Want: "git clone https://github.com/example/mytool && cd mytool",
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

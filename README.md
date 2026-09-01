@@ -429,13 +429,6 @@ documentation and verifying the expected counts first.
 Dogfooding means using your own product before you ship it. kibble is the bowl: it feeds
 your docs back to a fresh machine and tells you whether they still go down.
 
-## More tools
-
-- [preen](https://github.com/dcadolph/preen), split a messy working tree into clean, atomic git commits
-- [slop-chop](https://github.com/dcadolph/slop-chop), strip the AI tells out of your writing
-- [vamoose](https://github.com/dcadolph/vamoose), route time off through approval, then tell the team
-- [whodar](https://github.com/dcadolph/whodar), find who to talk to about X across your work tools
-
 ## License
 
 MIT. See [LICENSE](LICENSE).

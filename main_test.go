@@ -194,9 +194,9 @@ func TestRepoName(t *testing.T) {
 		Path string
 		Want string
 	}{{ // Test 0: a named path keeps its name.
-		Path: "/src/dcadolph/preen", Want: "preen",
+		Path: "/src/example/mytool", Want: "mytool",
 	}, { // Test 1: a trailing slash changes nothing.
-		Path: "/src/dcadolph/preen/", Want: "preen",
+		Path: "/src/example/mytool/", Want: "mytool",
 	}, { // Test 2: a relative path names the directory it lands in.
 		Path: ".", Want: filepath.Base(mustWD(t)),
 	}}
