@@ -460,3 +460,62 @@ func TestDescribedAsWatcher(t *testing.T) {
 		})
 	}
 }
+
+// TestPlatformScopedBlocks checks that a block whose introducing sentence
+// scopes it to another operating system is skipped rather than run and
+// convicted. The fixture prose is ripgrep's FAQ shape, which documents the
+// GNU form and then the BSD form, and kibble once ran the BSD form on Linux
+// and called the document broken.
+func TestPlatformScopedBlocks(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Markdown string
+		WantSkip string
+	}{{ // Test 0: a block introduced as BSD sed for macOS is skipped.
+		Markdown: "Note: the above assumes GNU sed. If you are using BSD sed " +
+			"(the default on macOS and FreeBSD) then you must modify the " +
+			"command to be the following:\n\n```sh\ntool run --fix ''\n```\n",
+		WantSkip: "documented for",
+	}, { // Test 1: a block introduced for Windows is skipped.
+		Markdown: "On Windows, run the following:\n\n```sh\ntool run --fix\n```\n",
+		WantSkip: "documented for",
+	}, { // Test 2: naming Linux in the same sentence is a contrast, not a
+		// scope, and the block runs.
+		Markdown: "This works the same on Linux and macOS:\n\n```sh\ntool run --fix\n```\n",
+	}, { // Test 3: a block with no introduction runs.
+		Markdown: "```sh\ntool run --fix\n```\n",
+	}, { // Test 4: a heading between the prose and the block resets the
+		// introduction, so a macOS sentence in the previous section cannot
+		// scope this one.
+		Markdown: "This section is about macOS.\n\n## Elsewhere\n\n```sh\ntool run --fix\n```\n",
+	}, { // Test 5: an earlier sentence naming macOS does not scope the block
+		// when the final sentence moves on.
+		Markdown: "Users on macOS often ask this. The answer is the same " +
+			"everywhere, run the following:\n\n```sh\ntool run --fix\n```\n",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := buildPlan("repo", "", test.Markdown, []string{"tool"},
+				[]PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}}, nil)
+			var got PlanLine
+			found := false
+			for _, s := range plan.Steps {
+				for _, l := range s.Lines {
+					if strings.HasPrefix(flatten(l.Cmd), "tool") {
+						got, found = l, true
+					}
+				}
+			}
+			if !found {
+				t.Fatal("plan lost the block's line")
+			}
+			if test.WantSkip == "" && got.Skip != "" {
+				t.Errorf("line skipped %q, want it to run", got.Skip)
+			}
+			if test.WantSkip != "" && !strings.Contains(got.Skip, test.WantSkip) {
+				t.Errorf("skip = %q, want it to contain %q", got.Skip, test.WantSkip)
+			}
+		})
+	}
+}

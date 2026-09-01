@@ -384,6 +384,7 @@ func (pl *planner) addBlock(block codeBlock) {
 		ID:      fmt.Sprintf("b%d", len(pl.plan.Steps)+1),
 		Heading: block.Heading,
 	}
+	scopedTo := otherPlatform(block.Intro)
 	lineIn := sourceLineIndex(block)
 	shownErr := shownFailures(block)
 	nonzero := false
@@ -413,6 +414,9 @@ func (pl *planner) addBlock(block codeBlock) {
 			line.NonzeroOK = true
 		}
 		line.Skip, line.Gap = pl.skipReason(flat)
+		if line.Skip == "" && scopedTo != "" {
+			line.Skip = fmt.Sprintf("documented for %s rather than this container", scopedTo)
+		}
 		if line.Skip == "" && lostDir {
 			line.Skip = "follows a skipped cd, so it would run in the wrong directory"
 		}
@@ -1323,6 +1327,36 @@ var reWatcherWord = regexp.MustCompile(
 // that keeps running. The words have to sit near the tool's name, since a
 // document can mention watching for reasons that say nothing about the
 // command, and being wrong here costs a check that would have run.
+// reOtherPlatform matches the operating systems a Linux container cannot
+// stand in for. BSD sed counts because the FreeBSD and macOS sed shares a
+// name with GNU sed and nothing else, which is exactly why docs call it out.
+var reOtherPlatform = regexp.MustCompile(`(?i)\b(macOS|OS X|FreeBSD|OpenBSD|NetBSD|Windows|BSD sed)\b`)
+
+// reThisPlatform matches the prose that names the container's own world. A
+// sentence naming both worlds is contrasting them, not scoping the block.
+var reThisPlatform = regexp.MustCompile(`(?i)\b(Linux|GNU)\b`)
+
+// otherPlatform returns the platform a block's introducing sentence scopes it
+// to, or empty when the block is for everyone. Only the last sentence counts:
+// the FAQ that documents the GNU form, then says "if you are using BSD sed
+// (the default on macOS) use the following", scopes only the second block,
+// and the sentence before that one mentions GNU without scoping anything.
+// Running a macOS command on Linux convicts a document that told the reader
+// exactly what to run where, the same false positive as installing a cask.
+func otherPlatform(intro string) string {
+	intro = strings.TrimSpace(intro)
+	if intro == "" {
+		return ""
+	}
+	sentences := strings.Split(intro, ". ")
+	last := sentences[len(sentences)-1]
+	m := reOtherPlatform.FindString(last)
+	if m == "" || reThisPlatform.MatchString(last) {
+		return ""
+	}
+	return m
+}
+
 func describedAsWatcher(markdown, bin string) bool {
 	if bin == "" {
 		return false

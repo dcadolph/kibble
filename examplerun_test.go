@@ -615,3 +615,65 @@ func TestRepoTar(t *testing.T) {
 		t.Errorf("streamed files mismatch (-want +got):\n%s", diff)
 	}
 }
+
+// TestEmptyPipelineSkips checks that xargs reporting a failed invocation
+// which itself reported empty input reads as the search matching nothing,
+// not as the document being wrong.
+func TestEmptyPipelineSkips(t *testing.T) {
+	t.Parallel()
+	lr := classifyLineResult(lineResult{Cmd: "rg foo -0 | xargs -0 sed -i 's/foo/bar/g'"},
+		PlanLine{}, lineOutcome{code: 123, output: "sed: no input files"}, false, nil)
+	if lr.Status != StatusSkipped {
+		t.Errorf("status = %s, want %s", lr.Status, StatusSkipped)
+	}
+	if !strings.Contains(lr.Detail, "matched nothing") {
+		t.Errorf("detail = %q, want it to mention matching nothing", lr.Detail)
+	}
+	// A sed that failed for a real reason keeps its failure.
+	lr = classifyLineResult(lineResult{Cmd: "rg foo | xargs sed -i 's/foo/'"},
+		PlanLine{}, lineOutcome{code: 123, output: "sed: -e expression #1, char 7: unterminated `s' command"}, false, nil)
+	if lr.Status != StatusFail {
+		t.Errorf("status = %s, want %s", lr.Status, StatusFail)
+	}
+}
+
+// TestMissingFileArg checks that only an error naming one of the command's
+// own arguments reads as a missing file. ripgrep's guide searches a
+// some-utf16-file the reader is meant to bring, and calling that a failure
+// convicted a document that says "that's just an example" one line later.
+func TestMissingFileArg(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Cmd    string
+		Output string
+		Want   string
+	}{{ // Test 0: ripgrep's IO error names the missing argument.
+		Cmd:    "rg '(?-u)\\(' -E none -a some-utf16-file",
+		Output: "rg: some-utf16-file: IO error for operation on some-utf16-file: No such file or directory (os error 2)",
+		Want:   "some-utf16-file",
+	}, { // Test 1: a plain shell error names the missing argument.
+		Cmd:    "tool render report.md",
+		Output: "tool: report.md: No such file or directory",
+		Want:   "report.md",
+	}, { // Test 2: a file the command never names is the tool's own problem.
+		Cmd:    "tool run",
+		Output: "tool: config.toml: No such file or directory",
+		Want:   "",
+	}, { // Test 3: a failure that is not about a file is left alone.
+		Cmd:    "tool run input.txt",
+		Output: "tool: input.txt: parse error at line 3",
+		Want:   "",
+	}, { // Test 4: a quoted argument still matches the reported name.
+		Cmd:    "tool render 'report.md'",
+		Output: "tool: report.md: No such file or directory",
+		Want:   "report.md",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if got := missingFileArg(test.Cmd, test.Output); got != test.Want {
+				t.Errorf("missingFileArg = %q, want %q", got, test.Want)
+			}
+		})
+	}
+}
