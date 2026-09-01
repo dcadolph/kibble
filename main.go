@@ -145,7 +145,16 @@ func main() {
 
 	report(os.Stdout, results, cfg.JSON)
 	if os.Getenv("GITHUB_ACTIONS") == "true" {
-		githubOutput(os.Stdout, results)
+		// JSON mode owns stdout. A workflow command printed after the array
+		// corrupts the JSON a caller redirected, and a redirected stdout never
+		// reaches the runner's command parser anyway, so annotations ride
+		// stderr there. The table keeps stdout, where commands are documented
+		// to work.
+		dst := os.Stdout
+		if cfg.JSON {
+			dst = os.Stderr
+		}
+		githubOutput(dst, results)
 	}
 	if anyFail(results, cfg.Strict) {
 		os.Exit(1)
