@@ -23,6 +23,13 @@ CI instead of in their terminal.
 Your README tells people to run `go install ...`, then some setup, then a quickstart.
 Every one of those rots the moment the code moves, and you are the last to know.
 
+The stranger is not always a person now. Coding agents install tools by doing what the
+README says, and they fail differently than people do. Someone who follows a broken
+instruction knows they followed it correctly, reads the error, and works around the
+document. An agent cannot tell a stale command from its own mistake, so it retries,
+invents variants, and reports success it did not have. A line that has been wrong for six
+months gets run all day by something that will never complain about it.
+
 ## What it does
 
 The report is colored when a person is watching and plain the moment it is piped, so a
