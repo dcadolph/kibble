@@ -222,10 +222,10 @@ func TestRejectedSub(t *testing.T) {
 		// and its message names the argument, not itself.
 		SubCodes: map[string]int{"schedule": 1}, Sub: "schedule", Want: false,
 		HelpBySub: map[string]string{
-			"schedule": `vamoose: schedule: unknown subcommand "--help"; use add, list, or remove`},
+			"schedule": `mytool: schedule: unknown subcommand "--help"; use add, list, or remove`},
 	}, { // Test 1b: another shape of the same thing.
 		SubCodes:  map[string]int{"run": 1}, Sub: "run", Want: false,
-		HelpBySub: map[string]string{"run": `vamoose: run: unknown workflow: "--help"`},
+		HelpBySub: map[string]string{"run": `mytool: run: unknown workflow: "--help"`},
 	}, { // Test 2: a probe that timed out says nothing about the docs.
 		SubCodes: map[string]int{"serve": 124}, Sub: "serve", Want: false,
 	}, { // Test 3: a probe that found no binary says nothing about the docs.
@@ -304,7 +304,7 @@ func TestSynopsisNotCited(t *testing.T) {
 // subcommand never convicts a flag, since the probe put it in that position.
 func TestFlagRejectedPosition(t *testing.T) {
 	t.Parallel()
-	probe := `vamoose: schedule: unknown subcommand "--every"; use add, list, or remove`
+	probe := `mytool: schedule: unknown subcommand "--every"; use add, list, or remove`
 	if flagRejected(probe, "every") {
 		t.Error("a subcommand-position complaint convicted the flag")
 	}

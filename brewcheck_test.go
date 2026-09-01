@@ -31,9 +31,9 @@ func TestCheckBrew(t *testing.T) {
 		WantStatus: StatusSkipped,
 	}, { // Test 0e: a tap alias is a working documented name, the same as a
 		// core alias.
-		Target: "dcadolph/tap/short",
+		Target: "example/tap/short",
 		Codes: map[string]int{
-			"raw.githubusercontent.com/dcadolph/homebrew-tap/HEAD/Aliases/short": 200,
+			"raw.githubusercontent.com/example/homebrew-tap/HEAD/Aliases/short": 200,
 		},
 		WantStatus: StatusPass,
 	}, { // Test 0a: a core alias is a working documented name. `brew install
@@ -46,21 +46,21 @@ func TestCheckBrew(t *testing.T) {
 		},
 		WantStatus: StatusPass,
 	}, { // Test 0: a tap formula that exists passes.
-		Target:     "dcadolph/tap/slop-chop",
-		Codes:      map[string]int{"raw.githubusercontent.com/dcadolph/homebrew-tap/HEAD/Formula/slop-chop.rb": 200},
+		Target:     "example/tap/mytool",
+		Codes:      map[string]int{"raw.githubusercontent.com/example/homebrew-tap/HEAD/Formula/mytool.rb": 200},
 		WantStatus: StatusPass,
 		WantURL:    "homebrew-tap",
 	}, { // Test 1: a formula at the tap root is found by the fallback path.
-		Target: "dcadolph/whodar/whodar",
+		Target: "example/toolbox/mytool",
 		Codes: map[string]int{
-			"raw.githubusercontent.com/dcadolph/homebrew-whodar/HEAD/Formula/whodar.rb": 404,
-			"raw.githubusercontent.com/dcadolph/homebrew-whodar/HEAD/whodar.rb":         200,
+			"raw.githubusercontent.com/example/homebrew-toolbox/HEAD/Formula/mytool.rb": 404,
+			"raw.githubusercontent.com/example/homebrew-toolbox/HEAD/mytool.rb":         200,
 		},
 		WantStatus: StatusPass,
 	}, { // Test 2: a name missing from every index is reported, not convicted.
 		// An index lookup cannot tell a broken line from a name it does not
 		// index, so it reports a gap and leaves the verdict to -brew-install.
-		Target:     "dcadolph/tap/nope",
+		Target:     "example/tap/nope",
 		Codes:      map[string]int{},
 		WantStatus: StatusGap,
 	}, { // Test 2c: a missing cask is a gap for the same reason.
@@ -68,9 +68,9 @@ func TestCheckBrew(t *testing.T) {
 		Codes:      map[string]int{},
 		WantStatus: StatusGap,
 	}, { // Test 2b: a cask-only tap is found under Casks.
-		Target: "dcadolph/whodar/whodar",
+		Target: "example/toolbox/mytool",
 		Codes: map[string]int{
-			"homebrew-whodar/HEAD/Casks/whodar.rb": 200,
+			"homebrew-toolbox/HEAD/Casks/mytool.rb": 200,
 		},
 		WantStatus: StatusPass,
 		WantURL:    "Casks",
@@ -80,7 +80,7 @@ func TestCheckBrew(t *testing.T) {
 		WantStatus: StatusPass,
 		WantURL:    "formulae.brew.sh",
 	}, { // Test 4: network trouble is a skip, not a failure.
-		Target:     "dcadolph/tap/slop-chop",
+		Target:     "example/tap/mytool",
 		Err:        errors.New("dial timeout"),
 		WantStatus: StatusSkipped,
 	}, { // Test 5: an unrecognized target shape is a skip.

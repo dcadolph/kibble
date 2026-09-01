@@ -17,19 +17,19 @@ func TestClassifyLine(t *testing.T) {
 		WantRun  bool
 		WantOK   bool
 	}{{ // Test 0: go install with subdir and version.
-		In:       "go install github.com/dcadolph/cipher/cmd/cipher@latest",
-		WantKind: "go-install", WantMod: "github.com/dcadolph/cipher/cmd/cipher@latest",
+		In:       "go install example.com/tool/cmd/mytool@latest",
+		WantKind: "go-install", WantMod: "example.com/tool/cmd/mytool@latest",
 		WantRun: true, WantOK: true,
 	}, { // Test 1: go install with a trailing comment.
-		In:       "go install github.com/dcadolph/slop-chop@latest   # lands in $(go env GOPATH)/bin",
-		WantKind: "go-install", WantMod: "github.com/dcadolph/slop-chop@latest",
+		In:       "go install example.com/tool@latest   # lands in $(go env GOPATH)/bin",
+		WantKind: "go-install", WantMod: "example.com/tool@latest",
 		WantRun: true, WantOK: true,
 	}, { // Test 2: brew install is recognized and verified.
-		In:       "brew install dcadolph/tap/vamoose",
-		WantKind: "brew", WantMod: "dcadolph/tap/vamoose", WantRun: true, WantOK: true,
+		In:       "brew install example/tap/mytool",
+		WantKind: "brew", WantMod: "example/tap/mytool", WantRun: true, WantOK: true,
 	}, { // Test 3: git clone is recognized and its recipe is executed.
-		In:       "git clone https://github.com/dcadolph/cipher && cd cipher && make install",
-		WantKind: "git-clone", WantMod: "https://github.com/dcadolph/cipher",
+		In:       "git clone https://example.com/tool && cd tool && make install",
+		WantKind: "git-clone", WantMod: "https://example.com/tool",
 		WantRun: true, WantOK: true,
 	}, { // Test 4: plain prose is not an install command.
 		In: "Run the doctor command to check your setup.", WantOK: false,
@@ -159,9 +159,9 @@ func TestBinaryName(t *testing.T) {
 		In   string
 		Want string
 	}{{ // Test 0: command under a cmd directory.
-		In: "github.com/dcadolph/cipher/cmd/cipher@latest", Want: "cipher",
+		In: "example.com/tool/cmd/mytool@latest", Want: "mytool",
 	}, { // Test 1: main package at the module root.
-		In: "github.com/dcadolph/vamoose@latest", Want: "vamoose",
+		In: "example.com/tool@latest", Want: "tool",
 	}, { // Test 2: a v2 module root uses the element before the version suffix.
 		In: "github.com/foo/bar/v2@latest", Want: "bar",
 	}, { // Test 3: a command under a versioned module keeps its own name.
