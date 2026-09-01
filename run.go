@@ -223,7 +223,14 @@ func pkgScriptFor(step InstallStep, timeoutSecs int) string {
 		body = pk.Bootstrap + "\n" + body
 	}
 	body = strings.ReplaceAll(body, "'", `'\''`)
-	return fmt.Sprintf(pkgScript, pk.BinDir, timeoutSecs, body, step.Binary)
+	// The package name came out of a document, so it is interpolated into the
+	// owned-bins lookup only when it carries no shell syntax. Without the
+	// lookup the script simply falls back to the bin diff.
+	own := ""
+	if pk.OwnedBins != "" && !strings.ContainsAny(step.Module, "$\x60;&|<>()'\" ") {
+		own = fmt.Sprintf(pk.OwnedBins, step.Module)
+	}
+	return fmt.Sprintf(pkgScript, pk.BinDir, timeoutSecs, body, step.Binary, own)
 }
 
 // shellCommand returns a documented line in the form a shell can run: the
@@ -233,10 +240,12 @@ func shellCommand(raw string) string {
 	return strings.TrimSpace(stripComment(strings.TrimPrefix(strings.TrimSpace(raw), "$ ")))
 }
 
-// pkgScript installs a documented package and smoke-tests whatever binary the
-// install added. The bin directory is compared before and after, so a package
-// whose binary carries a different name, as ripgrep provides rg, is still
-// found and tested rather than reported as missing.
+// pkgScript installs a documented package and smoke-tests the binary it
+// added. The package's own name is preferred among the new files, because a
+// pip install drops its dependencies' entry points into the same directory
+// and the alphabetically first of those is what got smoke-tested in the
+// package's name. The diff fallback still covers a package whose binary
+// carries a different name, as ripgrep provides rg.
 const pkgScript = `set -u
 BINDIR=%[1]s
 mkdir -p "$BINDIR" 2>/dev/null || true
@@ -249,7 +258,14 @@ if [ "$code" -ne 0 ]; then
 fi
 printf 'BUILDCODE=0\n'
 after=$(ls "$BINDIR" 2>/dev/null | sort)
-bin=$(comm -13 <(printf '%%s\n' "$before") <(printf '%%s\n' "$after") | head -n1)
+newbins=$(comm -13 <(printf '%%s\n' "$before") <(printf '%%s\n' "$after"))
+own=''
+%[5]s
+bin=$(printf '%%s\n' "$newbins" | grep -Fx '%[4]s' | head -n1)
+if [ -z "$bin" ] && [ -n "$own" ]; then
+  bin=$(printf '%%s\n' "$newbins" | grep -Fxf <(printf '%%s\n' "$own") | head -n1)
+fi
+[ -z "$bin" ] && bin=$(printf '%%s\n' "$newbins" | grep -v '^$' | head -n1)
 if [ -n "$bin" ]; then bin="$BINDIR/$bin"; fi
 if [ -z "$bin" ] && command -v "%[4]s" >/dev/null 2>&1; then bin=$(command -v "%[4]s"); fi
 if [ -z "$bin" ]; then
