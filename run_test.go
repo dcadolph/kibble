@@ -314,3 +314,38 @@ func TestBrewInstallScriptShape(t *testing.T) {
 		}
 	}
 }
+
+// TestPkgScriptPrefersNamedBinary checks the package script smoke-tests the
+// package's own binary when the install added it, not the alphabetically
+// first new file. A pip install lands its dependencies' entry points in the
+// same directory, and cmark sorting before rich is how a dependency got
+// smoke-tested in the tool's name.
+func TestPkgScriptPrefersNamedBinary(t *testing.T) {
+	t.Parallel()
+	script := pkgScriptFor(InstallStep{Kind: "pipx-install", Raw: "pipx install rich-cli", Binary: "rich"}, 300)
+	for _, want := range []string{
+		`grep -Fx 'rich'`,
+		`comm -13`,
+		`grep -v '^$'`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %q", want)
+		}
+	}
+	// pip mixes dependency entry points into the shared bin directory and the
+	// documented package need not name its binary, rich-cli installs rich, so
+	// pip alone asks the manager which binaries the package owns.
+	pip := pkgScriptFor(InstallStep{
+		Kind: "pip-install", Raw: "pip install rich-cli", Module: "rich-cli", Binary: "rich-cli"}, 300)
+	if !strings.Contains(pip, `pip show -f 'rich-cli'`) {
+		t.Error("pip script missing the owned-bins lookup")
+	}
+	evil := pkgScriptFor(InstallStep{
+		Kind: "pip-install", Raw: "pip install x", Module: "x; rm -rf /", Binary: "x"}, 300)
+	if strings.Contains(evil, "rm -rf") {
+		t.Error("shell syntax from the docs reached the owned-bins lookup")
+	}
+	if strings.Contains(script, "pip show") {
+		t.Error("pipx script gained a lookup only pip needs")
+	}
+}
