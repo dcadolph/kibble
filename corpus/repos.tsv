@@ -5,8 +5,14 @@
 # name	clone URL	pinned commit	expected pass,fail,gap counts
 # Brew checks reach formulae.brew.sh, so a network blip can turn one PASS into
 # a SKIP and move a count for a week. A red corpus run whose only drift is one
-# fewer pass deserves a rerun before it deserves a bug hunt.
-ripgrep	https://github.com/BurntSushi/ripgrep.git	3fce3b5bb0236da2df6d99672afb8a719642eca7	4,2,0
+# fewer pass deserves a rerun before it deserves a bug hunt. A row expecting
+# 0,0,0 is not an empty check: it pins that kibble invents nothing on a
+# repository where there is nothing to find.
+# ripgrep once expected 4,2,0. Both FAILs were kibble's, not the docs': one
+# was the FAQ's BSD-sed variant, scoped to macOS by its own prose and run on
+# Linux anyway, and one was the guide's some-utf16-file, a file the guide
+# calls "just an example". The gap that remains is that example file.
+ripgrep	https://github.com/BurntSushi/ripgrep.git	3fce3b5bb0236da2df6d99672afb8a719642eca7	5,0,1
 nodemon	https://github.com/remy/nodemon.git	5de021f6cd5c71814b6c2d1c60af3cc01fa2cc69	2,0,1
 fd	https://github.com/sharkdp/fd.git	cdea7f56331ebc7bb799aa9f718a6eee9a4a1cfc	6,0,0
 glow	https://github.com/charmbracelet/glow.git	e3970c813d93da1ea84edfca90c289d9afb82242	5,0,1

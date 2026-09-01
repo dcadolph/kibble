@@ -145,7 +145,7 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	// default fetches that toolchain, so the session matches them instead.
 	args := append([]string{"run", "--rm", "--name", name},
 		append(hardenedArgs(), "-e", "GOTOOLCHAIN=auto", image, "bash", "-c", script)...)
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, dockerBin(), args...)
 	cmd.Cancel = removeContainerFunc(cmd, name)
 	out, _ := cmd.CombinedOutput()
 	if ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) {
@@ -503,7 +503,7 @@ func (d *DockerRunner) runBrewInstall(ctx context.Context, step InstallStep) Res
 	name := containerName()
 	args := append([]string{"run", "--rm", "--name", name},
 		append(hardenedArgs(), brewImage, "bash", "-c", script)...)
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, dockerBin(), args...)
 	cmd.Cancel = removeContainerFunc(cmd, name)
 	out, _ := cmd.CombinedOutput()
 	if ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) {
@@ -530,9 +530,19 @@ func removeContainerFunc(cmd *exec.Cmd, name string) func() error {
 	return func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
+		_ = exec.CommandContext(ctx, dockerBin(), "rm", "-f", name).Run()
 		return cmd.Process.Kill()
 	}
+}
+
+// dockerBin returns the container client binary to invoke. Podman and other
+// drop-in replacements speak docker's command line, so KIBBLE_DOCKER names
+// the binary and docker stays the default.
+func dockerBin() string {
+	if bin := os.Getenv("KIBBLE_DOCKER"); bin != "" {
+		return bin
+	}
+	return "docker"
 }
 
 // DockerAvailable reports an error when the docker CLI cannot reach a running
@@ -541,9 +551,9 @@ func removeContainerFunc(cmd *exec.Cmd, name string) func() error {
 func DockerAvailable(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput()
+	out, err := exec.CommandContext(ctx, dockerBin(), "version", "--format", "{{.Server.Version}}").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("cannot reach docker daemon: %s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("cannot reach the %s daemon: %s", dockerBin(), strings.TrimSpace(string(out)))
 	}
 	return nil
 }

@@ -164,7 +164,7 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 	name := containerName()
 	args := append([]string{"run", "--rm", "-i", "--name", name},
 		append(hardenedArgs(), "-e", "GOTOOLCHAIN=auto", image, "bash", "-c", script)...)
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, dockerBin(), args...)
 	cmd.Cancel = removeContainerFunc(cmd, name)
 	repo, truncated := repoTar(step.dir)
 	if truncated {
@@ -764,12 +764,67 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 	case reEmptyInput.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Detail = "rejected the empty input of the session's stubbed editor"
+	case o.code == 123 && reNoInputFiles.MatchString(o.output):
+		// Exit 123 is xargs reporting that an invocation it ran failed, and
+		// "no input files" is that invocation saying it was handed nothing.
+		// Together they mean the pipeline's search matched nothing in this
+		// fresh session, which settles nothing about the document: the same
+		// recipe fed by a reader's tree works exactly as written. ripgrep's
+		// FAQ hit this when an earlier documented variant of the same
+		// replacement had already rewritten every match the later variant
+		// would have found.
+		lr.Status = StatusSkipped
+		lr.Detail = "the pipeline's search matched nothing in the fresh session: " + tail
+	case missingFileArg(lr.Cmd, o.output) != "":
+		// The tool asked for a file the command names and the session does
+		// not have. That is the document assuming the reader brings a file,
+		// or forgetting the step that creates it, and either way it is a hole
+		// in the document, never proof the tool is broken. A guide's "here is
+		// how you would search some-utf16-file" earns the same verdict as a
+		// missing setup step: report it, and let a person or the author
+		// settle which it was.
+		lr.Status = StatusGap
+		lr.Detail = fmt.Sprintf("references %s, which no documented step creates: %s",
+			missingFileArg(lr.Cmd, o.output), tail)
 	default:
 		lr.Status = StatusFail
 		lr.Detail = fmt.Sprintf("exited %d: %s", o.code, tail)
 	}
 	lr.output = o.output
 	return lr
+}
+
+// reNoInputFiles matches a pipeline stage reporting it was run with nothing
+// to read, the way sed says "no input files" when xargs hands it an empty
+// argument list.
+var reNoInputFiles = regexp.MustCompile(`(?i)\bno input files?\b`)
+
+// reEnoent matches an error that names the file a tool could not find. The
+// name is captured so it can be checked against the command's own arguments:
+// only a file the documented line itself asked for convicts the document.
+var reEnoent = regexp.MustCompile(
+	`(?i)([^\s:'"]+)'?: (?:no such file or directory|` +
+		`io error for operation on [^\s:]+: no such file or directory)`)
+
+// missingFileArg returns the argument token the output reports as missing, or
+// empty when the failure is about anything else. Requiring the name to appear
+// verbatim among the command's arguments keeps a tool complaining about its
+// own internals from demoting a real failure to a gap.
+func missingFileArg(cmd, output string) string {
+	m := reEnoent.FindStringSubmatch(output)
+	if m == nil {
+		return ""
+	}
+	name := strings.Trim(m[1], "'\"\x60")
+	if name == "" || strings.HasPrefix(name, "-") {
+		return ""
+	}
+	for _, tok := range strings.Fields(cmd) {
+		if strings.Trim(tok, "'\"\x60") == name {
+			return name
+		}
+	}
+	return ""
 }
 
 // tarSkipDirs are directories a build produces or a package manager fills.

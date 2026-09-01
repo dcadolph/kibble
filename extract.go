@@ -135,6 +135,11 @@ type codeBlock struct {
 	Lang string
 	// Heading is the text of the nearest section heading above the block.
 	Heading string
+	// Intro is the paragraph that introduces the block: the nearest prose
+	// above it under the same heading. Docs scope a block in the sentence
+	// before it, "on macOS run the following", and a planner that cannot see
+	// that sentence convicts commands written for another operating system.
+	Intro string
 	// Span reports whether this is an inline span rather than a block.
 	Span bool
 	// Line is the 1-based README line the block's content starts on.
@@ -150,15 +155,20 @@ func codeBlocks(markdown string) []codeBlock {
 	src := []byte(markdown)
 	doc := goldmark.New().Parser().Parse(text.NewReader(src))
 	var blocks []codeBlock
-	var heading string
+	var heading, intro string
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
-		b := codeBlock{Heading: heading}
+		if p, ok := n.(*ast.Paragraph); ok {
+			intro = spanText(p, src)
+			return ast.WalkContinue, nil
+		}
+		b := codeBlock{Heading: heading, Intro: intro}
 		switch node := n.(type) {
 		case *ast.Heading:
 			heading = spanText(node, src)
+			intro = ""
 			return ast.WalkContinue, nil
 		case *ast.FencedCodeBlock:
 			b.Lang = string(node.Language(src))
