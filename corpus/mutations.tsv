@@ -1,0 +1,14 @@
+# The mutation corpus: each row corrupts one documented line of a pinned
+# corpus repository and names the verdict kibble must reach on the damage.
+# The healthy line's verdict is already pinned by repos.tsv, so together the
+# two files hold the property the tool exists for: correct documentation
+# comes back green and one edit of rot flips it.
+#
+# The expected count is the mutated tree's own count, earned by a real run,
+# never baseline plus one: a dead install skips the sessions behind it, so a
+# mutation can lower other counts while it raises its own. The proof column
+# pins identity: some finding with that status must name the mutated token,
+# so a coincidental count cannot pass for a catch. Columns are tab-separated:
+# name, clone URL, pinned commit, file, find, replace, STATUS=count, proof.
+ripgrep	https://github.com/BurntSushi/ripgrep.git	3fce3b5bb0236da2df6d99672afb8a719642eca7	README.md	cargo install ripgrep	cargo install ripgreppp	FAIL=1	ripgreppp
+rich-cli	https://github.com/Textualize/rich-cli.git	46f4d2469097be395558768714a5f07ebccf1412	README.md	brew install rich	brew install richhh	GAP=2	richhh

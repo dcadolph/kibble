@@ -28,7 +28,17 @@ jobs:
             git init -q "$dir"
             git -C "$dir" fetch -q --depth 1 "$url" "$sha"
             git -C "$dir" checkout -q FETCH_HEAD
-            /tmp/kibble -json "$dir" > "/tmp/${name}.json" || true
+            rc=0
+            /tmp/kibble -json "$dir" > "/tmp/${name}.json" || rc=$?
+            # Exit 1 is kibble reporting failures, which is a verdict. Any
+            # other nonzero is kibble unable to do its job, and blaming the
+            # corpus for that would be the same mistake as blaming the docs.
+            if [ "$rc" -gt 1 ] || ! jq -e 'type=="array"' "/tmp/${name}.json" >/dev/null 2>&1; then
+              echo "::error::${name}: kibble itself failed (exit ${rc}), no verdicts to compare"
+              status=1
+              echo "::endgroup::"
+              continue
+            fi
             got=$(jq -r '[([.[]|select(.status=="PASS")]|length),
                           ([.[]|select(.status=="FAIL")]|length),
                           ([.[]|select(.status=="GAP")]|length)]
@@ -42,4 +52,58 @@ jobs:
             fi
             echo "::endgroup::"
           done < corpus/repos.tsv
+          exit "$status"
+      # Each mutation row corrupts one documented line of a pinned repository
+      # and asserts kibble reaches the expected verdict on the damage. The
+      # healthy counts above prove kibble does not cry wolf; these prove rot
+      # cannot pass silently. A mutation kibble misses is a broken line it
+      # would have shipped green.
+      - name: Run kibble against mutated documentation
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          test -x /tmp/kibble || go build -o /tmp/kibble .
+          status=0
+          row=0
+          while IFS=$'\t' read -r name url sha file find replace want proof; do
+            case "$name" in ""|\#*) continue ;; esac
+            row=$((row + 1))
+            echo "::group::${name} (mutation ${row})"
+            dir="/tmp/mutants/${row}-${name}"
+            git init -q "$dir"
+            git -C "$dir" fetch -q --depth 1 "$url" "$sha"
+            git -C "$dir" checkout -q "$sha"
+            FILE="$dir/$file" FIND="$find" REPLACE="$replace" python3 - <<'MUTATE'
+          import io, os
+          path = os.environ["FILE"]
+          s = io.open(path, encoding="utf-8").read()
+          find = os.environ["FIND"]
+          if find not in s:
+              raise SystemExit(f"mutation target not found: {find!r}")
+          io.open(path, "w", encoding="utf-8").write(s.replace(find, os.environ["REPLACE"]))
+          MUTATE
+            rc=0
+            /tmp/kibble -json "$dir" > "/tmp/mutant-${row}.json" || rc=$?
+            if [ "$rc" -gt 1 ] || ! jq -e 'type=="array"' "/tmp/mutant-${row}.json" >/dev/null 2>&1; then
+              echo "::error::${name}: kibble itself failed (exit ${rc}), no verdicts to compare"
+              status=1
+              echo "::endgroup::"
+              continue
+            fi
+            wantStatus="${want%%=*}"
+            wantCount="${want##*=}"
+            got=$(jq -r --arg s "$wantStatus" \
+                  '[.[]|select(.status==$s)]|length' "/tmp/mutant-${row}.json")
+            named=$(jq -r --arg s "$wantStatus" --arg p "$proof" \
+                  '[.[]|select(.status==$s and ((.detail // "")|contains($p)))]|length' \
+                  "/tmp/mutant-${row}.json")
+            if [ "$got" != "$wantCount" ] || [ "$named" -lt 1 ]; then
+              echo "::error::${name}: mutating ${find@Q} must yield ${want} naming ${proof@Q}, got ${wantStatus}=${got} named=${named}"
+              status=1
+            else
+              echo "${name}: ${want} naming ${proof} as expected"
+            fi
+            echo "::endgroup::"
+          done < corpus/mutations.tsv
           exit "$status"
