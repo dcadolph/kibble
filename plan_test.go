@@ -392,6 +392,16 @@ func TestSkipHeuristics(t *testing.T) {
 	}, { // Test 20: an unquoted expansion the docs never set still skips.
 		Markdown: "```sh\ntool run $MISSING\n```\n",
 		WantSkip: "which the docs never set",
+	}, { // Test 21: a serve subcommand is still an interactive skip.
+		Markdown: "```sh\ntool serve\n```\n",
+		WantSkip: "interactive or long-running",
+	}, { // Test 22: a web subcommand is no longer treated as interactive, since
+		// it collides with plenty of one-shot commands.
+		Markdown: "```sh\ntool web status\n```\n",
+		WantRun:  true,
+	}, { // Test 23: an agent subcommand runs rather than being skipped by name.
+		Markdown: "```sh\ntool agent list\n```\n",
+		WantRun:  true,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -418,6 +428,40 @@ func TestSkipHeuristics(t *testing.T) {
 			}
 			if test.WantNZ && !last.NonzeroOK {
 				t.Error("expected NonzeroOK")
+			}
+		})
+	}
+}
+
+// TestWatcherInvocation checks that a tool described as a watcher skips only
+// the invocations that actually reach its watching or serving mode, so a
+// one-shot subcommand of the same tool still runs.
+func TestWatcherInvocation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Sub  string
+		Flat string
+		Want bool
+	}{{ // Test 0: a one-shot subcommand runs.
+		Sub: "build", Flat: "tool build", Want: false,
+	}, { // Test 1: a serve subcommand does not return.
+		Sub: "serve", Flat: "tool serve", Want: true,
+	}, { // Test 2: an explicit watch flag does not return.
+		Sub: "run", Flat: "tool run --watch", Want: true,
+	}, { // Test 3: serving via a port flag does not return.
+		Sub: "run", Flat: "tool run --port 8080", Want: true,
+	}, { // Test 4: a one-shot build with a flag still runs.
+		Sub: "build", Flat: "tool build --output dist", Want: false,
+	}, { // Test 5: an info query about a serve subcommand returns, so it runs.
+		Sub: "serve", Flat: "tool serve --help", Want: false,
+	}, { // Test 6: a bare version query is never a watcher.
+		Sub: "", Flat: "tool --version", Want: false,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if got := watcherInvocation(test.Sub, test.Flat); got != test.Want {
+				t.Errorf("watcherInvocation(%q, %q) = %v, want %v", test.Sub, test.Flat, got, test.Want)
 			}
 		})
 	}

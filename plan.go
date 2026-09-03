@@ -81,6 +81,9 @@ type PlanLine struct {
 	Cmd string `json:"cmd"`
 	// Skip is why the line does not run; empty means it runs.
 	Skip string `json:"skip,omitempty"`
+	// SkipReason is the machine-readable code for Skip, so a consumer can
+	// filter and audit skip reasons without parsing the human-facing string.
+	SkipReason Reason `json:"skipReason,omitempty"`
 	// Gap marks a Skip whose cause is the document rather than the
 	// container: the line names something no documented step creates.
 	Gap bool `json:"gap,omitempty"`
@@ -137,10 +140,10 @@ var synthExtensions = map[string]bool{".md": true, ".txt": true}
 // until interrupted. The container cannot show or judge one, so invoking a
 // documented binary with one of these is skipped rather than left to hang.
 var interactiveSubs = map[string]bool{
-	"demo": true, "serve": true, "server": true, "daemon": true, "app": true,
-	"tui": true, "dashboard": true, "repl": true, "console": true, "web": true,
+	"demo": true, "serve": true, "server": true, "daemon": true,
+	"tui": true, "dashboard": true, "repl": true, "console": true,
 	"record": true, "watch": true, "attach": true, "shell": true, "top": true,
-	"bot": true, "listen": true, "proxy": true, "gateway": true, "agent": true,
+	"listen": true, "proxy": true, "gateway": true,
 }
 
 // findingSubs are subcommands whose documented behavior is to exit nonzero
@@ -413,12 +416,14 @@ func (pl *planner) addBlock(block codeBlock) {
 		if shownErr[strings.TrimSpace(flat)] {
 			line.NonzeroOK = true
 		}
-		line.Skip, line.Gap = pl.skipReason(flat)
+		line.Skip, line.SkipReason, line.Gap = pl.skipReason(flat)
 		if line.Skip == "" && scopedTo != "" {
 			line.Skip = fmt.Sprintf("documented for %s rather than this container", scopedTo)
+			line.SkipReason = ReasonOtherPlatform
 		}
 		if line.Skip == "" && lostDir {
 			line.Skip = "follows a skipped cd, so it would run in the wrong directory"
+			line.SkipReason = ReasonDependsOnSkipped
 		}
 		pl.applyRules(&line, &step, flat)
 		if line.Skip != "" && strings.HasPrefix(strings.TrimSpace(flat), "cd ") {
@@ -521,88 +526,96 @@ func (pl *planner) qualifies(lines []string) bool {
 // when it can. The checks run in order of how specific their reason is.
 // Substitutions have already been applied, so a placeholder that survives
 // here is one the reader was meant to fill in.
-func (pl *planner) skipReason(flat string) (string, bool) {
+func (pl *planner) skipReason(flat string) (string, Reason, bool) {
 	if rePlaceholder.MatchString(commandHead(flat)) {
-		return "docs use a placeholder the reader must fill in", false
+		return "docs use a placeholder the reader must fill in", ReasonPlaceholder, false
 	}
 	if reLocalhost.MatchString(flat) {
-		return "needs a local service the docs assume is running", false
+		return "needs a local service the docs assume is running", ReasonMissingDependency, false
 	}
 	if pl.getsOwnModule(flat) {
-		return "adds this module to the reader's own project, not to itself", false
+		return "adds this module to the reader's own project, not to itself", ReasonMissingFixture, false
 	}
 	bin, sub := invokedBinary(flat, pl.binaries)
 	if bin != "" && reLogin.MatchString(flat) {
-		return "needs an interactive sign-in", false
+		return "needs an interactive sign-in", ReasonInteractive, false
 	}
 	if bin != "" && sub == "audio" {
-		return "records audio, which the container cannot", false
+		return "records audio, which the container cannot", ReasonInteractive, false
 	}
 	if bin != "" && interactiveSubs[sub] {
-		return "starts an interactive or long-running session the container cannot judge", false
+		return "starts an interactive or long-running session the container cannot judge",
+			ReasonLongRunning, false
 	}
 	// A documented binary invoked bare is "run the tool", which the smoke test
 	// already settled. For a watcher or a server it never returns, and waiting
 	// out the timeout buys nothing the install step did not already prove.
 	if bin != "" && len(strings.Fields(stripComment(flat))) == 1 {
-		return "runs the tool with no arguments, which the install already proved", false
+		return "runs the tool with no arguments, which the install already proved",
+			ReasonAlreadyProven, false
 	}
 	// A tool the document introduces as watching or serving does not return,
-	// whatever arguments it is given, so every invocation but a question about
-	// the tool itself would run until the timeout and report nothing.
-	if bin != "" && pl.watcher && !isInfoInvocation(flat) {
-		return "the docs describe a tool that watches or serves, so it does not return", false
+	// but only an invocation that actually reaches for the watching or serving
+	// mode is skipped, so a one-shot subcommand of the same tool still runs.
+	if bin != "" && pl.watcher && watcherInvocation(sub, flat) {
+		return "the docs describe a tool that watches or serves, and this invocation does not return",
+			ReasonLongRunning, false
 	}
 	if bin != "" && interactiveFlag(flat) {
-		return "asks for an interactive session the container cannot hold", false
+		return "asks for an interactive session the container cannot hold", ReasonInteractive, false
 	}
 	if hasBareStdinDash(flat) {
-		return "reads stdin, which the session does not provide", false
+		return "reads stdin, which the session does not provide", ReasonInteractive, false
 	}
 	if reGitState.MatchString(flat) {
-		return "needs git history or a remote, which the fresh session repo lacks", false
+		return "needs git history or a remote, which the fresh session repo lacks",
+			ReasonMissingFixture, false
 	}
 	if dir := systemCd(flat); dir != "" {
-		return fmt.Sprintf("changes into %s, which only the reader's system has", dir), false
+		return fmt.Sprintf("changes into %s, which only the reader's system has", dir),
+			ReasonMissingFixture, false
 	}
 	if reFishSource.MatchString(flat) {
-		return "written for the fish shell, and the session runs bash", false
+		return "written for the fish shell, and the session runs bash", ReasonOtherPlatform, false
 	}
 	if reForeignShellFile.MatchString(flat) {
-		return "written for another shell, and the session runs bash", false
+		return "written for another shell, and the session runs bash", ReasonOtherPlatform, false
 	}
 	if reForeignShellGen.MatchString(flat) {
-		return "sources another shell's completions, and the session runs bash", false
+		return "sources another shell's completions, and the session runs bash",
+			ReasonOtherPlatform, false
 	}
 	if sh := foreignShellFlag(flat); sh != "" {
-		return fmt.Sprintf("asks for the %s shell, which the container does not have", sh), false
+		return fmt.Sprintf("asks for the %s shell, which the container does not have", sh),
+			ReasonOtherPlatform, false
 	}
 	if reKernelPath.MatchString(flat) {
-		return "touches kernel interfaces the container does not expose", false
+		return "touches kernel interfaces the container does not expose", ReasonOtherPlatform, false
 	}
 	if miss := pl.missingGlob(flat); miss != "" {
-		return fmt.Sprintf("globs %s, which the docs never create", miss), true
+		return fmt.Sprintf("globs %s, which the docs never create", miss), ReasonMissingFixture, true
 	}
 	if bin != "" && bareWordPlaceholder(flat) != "" {
 		return fmt.Sprintf("docs use %q as a placeholder the reader must fill in",
-			bareWordPlaceholder(flat)), false
+			bareWordPlaceholder(flat)), ReasonPlaceholder, false
 	}
 	expandable := withoutSingleQuoted(flat)
 	for v := range pl.badVars {
 		if strings.Contains(expandable, "$"+v) || strings.Contains(expandable, "${"+v+"}") {
-			return fmt.Sprintf("expands $%s, which a skipped line was to set", v), false
+			return fmt.Sprintf("expands $%s, which a skipped line was to set", v),
+				ReasonDependsOnSkipped, false
 		}
 	}
 	if v := pl.unsetVar(flat); v != "" {
-		return fmt.Sprintf("expands $%s, which the docs never set", v), false
+		return fmt.Sprintf("expands $%s, which the docs never set", v), ReasonMissingFixture, false
 	}
 	if path := pl.missingFile(flat); path != "" {
-		return fmt.Sprintf("references %s, which the docs never create", path), true
+		return fmt.Sprintf("references %s, which the docs never create", path), ReasonMissingFixture, true
 	}
 	if p := pl.missingHomePath(flat); p != "" {
-		return fmt.Sprintf("reads %s, which only the reader's machine has", p), false
+		return fmt.Sprintf("reads %s, which only the reader's machine has", p), ReasonMissingFixture, false
 	}
-	return "", false
+	return "", "", false
 }
 
 // reVarExpansion matches a shell variable expansion such as $HOME or ${HOME}.
@@ -1322,6 +1335,33 @@ func (pl *planner) missingHomePath(flat string) string {
 var reWatcherWord = regexp.MustCompile(
 	`(?i)\b(watch(es|ing)?|restart(s|ing)?|monitor(s|ing)?|serv(e|es|ing|er)|` +
 		`daemon|listen(s|ing)?|live[- ]reload|hot[- ]reload|file changes)\b`)
+
+// reWatcherSub matches a subcommand name that names a watching or serving mode
+// that does not return. Ambiguous names such as run and start are left out, so
+// a one-shot invocation is run and, if it hangs anyway, settled by the line
+// timeout rather than skipped in advance.
+var reWatcherSub = regexp.MustCompile(`(?i)^(watch|serve|server|dev|preview|monitor|daemon|listen)$`)
+
+// reWatcherFlag matches a flag that puts a command into a watching or serving
+// mode, chiefly a dev server's address or an explicit watch.
+var reWatcherFlag = regexp.MustCompile(
+	`(?i)(^|\s)(--watch|--serve|--server|--daemon|--reload|--hot|--live|` +
+		`--port|--address|--listen|--host)(\b|=)`)
+
+// watcherInvocation reports whether an invocation of a tool the document
+// describes as a watcher actually reaches its watching or serving mode. An
+// info query such as --help returns and is never a watcher, and a one-shot
+// subcommand of the same tool is left to run rather than skipped alongside the
+// long-running one.
+func watcherInvocation(sub, flat string) bool {
+	if isInfoInvocation(flat) {
+		return false
+	}
+	if sub != "" && reWatcherSub.MatchString(sub) {
+		return true
+	}
+	return reWatcherFlag.MatchString(flat)
+}
 
 // describedAsWatcher reports whether a document introduces a binary as a tool
 // that keeps running. The words have to sit near the tool's name, since a
