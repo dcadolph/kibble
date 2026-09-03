@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -79,6 +80,41 @@ func TestMentions(t *testing.T) {
 				t.Errorf("mentions(%q) = %v, want %v", test.Cmd, got, test.Want)
 			}
 		})
+	}
+}
+
+// TestReadDocSet checks that the document set the flag check and doc coverage
+// read includes ordinary docs but leaves out a changelog or contributing
+// guide, so a deprecated flag shown in a history document is not cited.
+func TestReadDocSet(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	files := map[string]string{
+		"README.md":         "tool --keep\n",
+		"docs/usage.md":     "tool run --current\n",
+		"CHANGELOG.md":      "removed tool --gone in v2\n",
+		"CONTRIBUTING.md":   "run tool --maintainer-only\n",
+		"docs/dev/notes.md": "tool --internal\n",
+	}
+	for name, body := range files {
+		full := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all := readDocSet(dir, "README.md").All
+	for _, want := range []string{"--keep", "--current"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("doc set missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{"--gone", "--maintainer-only", "--internal"} {
+		if strings.Contains(all, unwanted) {
+			t.Errorf("doc set should not include a history or dev document citing %q", unwanted)
+		}
 	}
 }
 
