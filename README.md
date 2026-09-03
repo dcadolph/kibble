@@ -27,7 +27,12 @@ corporate proxy, and a private registry are all outside what it sees. The narrow
 is the one worth making, because it is the one kibble can actually settle.
 
 Your README tells people to run `go install ...`, then some setup, then a quickstart.
-Every one of those rots the moment the code moves, and you are the last to know.
+Every one of those rots the moment the code moves, and you are the last to know. kibble
+reads those steps from the README and from the install documents beside it, an INSTALL
+file or an installation guide under a docs tree, since that is where they go once the
+front page fills up. A piped shell installer and a system package install are recorded
+but not run, and reported as skips with a reason, so an install kibble declines to
+execute is still visible rather than silently missed.
 
 The stranger is not always a person now. Coding agents install tools by doing what the
 README says, and they fail differently than people do. Someone who follows a broken

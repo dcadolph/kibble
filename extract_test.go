@@ -38,6 +38,20 @@ func TestClassifyLine(t *testing.T) {
 	}, { // Test 6: leading flags before the module are skipped.
 		In:       "go install -v github.com/x/y@latest",
 		WantKind: "go-install", WantMod: "github.com/x/y@latest", WantRun: true, WantOK: true,
+	}, { // Test 7: a piped shell installer is recorded but not run.
+		In:       "curl -sSfL https://example.com/install.sh | sh",
+		WantKind: "script-install", WantMod: "https://example.com/install.sh",
+		WantRun: false, WantOK: true,
+	}, { // Test 8: sh -c "$(curl ...)" is also a piped installer.
+		In:       `sh -c "$(curl -fsSL https://example.com/i.sh)"`,
+		WantKind: "script-install", WantMod: "https://example.com/i.sh",
+		WantRun: false, WantOK: true,
+	}, { // Test 9: a system package install is recorded but not run.
+		In:       "sudo apt install ripgrep",
+		WantKind: "os-package", WantMod: "apt:ripgrep", WantRun: false, WantOK: true,
+	}, { // Test 10: a package manager flag before the name is skipped.
+		In:       "sudo dnf install -y fd-find",
+		WantKind: "os-package", WantMod: "dnf:fd-find", WantRun: false, WantOK: true,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

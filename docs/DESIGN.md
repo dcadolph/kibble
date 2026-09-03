@@ -49,6 +49,18 @@ as `cd` and `make install`, and whatever the recipe produces is smoke-tested. A 
 that exceeds the timeout is reported as `TIMEOUT`, never as a failure unless `-strict`
 promotes it, so a slow network does not fail a build that would otherwise pass.
 
+Install steps are read from the README and from the install documents beside it, an
+INSTALL file or an installation guide under a docs tree, since instructions move there
+once the front page fills up and kibble already reads that tree for flags and examples.
+The selection is narrower than the one example replay uses: a tutorial or an FAQ can show
+an install command in passing, and running that would spend a container on a line nobody
+was told to follow. Two install methods are recorded but never run: a piped shell
+installer such as `curl URL | sh`, because executing an arbitrary remote script is a risk
+a docs check should not take, and a system package install such as `apt install`, because
+it needs root and a distribution whose repository holds the package. Both are reported as
+skips with a reason, so a repository whose only install is one of these is answered
+honestly rather than as if nothing were documented.
+
 A package install runs the documented line verbatim, so what kibble verifies is the
 command a reader would actually type, flags and all. The bin directory is compared before
 and after, so the binary is found even when the package does not name it: a `cargo

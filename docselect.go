@@ -101,6 +101,69 @@ func replayDocs(dir, readme string, cfg *ExamplesConfig) []string {
 	return applyDocRules(out, readme, cfg)
 }
 
+// isInstallDoc reports whether a document's base name marks it as install
+// instructions a reader follows to get the tool. It is deliberately narrower
+// than replayNames: a tutorial or an FAQ can show an install command in
+// passing, and extracting that as a step kibble runs would spend a container
+// on a line nobody was told to run.
+func isInstallDoc(base string) bool {
+	if strings.Contains(base, "install") {
+		return true
+	}
+	switch base {
+	case "getting_started", "getting-started", "gettingstarted",
+		"setup", "quickstart", "quick-start", "start":
+		return true
+	}
+	return false
+}
+
+// installDocs returns the documents to extract install steps from, as paths
+// relative to dir, with the README first. Install instructions live in the
+// README and in install-named documents, in the tree or under a docs
+// directory, so those are read and nothing else is, to keep a stray command in
+// an unrelated document from becoming a step.
+func installDocs(dir, readme string) []string {
+	if dir == "" {
+		return []string{readme}
+	}
+	out := []string{readme}
+	seen := map[string]bool{readme: true}
+	var found []string
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, rerr := filepath.Rel(dir, path)
+		if rerr != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if path != dir && skipDirs[strings.ToLower(d.Name())] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !docExtensions[strings.ToLower(filepath.Ext(d.Name()))] || seen[rel] {
+			return nil
+		}
+		base := strings.ToLower(strings.TrimSuffix(d.Name(), filepath.Ext(d.Name())))
+		if skipNames[base] || hasSkipPrefix(base) || !isInstallDoc(base) {
+			return nil
+		}
+		found = append(found, rel)
+		return nil
+	})
+	sort.Strings(found)
+	for _, f := range found {
+		if !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // applyDocRules lets a repository settle what the convention cannot: docs adds
 // a document the rules skip, skipDocs drops one they pick up. The README is
 // never dropped, since a repository with no runnable README has nothing to say.
