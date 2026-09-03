@@ -19,6 +19,21 @@ type Usage struct {
 	// collected help cannot be told apart from a flag whose subcommand was
 	// never probed, and the second is not drift.
 	FlagSub map[string]string
+	// FlagDash maps a cited flag to the dash prefix it was written with, so a
+	// single-dash form is probed as written. A bundle such as `-Poy` is `-P -o
+	// -y` to the parser and probing it as `--Poy` would falsely convict it.
+	FlagDash map[string]string
+}
+
+// dashOf returns the dash prefix a cited flag was written with, defaulting to
+// the long-flag form when none was recorded.
+func (u *Usage) dashOf(name string) string {
+	if u.FlagDash != nil {
+		if d, ok := u.FlagDash[name]; ok {
+			return d
+		}
+	}
+	return "--"
 }
 
 var (
@@ -90,8 +105,14 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 					use.Flags = append(use.Flags, name)
 					if use.FlagSub == nil {
 						use.FlagSub = map[string]string{}
+						use.FlagDash = map[string]string{}
 					}
 					use.FlagSub[name] = sub
+					dash := "--"
+					if !strings.HasPrefix(m[2], "--") {
+						dash = "-"
+					}
+					use.FlagDash[name] = dash
 				}
 			}
 		}
@@ -232,7 +253,7 @@ func flagChecks(results []Result) []Result {
 			// was partial. A screen is metadata; the probe is the tool.
 			if probe, probed := r.helpByFlag[f]; probed {
 				if flagRejected(probe, f) {
-					missing = append(missing, "--"+f)
+					missing = append(missing, r.Step.Usage.dashOf(f)+f)
 				}
 				continue
 			}
@@ -243,10 +264,10 @@ func flagChecks(results []Result) []Result {
 			owner, attributed := r.Step.Usage.FlagSub[f]
 			if !attributed || helpIsPartial(r.helpText) ||
 				(owner != "" && !helpfulSub(r, owner)) {
-				unverifiable = append(unverifiable, "--"+f)
+				unverifiable = append(unverifiable, r.Step.Usage.dashOf(f)+f)
 				continue
 			}
-			missing = append(missing, "--"+f)
+			missing = append(missing, r.Step.Usage.dashOf(f)+f)
 		}
 		sort.Strings(unverifiable)
 		var badSubs []string
