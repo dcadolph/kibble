@@ -709,6 +709,9 @@ func summarize(run *exampleRun) (Status, string) {
 func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 	documented map[string]bool) lineResult {
 	lr.Code = o.code
+	// The same reason as classify: a documented line that colors its output
+	// must not carry escapes into a report or an annotation.
+	o.output = stripANSI(o.output)
 	tail := failureLine(strings.Split(o.output, "\n"))
 	switch {
 	case wrapped && o.code == 124:

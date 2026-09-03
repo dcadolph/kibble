@@ -441,7 +441,7 @@ func probeFlags(u *Usage) []probedFlag {
 // Network stays on because verifying an install is fetching it; that is a
 // conscious tradeoff the README's security section owns.
 func hardenedArgs() []string {
-	return []string{
+	return append([]string{
 		"--memory=4g",
 		"--pids-limit=1024",
 		"--security-opt", "no-new-privileges",
@@ -451,7 +451,37 @@ func hardenedArgs() []string {
 		"--cap-add", "FOWNER",
 		"--cap-add", "SETGID",
 		"--cap-add", "SETUID",
+	}, metadataBlackhole()...)
+}
+
+// cloudMetadataHosts are the names a cloud instance answers on to hand out
+// credentials. A documented line kibble runs is untrusted, and kibble's own
+// home is a CI runner inside exactly this kind of instance, so the convenient
+// path to them is closed.
+var cloudMetadataHosts = []string{
+	"metadata.google.internal",
+	"metadata.goog",
+	"instance-data",
+	"instance-data.ec2.internal",
+	"metadata.packet.net",
+}
+
+// metadataBlackhole points the well-known metadata hostnames at an address
+// that answers nothing.
+//
+// This closes the named path and not the numbered one. The addresses these
+// names resolve to, 169.254.169.254 above all, stay reachable, because Docker
+// has no portable flag that drops a route to a single address and the two
+// alternatives are worse: an internal network breaks every install kibble
+// exists to run, and host firewall rules are not kibble's to install. The
+// honest description of this is a speed bump, and the security document says
+// so rather than implying a wall.
+func metadataBlackhole() []string {
+	args := make([]string, 0, len(cloudMetadataHosts)*2)
+	for _, host := range cloudMetadataHosts {
+		args = append(args, "--add-host", host+":0.0.0.0")
 	}
+	return args
 }
 
 // containerSeq numbers containers within one run so every step gets a name
@@ -607,6 +637,12 @@ printf 'SMOKELINE=%%s\n' "$(printf '%%s' "$sout" | head -n1 | cut -c1-70)"
 
 // classify turns container output into a Result.
 func classify(step InstallStep, out string, dur time.Duration) Result {
+	// Tools colorize their own output, and those escapes are noise everywhere
+	// they land: they corrupt a JSON report a caller parses, break column
+	// alignment in the table, and turn a CI annotation into gibberish. Kibble
+	// adds its own color at render time, so the captured text is stripped once
+	// here and every consumer downstream gets clean strings.
+	out = stripANSI(out)
 	res := Result{Step: step, Duration: dur}
 	buildCode, smokeCode := -1, -1
 	noBin := false
@@ -706,6 +742,20 @@ var reFlagMarker = regexp.MustCompile(`^KIBBLE-FLAG (--?\S+) CODE=(-?\d+)$`)
 // produces, so an emulation artifact of the host is not reported as the tool
 // failing its smoke test.
 var reArchMismatch = regexp.MustCompile(`qemu-\w+: |Exec format error|cannot execute binary file`)
+
+// reANSI matches the escape sequences a program writes to color or reposition
+// its own output. Both the color form and the wider set of control sequences
+// are covered, since a progress bar redrawing itself is as unwelcome in a
+// report as a color code.
+var reANSI = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\r`)
+
+// stripANSI removes terminal control sequences from captured output.
+func stripANSI(s string) string {
+	if !strings.ContainsAny(s, "\x1b\r") {
+		return s
+	}
+	return reANSI.ReplaceAllString(s, "")
+}
 
 // lastLine returns the final non-empty line, for compact error detail.
 func lastLine(lines []string) string {
