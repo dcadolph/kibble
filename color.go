@@ -53,6 +53,15 @@ func (p palette) paint(code, s string) string {
 	return code + s + ansiReset
 }
 
+// strong wraps s in two escapes at once. Nesting the single-style helpers
+// emits a redundant reset, since the first one clears every attribute.
+func (p palette) strong(code, s string) string {
+	if !p.on || s == "" {
+		return s
+	}
+	return ansiBold + code + s + ansiReset
+}
+
 // bold, dim, and the colors read at the call site as what they mean.
 func (p palette) bold(s string) string   { return p.paint(ansiBold, s) }
 func (p palette) dim(s string) string    { return p.paint(ansiDim, s) }

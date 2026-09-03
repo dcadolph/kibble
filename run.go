@@ -722,10 +722,40 @@ var reWrapperSummary = regexp.MustCompile(
 	`^(make(\[\d+\])?: (\*\*\*|Entering|Leaving)|npm ERR!|yarn ERR|` +
 		`error: could not compile|error: build failed|FAILED:|ninja: build stopped)`)
 
+// reUsageHeading matches the banner a tool prints above its own usage screen
+// when it rejects an argument.
+var reUsageHeading = regexp.MustCompile(`(?i)^(usage|options|flags|commands)\b|^usage:`)
+
+// reErrorDeclaration matches the line where a parser says what it refused.
+// It is the sentence a reader needs, and it sits at the top of the output,
+// above the usage screen a tool prints after it.
+var reErrorDeclaration = regexp.MustCompile(
+	`(?i)^(error|fatal|panic)\b|flag provided but not defined|` +
+		`\b(unknown|unrecognized|invalid|unexpected) (flag|option|command|subcommand|argument)\b|` +
+		`\bno such (flag|option|command|subcommand)\b`)
+
 // failureLine returns the most informative line of a failure. Reporting a
 // wrapper's summary hides the error a reader needs, so the summary is skipped
-// in favor of the last line that says what actually broke.
+// in favor of the last line that says what actually broke. A tool that answers
+// a bad argument by printing its whole usage screen is the other direction of
+// the same mistake: the last line there is the final flag's description, which
+// tells a reader nothing, so an error the parser declared above the screen
+// wins over anything below it.
 func failureLine(lines []string) string {
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if !reErrorDeclaration.MatchString(line) {
+			continue
+		}
+		// The declaration only outranks the tail when a usage screen follows
+		// it, since that is the case where the tail is boilerplate.
+		for _, rest := range lines[i+1:] {
+			if reUsageHeading.MatchString(strings.TrimSpace(rest)) {
+				return line
+			}
+		}
+		break
+	}
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line == "" || reWrapperSummary.MatchString(line) {

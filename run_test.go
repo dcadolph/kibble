@@ -216,6 +216,23 @@ func TestFailureLine(t *testing.T) {
 	}, { // Test 3: nothing but wrapper summaries falls back to the last line.
 		Lines: []string{"make: *** [all] Error 1"},
 		Want:  "make: *** [all] Error 1",
+	}, { // Test 4: a tool that answers a bad flag with its whole usage screen
+		// is reported by what it refused, not by the last flag it lists. The
+		// tail here is a flag description, which says nothing about the error.
+		Lines: []string{
+			"flag provided but not defined: -nosuchflag",
+			"Usage of kibble:",
+			"  -workers int",
+			"    max concurrent installs (default 3)",
+		},
+		Want: "flag provided but not defined: -nosuchflag",
+	}, { // Test 5: an error with no usage screen after it keeps the normal
+		// tail, since a later line is usually the more specific cause.
+		Lines: []string{"error: build started", "ld: symbol not found"},
+		Want:  "ld: symbol not found",
+	}, { // Test 6: a parser naming an unknown command above its screen.
+		Lines: []string{`unknown command "migrate" for "tool"`, "Usage:", "  tool [flags]"},
+		Want:  `unknown command "migrate" for "tool"`,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
