@@ -131,6 +131,9 @@ func TestMissingCommand(t *testing.T) {
 		WantOK: true, WantName: "pnpm",
 	}, { // Test 4: empty output names nothing.
 		In: "", WantOK: false,
+	}, { // Test 5: the Go toolchain's exec-not-found is a missing build tool.
+		In:     `lib/results.go:272: running "easyjson": exec: "easyjson": executable file not found in $PATH`,
+		WantOK: true, WantName: "easyjson",
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

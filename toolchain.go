@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -203,6 +204,13 @@ func commandWords(line string) []string {
 // caller reports a skip instead of a failed install.
 func missingCommand(out string) (string, bool) {
 	for _, line := range strings.Split(out, "\n") {
+		// Go's toolchain reports a tool a `go generate` or build directive needs
+		// as `exec: "easyjson": executable file not found in $PATH`. That is a
+		// missing build tool, not a broken document, the same as a shell's
+		// command-not-found.
+		if m := reExecNotFound.FindStringSubmatch(line); m != nil {
+			return m[1], true
+		}
 		for _, marker := range []string{": command not found", ": not found"} {
 			idx := strings.Index(line, marker)
 			if idx < 0 {
@@ -219,3 +227,7 @@ func missingCommand(out string) (string, bool) {
 	}
 	return "", false
 }
+
+// reExecNotFound matches the Go toolchain reporting a program it tried to run
+// is not installed, such as `exec: "easyjson": executable file not found`.
+var reExecNotFound = regexp.MustCompile(`exec: "?([^":]+)"?: executable file not found`)
