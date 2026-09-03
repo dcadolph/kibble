@@ -380,7 +380,8 @@ before=$(ls "$BINDIR" 2>/dev/null | sort)
 out=$(timeout %[2]d bash -ec '%[3]s' 2>&1); code=$?
 if [ "$code" -ne 0 ]; then
   printf 'BUILDCODE=%%d\n' "$code"
-  printf '%%s\n' "$out" | tail -n 12
+  printf '%%s\n' "$out" | grep -iE 'error(\[[A-Z]|:| )' | head -n 4
+  printf '%%s\n' "$out" | tail -n 10
   exit 0
 fi
 printf 'BUILDCODE=0\n'
@@ -436,7 +437,8 @@ cd /work
 out=$(timeout %[1]d bash -ec '%[2]s' 2>&1); code=$?
 if [ "$code" -ne 0 ]; then
   printf 'BUILDCODE=%%d\n' "$code"
-  printf '%%s\n' "$out" | tail -n 12
+  printf '%%s\n' "$out" | grep -iE 'error(\[[A-Z]|:| )' | head -n 4
+  printf '%%s\n' "$out" | tail -n 10
   exit 0
 fi
 printf 'BUILDCODE=0\n'
@@ -630,7 +632,8 @@ before=$(ls "$(brew --prefix)/bin" 2>/dev/null | sort)
 out=$(timeout %d brew install %s 2>&1); code=$?
 if [ "$code" -ne 0 ]; then
   printf 'BUILDCODE=%%d\n' "$code"
-  printf '%%s\n' "$out" | tail -n 12
+  printf '%%s\n' "$out" | grep -iE 'error(\[[A-Z]|:| )' | head -n 4
+  printf '%%s\n' "$out" | tail -n 10
   exit 0
 fi
 printf 'BUILDCODE=0\n'
@@ -743,7 +746,8 @@ mkdir -p "$GOBIN"
 out=$(timeout %d go install '%s' 2>&1); code=$?
 if [ "$code" -ne 0 ]; then
   printf 'BUILDCODE=%%d\n' "$code"
-  printf '%%s\n' "$out" | tail -n 12
+  printf '%%s\n' "$out" | grep -iE 'error(\[[A-Z]|:| )' | head -n 4
+  printf '%%s\n' "$out" | tail -n 10
   exit 0
 fi
 printf 'BUILDCODE=0\n'
@@ -840,9 +844,7 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 		res.Detail = fmt.Sprintf("exceeded timeout after %s", dur.Round(time.Second))
 	case buildCode != 0:
 		res.Status = StatusFail
-		// failureLine, not the last line: a build tool's trailing note, such as
-		// cargo pointing at its artifact cache, buries the real error above it.
-		res.Detail = failureLine(tail)
+		res.Detail = buildFailLine(tail)
 	case noBin:
 		res.Status = StatusRan
 		res.Detail = "recipe exited 0 but produced no binary to smoke-test"
@@ -902,7 +904,8 @@ func lastLine(lines []string) string {
 // failed and nothing about why.
 var reWrapperSummary = regexp.MustCompile(
 	`^(make(\[\d+\])?: (\*\*\*|Entering|Leaving)|npm ERR!|yarn ERR|` +
-		`error: could not compile|error: build failed|FAILED:|ninja: build stopped|` +
+		`error: could not compile|error: failed to compile|error: build failed|` +
+		`FAILED:|ninja: build stopped|` +
 		`To reuse those artifacts|Blocking waiting for file lock|` +
 		`(Compiling|Building|Finished|Downloading|Updating) )`)
 
@@ -925,6 +928,21 @@ var reErrorDeclaration = regexp.MustCompile(
 // the same mistake: the last line there is the final flag's description, which
 // tells a reader nothing, so an error the parser declared above the screen
 // wins over anything below it.
+// buildFailLine picks the line that best explains a failed build. A real error
+// declaration, such as cargo's "error[E0432]: unresolved import", is preferred
+// over a build tool's trailing summary, since the summary names the target
+// that failed and nothing about why. It falls back to failureLine when no such
+// declaration was captured.
+func buildFailLine(lines []string) string {
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if reErrorDeclaration.MatchString(line) && !reWrapperSummary.MatchString(line) {
+			return line
+		}
+	}
+	return failureLine(lines)
+}
+
 func failureLine(lines []string) string {
 	for i, line := range lines {
 		line = strings.TrimSpace(line)
