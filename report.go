@@ -31,6 +31,7 @@ func reportJSON(w io.Writer, results []Result) {
 	type lineRow struct {
 		Cmd    string `json:"cmd"`
 		Status string `json:"status"`
+		Reason string `json:"reason,omitempty"`
 		Code   int    `json:"code"`
 		Detail string `json:"detail,omitempty"`
 	}
@@ -66,7 +67,8 @@ func reportJSON(w io.Writer, results []Result) {
 				sr := stepRow{ID: s.ID, Heading: s.Heading}
 				for _, l := range s.Lines {
 					sr.Lines = append(sr.Lines, lineRow{
-						Cmd: l.Cmd, Status: string(l.Status), Code: l.Code, Detail: l.Detail,
+						Cmd: l.Cmd, Status: string(l.Status), Reason: string(l.Reason),
+						Code: l.Code, Detail: l.Detail,
 					})
 				}
 				out.Steps = append(out.Steps, sr)
