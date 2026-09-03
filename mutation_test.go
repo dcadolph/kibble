@@ -72,7 +72,7 @@ func staticVerdicts(dir string, tool fakeTool, fetch Fetcher) []Result {
 			results = append(results, checkBrew(s, fetch))
 			continue
 		}
-		r := Result{Step: s, Status: StatusPass}
+		r := Result{Step: s, Status: StatusVerified}
 		if s.Binary != "" {
 			tool.probe(&r, s.Usage)
 		}
@@ -84,13 +84,16 @@ func staticVerdicts(dir string, tool fakeTool, fetch Fetcher) []Result {
 	return results
 }
 
-// nonGreen returns the results that would draw a reader's eye: anything that
-// is not a pass or an intentional skip.
+// nonGreen returns the results that would draw a reader's eye: a broken step,
+// a drifted doc, or an inconclusive run. A verified, unverified, or
+// intentionally skipped step is expected on a healthy tree and does not count,
+// since a brew step checked without installing is honestly unverified rather
+// than broken.
 func nonGreen(results []Result) []Result {
 	var out []Result
 	for _, r := range results {
-		switch r.Status {
-		case StatusPass, StatusPassBuild, StatusSkipped:
+		switch r.Status.Bucket() {
+		case BucketWorks, BucketUnverified, BucketNotAttempted:
 		default:
 			out = append(out, r)
 		}
@@ -173,10 +176,10 @@ Flags:
 		// help still advertises it; the docs no longer say what it is.
 		Find: "mytool sync\n", Replace: "",
 		WantStatus: StatusGap, WantDetail: "documented nowhere: sync",
-	}, { // Test 4: a typo in a brew name is a gap, never a failure, because
-		// an index miss is not an executed line.
+	}, { // Test 4: a typo in a brew name is a failure, since a reader running
+		// the documented line gets no formula of that name.
 		Find: "brew install example/tap/mytool", Replace: "brew install example/tap/mytol",
-		WantStatus: StatusGap, WantDetail: "-brew-install to settle it",
+		WantStatus: StatusFail, WantDetail: "no formula, cask, or alias named",
 	}}
 
 	write := func(t *testing.T, text string) string {

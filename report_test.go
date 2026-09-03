@@ -69,7 +69,7 @@ func TestWriteFailure(t *testing.T) {
 			example: &exampleRun{Steps: []exampleStep{{
 				ID: "b1",
 				Lines: []lineResult{
-					{Cmd: "tool init", Status: StatusPass, Line: 10},
+					{Cmd: "tool init", Status: StatusVerified, Line: 10},
 					{Cmd: "tool start", Status: StatusFail, Line: 11, Detail: `unknown command "start"`},
 				},
 			}}},
@@ -78,7 +78,7 @@ func TestWriteFailure(t *testing.T) {
 	}, { // Test 2: a passing result prints nothing at all.
 		Result: Result{
 			Step:   InstallStep{Kind: "go-install", Raw: "go install example.com/tool@latest", Line: 4},
-			Status: StatusPass,
+			Status: StatusVerified,
 		},
 		WantNo: "README",
 	}, { // Test 3: a gap is reported in the row, not as a broken line, since

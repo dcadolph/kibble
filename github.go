@@ -114,7 +114,7 @@ func writeStepSummary(results []Result) {
 // so the verdict reads at a glance.
 func statusBadge(s Status) string {
 	switch s {
-	case StatusPass, StatusPassBuild:
+	case StatusVerified, StatusBuilt:
 		return "✅ " + string(s)
 	case StatusFail:
 		return "❌ " + string(s)

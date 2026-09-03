@@ -274,6 +274,15 @@ cd /work/repo
 git init -q >/dev/null 2>&1
 git config user.email kibble@localhost >/dev/null 2>&1
 git config user.name kibble >/dev/null 2>&1
+__pipecode() {
+  local last=${!#} i=1 c
+  while [ "$i" -lt "$#" ]; do
+    c=${!i}
+    if [ "$c" -ne 0 ] && [ "$c" -ne 141 ]; then printf '%s' "$c"; return; fi
+    i=$((i+1))
+  done
+  printf '%s' "$last"
+}
 `)
 	if len(plan.Packages) > 0 {
 		fmt.Fprintf(&b, `apt-get update -qq >/dev/null 2>&1
@@ -332,8 +341,13 @@ if [ "$have" -eq 0 ]; then printf '\nKIBBLE-NOBIN\n'; exit 0; fi
 				wrapped[fmt.Sprintf("%s:%d", s.ID, i)] = true
 			}
 			b.WriteString(cmd + "\n")
+			// The pipeline's status is captured before anything else runs, so a
+			// producer that fails is not hidden by a consumer that exits zero.
+			// A stage killed by SIGPIPE (141) is the benign case of a consumer
+			// closing early, such as piping into head, and does not convict.
+			b.WriteString("__ps=(\"${PIPESTATUS[@]}\")\n")
 			fmt.Fprintf(&b,
-				"printf '"+markerLead+"KIBBLE-LINE %s:%d CODE=%%d\\n' \"$?\"\n", s.ID, i)
+				"printf '"+markerLead+"KIBBLE-LINE %s:%d CODE=%%d\\n' \"$(__pipecode \"${__ps[@]}\")\"\n", s.ID, i)
 		}
 	}
 	b.WriteString(`[ -n "${KIBBLE_BG:-}" ] && kill $KIBBLE_BG >/dev/null 2>&1
@@ -488,7 +502,7 @@ func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[strin
 	res.example = run
 	res.Status = worst
 	res.Detail = detail
-	if pkgCode != 0 && res.Status == StatusPass {
+	if pkgCode != 0 && res.Status == StatusVerified {
 		res.Detail += "; package install failed"
 	}
 	return res
@@ -580,7 +594,7 @@ func resolveDependentFailures(run *exampleRun, plan *Plan) {
 	passed := map[string]bool{}
 	for _, s := range run.Steps {
 		for _, l := range s.Lines {
-			if l.Status != StatusPass {
+			if l.Status != StatusVerified {
 				continue
 			}
 			if bin, sub := invokedBinary(l.Cmd, bins); bin != "" && sub != "" {
@@ -661,7 +675,7 @@ func summarize(run *exampleRun) (Status, string) {
 	for _, s := range run.Steps {
 		for _, l := range s.Lines {
 			switch l.Status {
-			case StatusPass:
+			case StatusVerified:
 				ran++
 			case StatusSkipped:
 				skipped++
@@ -693,7 +707,7 @@ func summarize(run *exampleRun) (Status, string) {
 		return StatusGap, fmt.Sprintf("%d %s, first: %s",
 			gaps, plural(gaps, "documentation gap", "documentation gaps"), firstGap)
 	case ran > 0:
-		return StatusPass, fmt.Sprintf("%d lines ran, %d skipped", ran, skipped)
+		return StatusVerified, fmt.Sprintf("%d lines ran, %d skipped", ran, skipped)
 	default:
 		detail := "no lines runnable"
 		if firstSkip != "" {
@@ -718,9 +732,9 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		lr.Status = StatusTimeout
 		lr.Detail = fmt.Sprintf("gave no result within %s", lineTimeout)
 	case o.code == 0:
-		lr.Status = StatusPass
+		lr.Status = StatusVerified
 	case l.NonzeroOK:
-		lr.Status = StatusPass
+		lr.Status = StatusVerified
 		lr.Detail = fmt.Sprintf("exit %d is documented behavior", o.code)
 	case o.code == 127 || reShellNotFound.MatchString(o.output) ||
 		reNoExec.MatchString(o.output):
