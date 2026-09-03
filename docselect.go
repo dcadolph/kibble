@@ -46,6 +46,7 @@ var skipDirs = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true, "testdata": true,
 	"dist": true, "build": true, "public": true, "site": true, "target": true,
 	"adr": true, "decisions": true, "rfcs": true, "internal": true,
+	"dev": true, "development": true, "contributing": true, "maintainers": true,
 }
 
 // replayDocs returns the documents whose examples are replayed, as paths

@@ -283,6 +283,13 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 			res.Status = StatusSkipped
 			res.Reason = ReasonMissingDependency
 			res.Detail = fmt.Sprintf("needs Go %s, newer than %s provides", m[1], image)
+		} else if m := reNewerRust.FindStringSubmatch(string(out)); m != nil {
+			// The crate needs a newer rustc than the image ships. A reader with
+			// an up-to-date toolchain would build it, so the image's older rustc
+			// is kibble's limit, not the document's error.
+			res.Status = StatusSkipped
+			res.Reason = ReasonMissingDependency
+			res.Detail = fmt.Sprintf("needs rustc %s, newer than %s provides", m[1], image)
 		} else if reNetworkError.MatchString(string(out)) {
 			res.Status = StatusError
 			res.Detail = "network error during the step, result unknown: " + res.Detail
@@ -301,6 +308,11 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 // such as "requires go >= 1.26.6 (running go 1.26.5)". A reader running the
 // default GOTOOLCHAIN would fetch that toolchain, so the document is not wrong.
 var reNewerToolchain = regexp.MustCompile(`requires go >= ([0-9][0-9.]*)`)
+
+// reNewerRust matches a crate that needs a newer rustc than the image ships,
+// such as "requires rustc 1.80 or newer". A reader with a current toolchain
+// would build it, so the older image is kibble's limit, not the document's.
+var reNewerRust = regexp.MustCompile(`(?i)requires rustc ([0-9][0-9.]*)`)
 
 // reNetworkError matches container output that names a network failure, so a
 // flaky connection is reported as kibble's error rather than broken docs.
@@ -368,7 +380,7 @@ before=$(ls "$BINDIR" 2>/dev/null | sort)
 out=$(timeout %[2]d bash -ec '%[3]s' 2>&1); code=$?
 if [ "$code" -ne 0 ]; then
   printf 'BUILDCODE=%%d\n' "$code"
-  printf '%%s\n' "$out" | tail -n 3
+  printf '%%s\n' "$out" | tail -n 12
   exit 0
 fi
 printf 'BUILDCODE=0\n'
@@ -424,7 +436,7 @@ cd /work
 out=$(timeout %[1]d bash -ec '%[2]s' 2>&1); code=$?
 if [ "$code" -ne 0 ]; then
   printf 'BUILDCODE=%%d\n' "$code"
-  printf '%%s\n' "$out" | tail -n 3
+  printf '%%s\n' "$out" | tail -n 12
   exit 0
 fi
 printf 'BUILDCODE=0\n'
@@ -495,7 +507,7 @@ func helpProbe(step InstallStep) string {
 	// parses cleanly. Only that named rejection convicts, so a screen that
 	// omits a working flag can no longer turn into an accusation.
 	for _, f := range probeFlags(step.Usage) {
-		flag := "--" + f.name
+		flag := f.dashes + f.name
 		args := flag
 		if f.owner != "" {
 			args = f.owner + " " + flag
@@ -512,6 +524,9 @@ func helpProbe(step InstallStep) string {
 type probedFlag struct {
 	// name is the flag without dashes.
 	name string
+	// dashes is the dash prefix the flag was written with, so a single-dash
+	// bundle is probed as written rather than as a long flag.
+	dashes string
 	// owner is the citing subcommand, empty for the bare binary.
 	owner string
 }
@@ -539,7 +554,7 @@ func probeFlags(u *Usage) []probedFlag {
 			}
 		}
 		if safe {
-			out = append(out, probedFlag{name: f, owner: owner})
+			out = append(out, probedFlag{name: f, dashes: u.dashOf(f), owner: owner})
 		}
 	}
 	return out
@@ -615,7 +630,7 @@ before=$(ls "$(brew --prefix)/bin" 2>/dev/null | sort)
 out=$(timeout %d brew install %s 2>&1); code=$?
 if [ "$code" -ne 0 ]; then
   printf 'BUILDCODE=%%d\n' "$code"
-  printf '%%s\n' "$out" | tail -n 3
+  printf '%%s\n' "$out" | tail -n 12
   exit 0
 fi
 printf 'BUILDCODE=0\n'
@@ -728,7 +743,7 @@ mkdir -p "$GOBIN"
 out=$(timeout %d go install '%s' 2>&1); code=$?
 if [ "$code" -ne 0 ]; then
   printf 'BUILDCODE=%%d\n' "$code"
-  printf '%%s\n' "$out" | tail -n 3
+  printf '%%s\n' "$out" | tail -n 12
   exit 0
 fi
 printf 'BUILDCODE=0\n'
@@ -825,7 +840,9 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 		res.Detail = fmt.Sprintf("exceeded timeout after %s", dur.Round(time.Second))
 	case buildCode != 0:
 		res.Status = StatusFail
-		res.Detail = lastLine(tail)
+		// failureLine, not the last line: a build tool's trailing note, such as
+		// cargo pointing at its artifact cache, buries the real error above it.
+		res.Detail = failureLine(tail)
 	case noBin:
 		res.Status = StatusRan
 		res.Detail = "recipe exited 0 but produced no binary to smoke-test"
@@ -885,7 +902,9 @@ func lastLine(lines []string) string {
 // failed and nothing about why.
 var reWrapperSummary = regexp.MustCompile(
 	`^(make(\[\d+\])?: (\*\*\*|Entering|Leaving)|npm ERR!|yarn ERR|` +
-		`error: could not compile|error: build failed|FAILED:|ninja: build stopped)`)
+		`error: could not compile|error: build failed|FAILED:|ninja: build stopped|` +
+		`To reuse those artifacts|Blocking waiting for file lock|` +
+		`(Compiling|Building|Finished|Downloading|Updating) )`)
 
 // reUsageHeading matches the banner a tool prints above its own usage screen
 // when it rejects an argument.

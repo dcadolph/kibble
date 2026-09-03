@@ -299,7 +299,7 @@ printf '\nKIBBLE-PKGS CODE=%%d\n' "$?"
 		}
 		fmt.Fprintf(&b, `out=$(timeout %d bash -ec '%s' 2>&1); code=$?
 printf '\nKIBBLE-BUILD CODE=%%d\n' "$code"
-if [ "$code" -ne 0 ]; then printf '%%s\n' "$out" | tail -n 3; printf '\nKIBBLE-ABORT\n'; exit 0; fi
+if [ "$code" -ne 0 ]; then printf '%%s\n' "$out" | tail -n 12; printf '\nKIBBLE-ABORT\n'; exit 0; fi
 `, installSecs, shellSafe(in.Cmd))
 	}
 	if len(plan.Binaries) > 0 {
@@ -851,10 +851,14 @@ var reEnoent = regexp.MustCompile(
 	`(?i)([^\s:'"]+)'?: (?:no such file or directory|` +
 		`io error for operation on [^\s:]+: no such file or directory)`)
 
-// missingFileArg returns the argument token the output reports as missing, or
-// empty when the failure is about anything else. Requiring the name to appear
-// verbatim among the command's arguments keeps a tool complaining about its
-// own internals from demoting a real failure to a gap.
+// missingFileArg returns the file the output reports as missing when the
+// command itself named it, or empty when the failure is about anything else.
+// The name must appear in the command so a tool complaining about its own
+// internals does not demote a real failure to a gap. A bare word is matched
+// only as a whole argument, but a file-shaped name, one carrying a dot or a
+// slash, is matched even inside a larger argument, so a filename embedded in a
+// quoted expression such as `load("file1.yaml")` is still seen as the reader's
+// missing file rather than a broken tool.
 func missingFileArg(cmd, output string) string {
 	m := reEnoent.FindStringSubmatch(output)
 	if m == nil {
@@ -868,6 +872,9 @@ func missingFileArg(cmd, output string) string {
 		if strings.Trim(tok, "'\"\x60") == name {
 			return name
 		}
+	}
+	if strings.ContainsAny(name, "./") && strings.Contains(cmd, name) {
+		return name
 	}
 	return ""
 }
