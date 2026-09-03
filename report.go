@@ -43,6 +43,8 @@ func reportJSON(w io.Writer, results []Result) {
 		Repo    string    `json:"repo"`
 		Kind    string    `json:"kind"`
 		Status  string    `json:"status"`
+		Bucket  string    `json:"bucket"`
+		Reason  string    `json:"reason,omitempty"`
 		Seconds int       `json:"seconds"`
 		Module  string    `json:"module,omitempty"`
 		Image   string    `json:"image,omitempty"`
@@ -54,6 +56,7 @@ func reportJSON(w io.Writer, results []Result) {
 	for _, r := range results {
 		out := row{
 			Repo: r.Step.Repo, Kind: r.Step.Kind, Status: string(r.Status),
+			Bucket: string(r.Status.Bucket()), Reason: string(r.Reason),
 			Seconds: int(r.Duration.Round(time.Second).Seconds()),
 			Module:  r.Step.Module, Image: r.Image,
 			Smoke: r.SmokeLine, Detail: r.Detail,
@@ -102,7 +105,7 @@ func reportTable(w io.Writer, results []Result) {
 			c.statusWord(r.Status), detail)
 		writeFailure(w, c, r)
 		switch r.Status {
-		case StatusPass:
+		case StatusVerified:
 			pass++
 		case StatusFail:
 			fail++

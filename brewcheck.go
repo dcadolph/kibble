@@ -35,10 +35,12 @@ func defaultFetcher() Fetcher {
 	})
 }
 
-// checkBrew verifies that the documented brew formula exists, without
-// installing it. A tap target is checked against the tap repository on
-// GitHub, and a bare formula against the Homebrew core API. Network trouble
-// is a skip, never a failure.
+// checkBrew confirms that a documented brew formula or cask exists, without
+// installing it. Existence is reported as EXISTS, not as a pass, since an
+// index entry is not proof that the install works. A name absent from every
+// namespace kibble can check, and from every tap the document adds, is a FAIL:
+// the reader who runs the documented line gets no such formula. Network
+// trouble is never an accusation, only a skip.
 func checkBrew(step InstallStep, fetch Fetcher) Result {
 	res := Result{Step: step}
 	target := step.Module
@@ -52,15 +54,17 @@ func checkBrew(step InstallStep, fetch Fetcher) Result {
 			// A network blip says nothing about the docs, so it is never
 			// an accusation.
 			res.Status = StatusSkipped
+			res.Reason = ReasonUnreachable
 			res.Detail = "cask lookup unreachable"
 		case code >= 200 && code < 300:
-			res.Status = StatusPass
+			res.Status = StatusExists
 			res.Detail = "cask exists (install not attempted)"
+		case nameInTaps(name, step.Taps, fetch):
+			res.Status = StatusExists
+			res.Detail = "cask exists in a documented tap (install not attempted)"
 		default:
-			// Same reasoning as a missing formula: an index is not an install.
-			res.Status = StatusGap
-			res.Detail = fmt.Sprintf(
-				"no cask named %q in the cask index; run with -brew-install to settle it", name)
+			res.Status = StatusFail
+			res.Detail = fmt.Sprintf("no cask named %q in the cask index or any documented tap", name)
 		}
 		return res
 	}
@@ -91,6 +95,7 @@ func checkBrew(step InstallStep, fetch Fetcher) Result {
 		}
 	default:
 		res.Status = StatusSkipped
+		res.Reason = ReasonUnrecognizedTarget
 		res.Detail = "unrecognized brew target"
 		return res
 	}
@@ -102,26 +107,55 @@ func checkBrew(step InstallStep, fetch Fetcher) Result {
 		}
 		switch {
 		case code >= 200 && code < 300:
-			res.Status = StatusPass
+			res.Status = StatusExists
 			res.Detail = "formula exists (install not attempted)"
 			return res
 		case code == 404:
 			sawNotFound = true
 		}
 	}
+	// A bare name absent from core can still live in a tap the document tells
+	// the reader to add, so a documented tap is checked before convicting.
+	if sawNotFound && len(parts) == 1 && nameInTaps(target, step.Taps, fetch) {
+		res.Status = StatusExists
+		res.Detail = "formula exists in a documented tap (install not attempted)"
+		return res
+	}
 	if sawNotFound {
-		// An index says a name is absent; only an install says a documented
-		// line is broken. The namespace has formulas, casks, aliases, and
-		// taps, and `brew install rich` resolving through an alias is exactly
-		// the working line this check once called broken in public. So a
-		// missing name is reported and left for a person or for -brew-install,
-		// and never fails a build on its own.
-		res.Status = StatusGap
+		// The name is absent from every namespace checked and from every tap
+		// the document adds. A reader running the documented line gets no such
+		// formula, so the line is broken.
+		res.Status = StatusFail
 		res.Detail = fmt.Sprintf(
-			"no formula, cask, or alias named %q in the checked namespaces; run with -brew-install to settle it", target)
+			"no formula, cask, or alias named %q in the checked namespaces or any documented tap", target)
 		return res
 	}
 	res.Status = StatusSkipped
+	res.Reason = ReasonUnreachable
 	res.Detail = "could not verify formula (network)"
 	return res
+}
+
+// nameInTaps reports whether a bare name resolves to a formula, cask, or alias
+// in any of the documented taps. Only a definitive 2xx counts, so a network
+// error leaves the name unresolved rather than falsely present.
+func nameInTaps(name string, taps []string, fetch Fetcher) bool {
+	for _, tap := range taps {
+		parts := strings.SplitN(tap, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		base := fmt.Sprintf("https://raw.githubusercontent.com/%s/homebrew-%s/HEAD", parts[0], parts[1])
+		for _, u := range []string{
+			fmt.Sprintf("%s/Formula/%s.rb", base, name),
+			fmt.Sprintf("%s/Casks/%s.rb", base, name),
+			fmt.Sprintf("%s/%s.rb", base, name),
+			fmt.Sprintf("%s/Aliases/%s", base, name),
+		} {
+			if code, err := fetch.Status(u); err == nil && code >= 200 && code < 300 {
+				return true
+			}
+		}
+	}
+	return false
 }

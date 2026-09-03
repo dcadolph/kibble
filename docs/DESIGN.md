@@ -40,30 +40,40 @@ either hangs on a closed pipe or needs a flag to defeat it.
 ## Install checks
 
 kibble verifies `go install` steps end to end: the module resolves, it builds from zero,
-and the binary runs. A `git clone` step runs as the documented recipe, meaning the clone
-line plus the lines that follow it in the same code block, such as `cd` and
-`make install`, and whatever the recipe produces is smoke-tested. A build that exceeds
-the timeout is reported as `TIMEOUT`, never as a failure unless `-strict` promotes it, so
-a slow network does not fail a build that would otherwise pass.
+and the binary runs. Only a step whose binary answered a smoke test is `VERIFIED`. A
+recipe that finishes cleanly but leaves no binary to test is `RAN`, not a pass, because
+nothing was verified, and kibble cannot tell a recipe that should have produced a tool
+from one that legitimately installs none. A `git clone` step runs as the documented
+recipe, meaning the clone line plus the lines that follow it in the same code block, such
+as `cd` and `make install`, and whatever the recipe produces is smoke-tested. A build
+that exceeds the timeout is reported as `TIMEOUT`, never as a failure unless `-strict`
+promotes it, so a slow network does not fail a build that would otherwise pass.
 
 A package install runs the documented line verbatim, so what kibble verifies is the
 command a reader would actually type, flags and all. The bin directory is compared before
 and after, so the binary is found even when the package does not name it: a `cargo
 install` of ripgrep is checked by running `rg`, and an `npm install -g` of typescript by
-running `tsc`. A local build such as `cargo install --path .` is left to the clone recipe,
-which already covers it.
+running `tsc`. Only a binary the recipe demonstrably produced is smoke-tested, never one
+that happened to sit on the image's path already, so a package that installs nothing
+cannot borrow a stock tool's success. A local build such as `cargo install --path .` is
+left to the clone recipe, which already covers it.
 
 ## The brew doctrine
 
 A brew step is looked up in its tap by default: the formula API, the cask index, and the
 alias directories, since `brew install rich` resolves through an alias to `rich-cli` and
 a name absent from the canonical list can still be exactly what a reader should type. A
-lookup that finds nothing reports `GAP` and never `FAIL`, because an index can say a name
-is not indexed and cannot say a documented line is broken. `-brew-install` settles it: the
+name that is found reports `EXISTS`, not a pass, because an index entry proves the
+formula is real and says nothing about whether the install works. A name absent from
+every namespace, and from every tap the document tells the reader to add with `brew tap`,
+reports `FAIL`: a reader running that documented line gets no such formula. The tap check
+is what keeps a formula the document does tap from being convicted, so the failure lands
+only on a name that genuinely resolves nowhere. `-brew-install` settles the rest: the
 line runs in Homebrew's own Linux container, the bin directory is diffed around the
-install, and whatever appeared is smoke-tested. Only that run can fail a brew step. It
-costs minutes per formula, so it is opt-in, and a documented cask is skipped with its
-reason, since a cask installs a macOS application a Linux container cannot judge.
+install, and whatever appeared is smoke-tested, turning an `EXISTS` into `VERIFIED` or a
+real failure. It costs minutes per formula, so it is opt-in, and a documented cask is
+skipped with its reason, since a cask installs a macOS application a Linux container
+cannot judge.
 
 ## The image follows the step
 

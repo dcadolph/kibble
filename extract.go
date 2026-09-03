@@ -31,6 +31,11 @@ type InstallStep struct {
 	// Block is the install recipe for a git-clone step: the clone line and the
 	// lines that follow it in the same code block, such as cd and make.
 	Block []string
+	// Taps are the owner/name tap repositories the document tells the reader
+	// to add before installing, for brew steps. A bare formula missing from
+	// core can legitimately live in one of these, so a documented tap keeps a
+	// missing name from being convicted.
+	Taps []string
 	// plan is the example plan attached to an example step.
 	plan *Plan
 	// dir is the local repo path an example step streams into its session.
@@ -71,6 +76,9 @@ var (
 	// capture the target, since flags sit between the subcommand and the URL
 	// and the first token is often one of them. cloneTarget reads the target.
 	reGitClone = regexp.MustCompile(`\bgit\s+clone\b`)
+	// reBrewTap matches a `brew tap owner/name` invocation, so a formula
+	// documented to come from a tapped repository is not called missing.
+	reBrewTap = regexp.MustCompile(`\bbrew\s+tap\s+([\w.-]+/[\w.-]+)`)
 )
 
 // cloneValueFlags are the git-clone flags that consume the following token as
@@ -140,8 +148,14 @@ func DefaultExtractor() Extractor {
 	return ExtractorFunc(func(repo, markdown string) []InstallStep {
 		seen := map[string]bool{}
 		var steps []InstallStep
+		var taps []string
+		tapSeen := map[string]bool{}
 		for _, block := range codeBlocks(markdown) {
 			for i, line := range block.Lines {
+				if m := reBrewTap.FindStringSubmatch(line); m != nil && !tapSeen[m[1]] {
+					tapSeen[m[1]] = true
+					taps = append(taps, m[1])
+				}
 				s, key, ok := classifyLine(repo, line)
 				if !ok || seen[key] {
 					continue
@@ -154,6 +168,15 @@ func DefaultExtractor() Extractor {
 					s.Block = installRecipe(block.Lines[i:])
 				}
 				steps = append(steps, s)
+			}
+		}
+		// A tap documented anywhere in the document covers every brew step,
+		// since a reader adds it once and installs many formulas from it.
+		if len(taps) > 0 {
+			for i := range steps {
+				if steps[i].Kind == "brew" {
+					steps[i].Taps = taps
+				}
 			}
 		}
 		return steps

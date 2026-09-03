@@ -180,7 +180,7 @@ func checkToolFor(cfg config) func(context.Context, *mcpsdk.CallToolRequest, che
 			})
 		}
 		out.Summary = fmt.Sprintf("%d pass, %d fail, %d gap, of %d checks",
-			counts[StatusPass], counts[StatusFail], counts[StatusGap], len(results))
+			counts[StatusVerified], counts[StatusFail], counts[StatusGap], len(results))
 		return textResult(out.Summary), out, nil
 	}
 }

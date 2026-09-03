@@ -95,7 +95,7 @@ func TestDocCoverageChecks(t *testing.T) {
 		WantDetail string
 	}{{ // Test 0: both commands in the README.
 		Readme:     "Run `tool attest` then `tool index`.",
-		WantStatus: StatusPass,
+		WantStatus: StatusVerified,
 		WantDetail: "2 commands documented",
 	}, { // Test 1: one missing from every document is a gap.
 		Readme:     "Run `tool index`.",
@@ -105,7 +105,7 @@ func TestDocCoverageChecks(t *testing.T) {
 		// and the README omission is reported without failing.
 		Readme:     "Run `tool index`.",
 		Reference:  "### attest\n\nSeals a finding.",
-		WantStatus: StatusPass,
+		WantStatus: StatusVerified,
 		WantDetail: "2 commands documented, 1 only outside the README (attest)",
 	}}
 	for testNum, test := range tests {
@@ -123,7 +123,7 @@ func TestDocCoverageChecks(t *testing.T) {
 				}
 			}
 			in := []Result{{
-				Status:   StatusPass,
+				Status:   StatusVerified,
 				helpText: help,
 				Step: InstallStep{Repo: "repo", Kind: "go-install", Binary: "tool",
 					dir: dir, readme: "README.md"},

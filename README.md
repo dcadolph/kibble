@@ -126,17 +126,28 @@ One dash or two, either works: `-strict` and `--strict` name the same flag.
 
 kibble runs installs from zero, smoke-tests what lands, replays quickstarts in one
 session, and checks cited flags and subcommands against the binary's own help. Every
-result is one of seven verdicts, and the boundaries between them are the product:
+result is one verdict, and the boundaries between them are the product. Only one
+verdict claims the documented step works:
 
-- `PASS` ran and worked. `FAIL` ran and did not; nothing kibble merely looked up can
-  produce one.
-- `SKIP` means kibble could not judge the line, with the reason.
+- `VERIFIED` built or installed and the binary answered a smoke test. It is the only
+  green verdict.
+- `BUILT`, `RAN`, `EXISTS`, and `CROSS-ARCH` all mean a step ran or a package exists
+  but nothing proved it works: `BUILT` compiled but the smoke test failed, `RAN`
+  finished but produced no binary to test, `EXISTS` confirms a package is in its index
+  without installing it, and `CROSS-ARCH` installed a binary for another architecture
+  this host cannot run. None of them is a pass, and none is an accusation.
+- `FAIL` ran and did not work, or named a package that does not exist.
+- `SKIP` means kibble chose not to run the line; a machine-readable reason says why.
 - `GAP` means the document is incomplete: a file, directory, or setting nothing creates.
 - `DRIFT` means the docs cite a flag or subcommand the binary no longer has.
 - `TIMEOUT` and `ERROR` keep slow networks and kibble's own trouble out of your verdict.
 
-A gap, a drift, or a timeout never fails a default run; `-strict` promotes them. The
-full reasoning, including why a check that cries wolf is worse than no check, is in
+Every verdict also carries a coarse `bucket` (`works`, `unverified`, `broken`,
+`doc-drift`, `not-attempted`, `inconclusive`) so a consumer can condense the fine
+verdicts without hard-coding them. By default only `FAIL` and `ERROR` fail a run;
+`-strict` also fails everything outside the works and not-attempted buckets, so an
+unverified step, a drift, or a gap all count when you demand proof. The full reasoning,
+including why a check that cries wolf is worse than no check, is in
 [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Why believe any of it

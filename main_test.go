@@ -20,15 +20,15 @@ func TestAnyFail(t *testing.T) {
 		Strict  bool
 		Want    bool
 	}{{ // Test 0: all pass, not strict.
-		Results: []Result{res(StatusPass), res(StatusSkipped)}, Want: false,
+		Results: []Result{res(StatusVerified), res(StatusSkipped)}, Want: false,
 	}, { // Test 1: a build failure always fails.
-		Results: []Result{res(StatusPass), res(StatusFail)}, Want: true,
+		Results: []Result{res(StatusVerified), res(StatusFail)}, Want: true,
 	}, { // Test 2: a timeout does not fail by default.
 		Results: []Result{res(StatusTimeout)}, Strict: false, Want: false,
 	}, { // Test 3: a timeout fails under strict.
 		Results: []Result{res(StatusTimeout)}, Strict: true, Want: true,
 	}, { // Test 4: a smoke failure fails under strict.
-		Results: []Result{res(StatusPassBuild)}, Strict: true, Want: true,
+		Results: []Result{res(StatusBuilt)}, Strict: true, Want: true,
 	}, { // Test 5: doc drift does not fail by default.
 		Results: []Result{res(StatusDrift)}, Strict: false, Want: false,
 	}, { // Test 6: doc drift fails under strict.

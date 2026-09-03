@@ -74,8 +74,12 @@ func (p palette) blue(s string) string   { return p.paint(ansiBlue, s) }
 // meaning on its own, so a reader without color still sees which line failed.
 func (p palette) mark(s Status) string {
 	switch s {
-	case StatusPass, StatusPassBuild:
+	case StatusVerified:
 		return p.green("✓")
+	case StatusBuilt, StatusRan, StatusExists, StatusCrossArch:
+		// Ran or exists, but not proven to work. A tilde, not a check, so a
+		// reader never mistakes an unverified step for a verified one.
+		return p.yellow("~")
 	case StatusFail, StatusError:
 		return p.red("✗")
 	case StatusGap, StatusDrift:
@@ -92,11 +96,11 @@ func (p palette) mark(s Status) string {
 // and repeating it in every row buries the rows that matter.
 func (p palette) statusWord(s Status) string {
 	switch s {
-	case StatusPass:
+	case StatusVerified:
 		return ""
 	case StatusFail, StatusError:
 		return p.red(string(s)) + "  "
-	case StatusGap, StatusDrift, StatusTimeout:
+	case StatusBuilt, StatusRan, StatusExists, StatusCrossArch, StatusGap, StatusDrift, StatusTimeout:
 		return p.yellow(string(s)) + "  "
 	default:
 		return p.dim(string(s)) + "  "

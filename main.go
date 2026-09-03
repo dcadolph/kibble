@@ -444,7 +444,7 @@ func runAll(ctx context.Context, r Runner, steps []InstallStep, workers int) []R
 	var wg sync.WaitGroup
 	for i, step := range steps {
 		if !step.Run {
-			results[i] = Result{Step: step, Status: StatusSkipped, Detail: "not executed yet"}
+			results[i] = Result{Step: step, Status: StatusSkipped, Reason: ReasonNotExecuted, Detail: "not executed yet"}
 			continue
 		}
 		select {
@@ -479,17 +479,16 @@ func hasRunnable(steps []InstallStep) bool {
 
 // anyFail reports whether the run should exit non-zero. A build failure always
 // counts, and so does an error, since kibble could not do its job and CI should
-// notice. In strict mode, timeouts, smoke-test failures, doc drift, and
-// documentation gaps count too. A gap never fails a default run: it says the
-// document is incomplete, which is worth reporting but is not proof of a
-// broken install, and a checker that breaks everyone's build gets uninstalled.
+// notice. In strict mode every status outside the works and not-attempted
+// buckets counts too: an unverified step, doc drift, or an inconclusive run all
+// fail when the caller demands proof. By default none of those fail: a checker
+// that breaks everyone's build gets uninstalled.
 func anyFail(results []Result, strict bool) bool {
 	for _, r := range results {
 		if r.Status == StatusFail || r.Status == StatusError {
 			return true
 		}
-		if strict && (r.Status == StatusTimeout || r.Status == StatusPassBuild ||
-			r.Status == StatusDrift || r.Status == StatusGap) {
+		if strict && r.Status.FailsUnderStrict() {
 			return true
 		}
 	}
