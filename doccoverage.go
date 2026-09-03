@@ -95,13 +95,22 @@ func readDocSet(dir, readme string) docSet {
 		}
 		name := d.Name()
 		if d.IsDir() {
-			if name == ".git" || name == "node_modules" || name == "vendor" ||
-				name == "testdata" || name == "dist" {
+			if path != dir && skipDirs[strings.ToLower(name)] {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		if !docExtensions[strings.ToLower(filepath.Ext(name))] {
+			return nil
+		}
+		// A changelog, a migration guide, or a contributing document describes
+		// the project's history or process rather than its current usage, and a
+		// flag shown there in a "before" example is not the project telling a
+		// reader to run it. Citing such a flag and probing a binary that dropped
+		// it is a false drift, so those documents are left out of the set the
+		// flag check and doc coverage read.
+		base := strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name)))
+		if skipNames[base] || hasSkipPrefix(base) {
 			return nil
 		}
 		body, err := os.ReadFile(path)
