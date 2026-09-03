@@ -717,6 +717,17 @@ func summarize(run *exampleRun) (Status, string) {
 	}
 }
 
+// documentedNonzeroCode reports whether a nonzero exit is the kind a document
+// can legitimately call expected behavior. A tool may exit nonzero to signal a
+// finding, such as a linter that returns 1 when it flags something, but only an
+// ordinary program exit qualifies. A timeout (124), a shell "cannot execute"
+// or "not found" (126 and 127), and a signal death (128 and up, such as 139
+// for a segfault or 134 for an abort) are never documented behavior, and a
+// document that blesses nonzero exits must not launder a crash into a pass.
+func documentedNonzeroCode(code int) bool {
+	return code >= 1 && code <= 125 && code != 124
+}
+
 // classifyLineResult turns one recorded exit into a line result. Errors that
 // only mean the container lacks a terminal, credentials, a network service,
 // a helper command, or data are honest skips, not documentation failures.
@@ -733,7 +744,7 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		lr.Detail = fmt.Sprintf("gave no result within %s", lineTimeout)
 	case o.code == 0:
 		lr.Status = StatusVerified
-	case l.NonzeroOK:
+	case l.NonzeroOK && documentedNonzeroCode(o.code):
 		lr.Status = StatusVerified
 		lr.Detail = fmt.Sprintf("exit %d is documented behavior", o.code)
 	case o.code == 127 || reShellNotFound.MatchString(o.output) ||

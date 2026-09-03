@@ -642,6 +642,37 @@ func TestEmptyPipelineSkips(t *testing.T) {
 	}
 }
 
+// TestNonzeroOKCap checks that a documented nonzero exit excuses only an
+// ordinary program exit, so a crash or a missing command cannot be laundered
+// into a pass by a note that some nonzero exits are expected.
+func TestNonzeroOKCap(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name       string
+		Code       int
+		Output     string
+		WantStatus Status
+	}{{ // Test 0: a linter exiting 1 to signal a finding is the documented case.
+		Name: "found", Code: 1, WantStatus: StatusVerified,
+	}, { // Test 1: a segfault is never documented behavior.
+		Name: "segfault", Code: 139, WantStatus: StatusFail,
+	}, { // Test 2: an abort is never documented behavior.
+		Name: "abort", Code: 134, WantStatus: StatusFail,
+	}, { // Test 3: a missing command is a skip, not a laundered pass.
+		Name: "notfound", Code: 127, Output: "tool: command not found", WantStatus: StatusSkipped,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d %s", testNum, test.Name), func(t *testing.T) {
+			t.Parallel()
+			lr := classifyLineResult(lineResult{Cmd: "tool check"},
+				PlanLine{NonzeroOK: true}, lineOutcome{code: test.Code, output: test.Output}, false, nil)
+			if lr.Status != test.WantStatus {
+				t.Errorf("status = %s, want %s (detail %q)", lr.Status, test.WantStatus, lr.Detail)
+			}
+		})
+	}
+}
+
 // TestMissingFileArg checks that only an error naming one of the command's
 // own arguments reads as a missing file. ripgrep's guide searches a
 // some-utf16-file the reader is meant to bring, and calling that a failure
