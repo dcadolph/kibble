@@ -17,8 +17,14 @@
 Eating your own dog food means using what you ship the way a stranger would. Nobody does
 it for documentation, because your machine already has everything installed and the
 instructions pass by inspection. kibble is the bowl: it runs your documented steps in a
-clean container from zero, as a reader with nothing would, so a broken install fails in
-CI instead of in their terminal.
+clean Linux container from zero, as a reader with nothing would, so a broken install
+fails in CI instead of in their terminal.
+
+That container is one environment, not every environment. kibble answers whether your
+documentation works from zero in a reproducible Linux container, which is a narrower
+claim than whether it works for every reader: a macOS path, an ARM host, musl, a
+corporate proxy, and a private registry are all outside what it sees. The narrow claim
+is the one worth making, because it is the one kibble can actually settle.
 
 Your README tells people to run `go install ...`, then some setup, then a quickstart.
 Every one of those rots the moment the code moves, and you are the last to know.
@@ -53,18 +59,26 @@ With no path it checks the directory you are standing in, so `cd` into a project
 it. There are no prompts. kibble's home is a CI job, and a tool that stops to ask a
 question there either hangs on a closed pipe or needs a flag to defeat it.
 
-Example output:
+A run that finds something says where it is:
 
 ```
-REPO    KIND        STATUS  TIME  DETAIL
-myrepo  brew        PASS    1s    formula exists (install not attempted)
-myrepo  example     PASS    22s   15 lines ran, 9 skipped
-myrepo  flag-check  PASS    0s    9 cited flags ok, 4 subcommands cited
-myrepo  git-clone   PASS    41s   myrepo version 1.4.0
-myrepo  go-install  PASS    28s   myrepo version 1.4.0
+myrepo
+  ! brew             0s  GAP  no formula, cask, or alias named "acme/tap/nope" in the c…
+  – doc-coverage     0s  SKIP  no command list in the help output to check against
+  ✗ example         22s  FAIL  b1 "mytool --nosuchflag" exited 2: flag provided but not d…
+      myrepo/README.md:17
+      $ mytool --nosuchflag
+        exited 2: flag provided but not defined: -nosuchflag
+  ✓ flag-check       0s  2 cited flags ok, 0 subcommands cited
+  ✓ go-install      22s  v1.4.0
 
-5 pass, 0 fail, 0 other of 5 checks
+FAILED  a documented line ran and did not work
+2 passed  1 failed  1 gap  1 other  5 checks in 45s
 ```
+
+The file and line under a failure are the point. A verdict a reader has to go hunting for
+in a log costs them the search, so the broken line, where it is written, and what the tool
+said are printed together. In CI the same three become an annotation on that README line.
 
 ## Use it in CI
 
@@ -78,7 +92,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dcadolph/kibble@v0.19.0
+      - uses: dcadolph/kibble@v0.20.0
         with:
           repo: .
           # args: -strict   # fail on timeouts, smoke failures, drift, and gaps too
@@ -125,14 +139,41 @@ A gap, a drift, or a timeout never fails a default run; `-strict` promotes them.
 full reasoning, including why a check that cries wolf is worse than no check, is in
 [docs/DESIGN.md](docs/DESIGN.md).
 
-## Configuration
+## Why believe any of it
 
-Most repositories need none. When a heuristic cannot settle a call, a `.kibble.yml` at
-the repository root does: fixtures, environment, substitutions, background services with
-readiness probes, and per-line run or skip rules, so the run stays reproducible and the
-engine stays the thing that decides pass or fail. `-suggest` has a model draft the file
-for you to review; `-mcp` serves the same engine to an agent. All of it is in
-[docs/CONFIG.md](docs/CONFIG.md).
+A verifier is worth exactly what its false positives and false negatives are worth, so
+both are pinned and enforced weekly against real repositories.
+
+`corpus/repos.tsv` holds ripgrep, fd, glow, nodemon, httpie, and rich-cli, each at a
+fixed commit with the verdict counts a person read the documentation and verified by
+hand. A scheduled run fails when any count moves, because a moved count means kibble's
+judgment changed and the repository did not.
+
+`corpus/mutations.tsv` runs the other direction. Each row corrupts exactly one documented
+line of a pinned repository, a crate name typo, a brew formula that no longer resolves,
+and requires kibble to reach a named verdict on the damage in a finding that quotes the
+mutated token. A count alone would not do, since a coincidence can produce a count.
+
+```
+ripgrep   5,0,1  as expected      ripgrep mutation:  FAIL=1 naming ripgreppp
+fd        7,0,0  as expected      rich-cli mutation: GAP=2  naming richhh
+rich-cli  3,0,1  as expected
+```
+
+Correct documentation passes and one edit of rot flips it. Both halves are the claim; a
+tool that only holds one of them is either a rubber stamp or a nuisance. The same
+property is pinned below the integration layer by a unit suite that mutates a healthy
+document one edit at a time and requires the untouched copy to come back clean first.
+Reasoning in [docs/DESIGN.md](docs/DESIGN.md).
+
+## What kibble does not check
+
+The container is Linux, x86 or ARM depending on the runner, with a network and no
+credentials. Documentation that only breaks on macOS or Windows, only under musl, only
+behind a proxy or a corporate CA, or only with a private registry configured, is
+documentation kibble cannot speak to. A block whose own prose scopes it to another
+operating system is skipped and said so, rather than run and blamed. Nothing here is a
+verdict about your reader's laptop; it is a verdict about a clean machine.
 
 ## Security
 
@@ -143,15 +184,15 @@ the host, and the network stays open because verifying an install is fetching it
 a kibble run the way you treat a build script, and read [docs/SECURITY.md](docs/SECURITY.md)
 before pointing it at a repository you do not trust.
 
-## Proof
 
-`corpus/repos.tsv` pins real repositories to hand-verified verdict counts, and a
-scheduled run fails when kibble's judgment moves. `corpus/mutations.tsv` holds the other
-direction: corrupt one documented line of a pinned repository and kibble must catch it,
-in a finding that names the damage. Correct documentation passes and one edit of rot
-flips, which is the pair a verifier has to hold. Details in
-[docs/DESIGN.md](docs/DESIGN.md).
+## Configuration
 
+Most repositories need none. When a heuristic cannot settle a call, a `.kibble.yml` at
+the repository root does: fixtures, environment, substitutions, background services with
+readiness probes, and per-line run or skip rules, so the run stays reproducible and the
+engine stays the thing that decides pass or fail. `-suggest` has a model draft the file
+for you to review; `-mcp` serves the same engine to an agent. All of it is in
+[docs/CONFIG.md](docs/CONFIG.md).
 ## Roadmap
 
 - JUnit XML output for CI systems that are not GitHub.

@@ -81,6 +81,17 @@ between them is the one mistake this tool must not make. Generated directories s
 `node_modules`, `vendor`, `build`, and `target` are left out of that stream, so the
 budget goes to source a document might actually name.
 
+## What the container is, and is not
+
+The clean room is one Linux container on the runner's architecture, with a network and
+no credentials. That is deliberately narrower than "a new user's machine", and the
+difference matters when reading a green run. Documentation that breaks only on macOS or
+Windows, only against musl, only behind a corporate proxy or CA bundle, only on another
+CPU architecture, or only with a private registry configured, is documentation this
+environment cannot speak to either way. kibble answers one question well, whether the
+documented steps work from zero in a reproducible environment, and declines the larger
+question it cannot settle.
+
 ## SKIP, GAP, and FAIL
 
 A `SKIP` says kibble could not judge the line. A `GAP` says it did judge it, and the
