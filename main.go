@@ -230,6 +230,34 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan, []Result) {
 			continue
 		}
 		steps := ex.Extract(repo, md)
+		// Install instructions outlive the README they started in: a docs tree
+		// and an INSTALL file are where they go once the front page fills up,
+		// and kibble already reads that tree for flags and examples. A step
+		// found in another install document is tagged with that document and
+		// added once, so a repository whose install lives outside the README is
+		// verified rather than reported as having nothing to install.
+		installSeen := map[string]bool{}
+		for i := range steps {
+			installSeen[steps[i].Kind+"|"+steps[i].Module] = true
+		}
+		for _, doc := range installDocs(p, name) {
+			if doc == name {
+				continue
+			}
+			body, rerr := os.ReadFile(filepath.Join(p, doc))
+			if rerr != nil {
+				continue
+			}
+			for _, st := range ex.Extract(repo, string(body)) {
+				key := st.Kind + "|" + st.Module
+				if installSeen[key] {
+					continue
+				}
+				installSeen[key] = true
+				st.doc = doc
+				steps = append(steps, st)
+			}
+		}
 		bins, installs := sessionInstalls(p, steps)
 		// Flags and subcommands are cited across the whole documentation set,
 		// not only the README, and a reference page drifts faster than a front
@@ -444,7 +472,7 @@ func runAll(ctx context.Context, r Runner, steps []InstallStep, workers int) []R
 	var wg sync.WaitGroup
 	for i, step := range steps {
 		if !step.Run {
-			results[i] = Result{Step: step, Status: StatusSkipped, Reason: ReasonNotExecuted, Detail: "not executed yet"}
+			results[i] = unrunResult(step)
 			continue
 		}
 		select {
@@ -468,6 +496,34 @@ func runAll(ctx context.Context, r Runner, steps []InstallStep, workers int) []R
 }
 
 // hasRunnable reports whether any step will actually be executed.
+// unrunResult is the result for a step kibble records but does not run. A
+// piped shell installer and a system package are documented install methods
+// kibble sees and deliberately declines to execute, so they are skipped with a
+// reason a reader can act on rather than passing as if nothing were found.
+func unrunResult(step InstallStep) Result {
+	var res Result
+	switch step.Kind {
+	case "script-install":
+		res = Result{
+			Step: step, Status: StatusSkipped, Reason: ReasonUnsupportedMethod,
+			Detail: "kibble does not run piped shell installers; verify this one by hand",
+		}
+	case "os-package":
+		res = Result{
+			Step: step, Status: StatusSkipped, Reason: ReasonUnsupportedMethod,
+			Detail: "kibble does not run system package installs; verify this one by hand",
+		}
+	default:
+		res = Result{Step: step, Status: StatusSkipped, Reason: ReasonNotExecuted, Detail: "not executed yet"}
+	}
+	// A step found outside the README says which document it came from, so a
+	// reader knows where to look.
+	if step.doc != "" && step.doc != step.readme {
+		res.Detail = step.doc + ": " + res.Detail
+	}
+	return res
+}
+
 func hasRunnable(steps []InstallStep) bool {
 	for _, s := range steps {
 		if s.Run {

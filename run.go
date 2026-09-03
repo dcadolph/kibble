@@ -144,6 +144,9 @@ const (
 	ReasonUnreachable Reason = "unreachable"
 	// ReasonNotExecuted marks a step kibble has not run in this kind of pass.
 	ReasonNotExecuted Reason = "not-executed"
+	// ReasonUnsupportedMethod marks a documented install method kibble sees but
+	// does not run, such as a piped shell installer or a system package.
+	ReasonUnsupportedMethod Reason = "unsupported-method"
 )
 
 // Result is the outcome of attempting one install step.
