@@ -73,12 +73,29 @@ var (
 	reGitClone = regexp.MustCompile(`\bgit\s+clone\b`)
 )
 
-// cloneTarget returns the repository a documented clone names. Taking the
-// first token after the subcommand is wrong, because flags and their values
-// come first: `git clone --depth 1 https://host/repo.git` once reported
-// --depth as the repository, and the recipe that followed cloned nothing and
-// passed. The target is found by shape instead, since a remote looks like a
-// remote and a flag value does not.
+// cloneValueFlags are the git-clone flags that consume the following token as
+// their value. Skipping the value matters because a value can share the shape
+// of a repository: `git clone -b release/v2 https://host/repo.git` once
+// reported release/v2 as the repository, since a branch name holds a slash the
+// same way a remote path does. The glued `--branch=release/v2` form is a single
+// flag token and needs no entry here.
+var cloneValueFlags = map[string]bool{
+	"-b": true, "--branch": true, "-o": true, "--origin": true,
+	"-u": true, "--upload-pack": true, "--reference": true,
+	"--reference-if-able": true, "--depth": true, "--template": true,
+	"-c": true, "--config": true, "--separate-git-dir": true,
+	"-j": true, "--jobs": true, "--shallow-since": true,
+	"--shallow-exclude": true, "--filter": true, "--bundle-uri": true,
+	"--server-option": true,
+}
+
+// cloneTarget returns the repository a documented clone names. Taking the first
+// token after the subcommand is wrong, because flags and their values come
+// first: `git clone --depth 1 https://host/repo.git` once reported --depth as
+// the repository, and the recipe that followed cloned nothing and passed.
+// Flags and the values they consume are skipped, and the target is then found
+// by shape, since a remote looks like a remote and a leftover flag value does
+// not.
 func cloneTarget(line string) string {
 	fields := strings.Fields(line)
 	i := 0
@@ -93,7 +110,15 @@ func cloneTarget(line string) string {
 	plain := ""
 	for ; i < len(fields); i++ {
 		f := strings.Trim(fields[i], "\"'`")
-		if f == "" || strings.HasPrefix(f, "-") {
+		if f == "" {
+			continue
+		}
+		if strings.HasPrefix(f, "-") {
+			// A separate-token flag value is skipped so a value holding a
+			// slash is never mistaken for the repository.
+			if cloneValueFlags[f] && i+1 < len(fields) {
+				i++
+			}
 			continue
 		}
 		if strings.Contains(f, "://") || strings.Contains(f, "@") ||

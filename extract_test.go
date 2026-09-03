@@ -288,6 +288,18 @@ func TestCloneTarget(t *testing.T) {
 		In: "git clone --quiet mirror", Want: "mirror",
 	}, { // Test 6: a prompt marker and quotes do not become part of the target.
 		In: `git clone "https://example.com/t.git"`, Want: "https://example.com/t.git",
+	}, { // Test 7: a branch value holding a slash is not the target.
+		In:   "git clone -b release/v2 https://github.com/org/repo.git",
+		Want: "https://github.com/org/repo.git",
+	}, { // Test 8: a --branch value with a slash, separate token form.
+		In:   "git clone --branch feature/x https://github.com/org/repo.git",
+		Want: "https://github.com/org/repo.git",
+	}, { // Test 9: a --reference path is a flag value, not the target.
+		In:   "git clone --reference /srv/mirror/repo.git https://github.com/org/repo.git",
+		Want: "https://github.com/org/repo.git",
+	}, { // Test 10: a config value holding a slash is skipped.
+		In:   "git clone -c core.hooksPath=/dev/null https://github.com/org/repo.git",
+		Want: "https://github.com/org/repo.git",
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
