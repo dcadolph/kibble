@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -74,6 +75,30 @@ func TestExtractUsage(t *testing.T) {
 				t.Errorf("subs mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// TestFlagDash checks that a cited flag keeps the dash prefix it was written
+// with, so a single-dash bundle is probed as written rather than as a long
+// flag. Probing `-Poy` as `--Poy` once convicted a working bundle as drift.
+func TestFlagDash(t *testing.T) {
+	t.Parallel()
+	use := extractUsage([]string{"yq"}, "```sh\nyq -Poy file.yml\nyq --output-format=json file.yml\n```\n")["yq"]
+	if use == nil {
+		t.Fatal("no usage extracted")
+	}
+	if got := use.dashOf("Poy"); got != "-" {
+		t.Errorf("dashOf(Poy) = %q, want -", got)
+	}
+	if got := use.dashOf("output-format"); got != "--" {
+		t.Errorf("dashOf(output-format) = %q, want --", got)
+	}
+	probe := helpProbe(InstallStep{Usage: use})
+	if !strings.Contains(probe, `"$bin" -Poy --help`) {
+		t.Errorf("probe does not run the bundle with a single dash:\n%s", probe)
+	}
+	if strings.Contains(probe, "--Poy") {
+		t.Errorf("probe still runs the bundle as a long flag:\n%s", probe)
 	}
 }
 
