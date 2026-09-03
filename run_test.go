@@ -22,10 +22,10 @@ func TestClassify(t *testing.T) {
 		WantDetail string
 	}{{ // Test 0: built and smoke test passed.
 		In:         "BUILDCODE=0\nSMOKECODE=0\nSMOKELINE=tool version 1.0\n",
-		WantStatus: StatusPass, WantSmoke: "tool version 1.0",
+		WantStatus: StatusVerified, WantSmoke: "tool version 1.0",
 	}, { // Test 1: built but the binary did not respond cleanly.
 		In:         "BUILDCODE=0\nSMOKECODE=2\nSMOKELINE=Usage of tool:\n",
-		WantStatus: StatusPassBuild, WantSmoke: "Usage of tool:",
+		WantStatus: StatusBuilt, WantSmoke: "Usage of tool:",
 	}, { // Test 2: build exceeded the timeout, so the result is unknown.
 		In:         "BUILDCODE=124\ngo: downloading github.com/pkg/errors v0.9.1\n",
 		WantStatus: StatusTimeout,
@@ -35,9 +35,15 @@ func TestClassify(t *testing.T) {
 	}, { // Test 4: no marker at all is kibble's own error, not a doc failure.
 		In:         "docker: Error response from daemon: pull access denied\n",
 		WantStatus: StatusError, WantDetail: "kibble could not run the step",
-	}, { // Test 5: a recipe that runs but produces no binary still passes.
+	}, { // Test 5: a recipe that runs but produces no binary is unverified.
 		In:         "BUILDCODE=0\nNOBIN=1\n",
-		WantStatus: StatusPass, WantDetail: "no binary produced",
+		WantStatus: StatusRan, WantDetail: "no binary to smoke-test",
+	}, { // Test 6: a smoke test that fails on a cross-architecture binary.
+		In:         "BUILDCODE=0\nSMOKECODE=1\nSMOKELINE=qemu-aarch64: Could not open '/lib/ld'\n",
+		WantStatus: StatusCrossArch,
+	}, { // Test 7: an arch string in the build log does not mask a real crash.
+		In:         "cannot execute binary file elsewhere\nBUILDCODE=0\nSMOKECODE=139\nSMOKELINE=segfault\n",
+		WantStatus: StatusBuilt, WantSmoke: "segfault", WantDetail: "smoke exit=139",
 	}}
 	step := InstallStep{Repo: "repo", Kind: "go-install", Binary: "tool"}
 	for testNum, test := range tests {
@@ -96,8 +102,8 @@ func TestInstallScriptFindsBinary(t *testing.T) {
 		}
 	}
 	res := classify(InstallStep{Kind: "go-install", Binary: "..."}, "BUILDCODE=0\nNOBIN=1\n", 0)
-	if res.Status != StatusPass {
-		t.Errorf("status = %s, want %s", res.Status, StatusPass)
+	if res.Status != StatusRan {
+		t.Errorf("status = %s, want %s", res.Status, StatusRan)
 	}
 }
 
@@ -138,7 +144,7 @@ func TestDockerExampleSession(t *testing.T) {
 	for _, l := range res.example.Steps[0].Lines {
 		got = append(got, l.Status)
 	}
-	want := []Status{StatusPass, StatusPass, StatusFail, StatusPass, StatusSkipped}
+	want := []Status{StatusVerified, StatusVerified, StatusFail, StatusVerified, StatusSkipped}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("line statuses mismatch (-want +got):\n%s\ndetail: %s", diff, res.Detail)
 	}

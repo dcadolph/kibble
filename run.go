@@ -17,15 +17,32 @@ import (
 type Status string
 
 const (
-	// StatusPass means the tool built and the binary responded to a smoke test.
-	StatusPass Status = "PASS"
-	// StatusPassBuild means it built but the smoke test exited non-zero.
-	StatusPassBuild Status = "PASS-BUILD"
+	// StatusVerified means the tool built or installed and the binary
+	// responded to a smoke test. It is the only status that claims the
+	// documented step actually works.
+	StatusVerified Status = "VERIFIED"
+	// StatusBuilt means it built or installed but the smoke test exited
+	// non-zero, so the artifact exists without proof it runs.
+	StatusBuilt Status = "BUILT"
+	// StatusRan means the recipe completed with a zero exit but produced no
+	// binary to smoke-test, so nothing was verified. It covers both a recipe
+	// that should have produced a tool and did not, and one that legitimately
+	// installs no binary, since kibble cannot tell the two apart.
+	StatusRan Status = "RAN"
+	// StatusExists means a documented package or formula was confirmed present
+	// in its index but never installed, so its existence is known and its
+	// installation is not.
+	StatusExists Status = "EXISTS"
+	// StatusCrossArch means the tool installed but the binary targets another
+	// architecture, so it could not be smoke-tested on this host.
+	StatusCrossArch Status = "CROSS-ARCH"
 	// StatusTimeout means the build exceeded the timeout, so the result is unknown.
 	StatusTimeout Status = "TIMEOUT"
-	// StatusFail means the documented install failed to build.
+	// StatusFail means the documented install failed to build or named
+	// something that does not exist.
 	StatusFail Status = "FAIL"
-	// StatusSkipped means v1 does not execute this kind of step.
+	// StatusSkipped means kibble intentionally did not run this step. The
+	// Reason field carries why in a machine-readable form.
 	StatusSkipped Status = "SKIP"
 	// StatusGap means the documentation is incomplete: a documented line
 	// names a file, directory, or variable that no documented step creates,
@@ -39,12 +56,105 @@ const (
 	StatusError Status = "ERROR"
 )
 
+// Bucket is a coarse grouping of statuses, so a consumer can condense the
+// fine-grained verdicts into a handful of categories without hard-coding the
+// full status set.
+type Bucket string
+
+const (
+	// BucketWorks holds the statuses that prove the documented step works.
+	BucketWorks Bucket = "works"
+	// BucketUnverified holds the statuses where a step ran or a package
+	// exists but nothing confirmed it works.
+	BucketUnverified Bucket = "unverified"
+	// BucketBroken holds the statuses where a documented step failed.
+	BucketBroken Bucket = "broken"
+	// BucketDocDrift holds the statuses where the documentation itself is
+	// wrong even if commands ran.
+	BucketDocDrift Bucket = "doc-drift"
+	// BucketNotAttempted holds steps kibble chose not to run.
+	BucketNotAttempted Bucket = "not-attempted"
+	// BucketInconclusive holds steps whose outcome kibble could not determine.
+	BucketInconclusive Bucket = "inconclusive"
+)
+
+// Bucket maps a status to its coarse category. It is the one place the
+// rollup is defined, so the report, the JSON, and strict mode all agree.
+func (s Status) Bucket() Bucket {
+	switch s {
+	case StatusVerified:
+		return BucketWorks
+	case StatusBuilt, StatusRan, StatusExists, StatusCrossArch:
+		return BucketUnverified
+	case StatusFail:
+		return BucketBroken
+	case StatusGap, StatusDrift:
+		return BucketDocDrift
+	case StatusSkipped:
+		return BucketNotAttempted
+	default:
+		return BucketInconclusive
+	}
+}
+
+// FailsUnderStrict reports whether strict mode treats this status as a
+// failure. Strict promotes everything that is not a clean pass and not a
+// deliberate skip: an unverified step, a drifted doc, or an inconclusive run
+// all become failures when the caller demands proof.
+func (s Status) FailsUnderStrict() bool {
+	switch s.Bucket() {
+	case BucketWorks, BucketNotAttempted:
+		return false
+	default:
+		return true
+	}
+}
+
+// Reason is a machine-readable code for why a step landed on its status,
+// chiefly why a step was skipped, so a consumer can filter and audit the
+// reasons rather than parsing the human-facing detail string.
+type Reason string
+
+const (
+	// ReasonInteractive marks a command that waits for input.
+	ReasonInteractive Reason = "interactive"
+	// ReasonLongRunning marks a watcher, server, or daemon that does not return.
+	ReasonLongRunning Reason = "long-running"
+	// ReasonPlaceholder marks a command holding a template token to fill in.
+	ReasonPlaceholder Reason = "placeholder"
+	// ReasonMissingFixture marks a command needing a file the docs never create.
+	ReasonMissingFixture Reason = "missing-fixture"
+	// ReasonOtherPlatform marks a command scoped to another operating system.
+	ReasonOtherPlatform Reason = "other-platform"
+	// ReasonNeedsCredentials marks a command that needs authentication.
+	ReasonNeedsCredentials Reason = "needs-credentials"
+	// ReasonNoDataExpected marks a command whose empty result is normal.
+	ReasonNoDataExpected Reason = "no-data-expected"
+	// ReasonMissingDependency marks a command needing a tool the docs assume.
+	ReasonMissingDependency Reason = "missing-dependency"
+	// ReasonDependsOnSkipped marks a command that follows a skipped one.
+	ReasonDependsOnSkipped Reason = "depends-on-skipped"
+	// ReasonAlreadyProven marks a command the install smoke test already covered.
+	ReasonAlreadyProven Reason = "already-proven"
+	// ReasonNoOutputExit1 marks a quiet exit-1, as a search does on no match.
+	ReasonNoOutputExit1 Reason = "no-output-exit1"
+	// ReasonUnrecognizedTarget marks an install target kibble cannot parse.
+	ReasonUnrecognizedTarget Reason = "unrecognized-target"
+	// ReasonUnreachable marks a lookup kibble could not complete over the network.
+	ReasonUnreachable Reason = "unreachable"
+	// ReasonNotExecuted marks a step kibble has not run in this kind of pass.
+	ReasonNotExecuted Reason = "not-executed"
+)
+
 // Result is the outcome of attempting one install step.
 type Result struct {
 	// Step is the install step that was attempted.
 	Step InstallStep
 	// Status is the outcome classification.
 	Status Status
+	// Reason is the machine-readable why behind a status that needs one,
+	// chiefly a skip. It is empty when the status speaks for itself.
+	Reason Reason
 	// Duration is how long the attempt took.
 	Duration time.Duration
 	// SmokeLine is the first line the installed binary printed.
@@ -161,12 +271,14 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	if res.Status == StatusFail {
 		if name, missing := missingCommand(string(out)); missing {
 			res.Status = StatusSkipped
+			res.Reason = ReasonMissingDependency
 			res.Detail = fmt.Sprintf("recipe needs %s, which %s does not provide", name, image)
 		} else if m := reNewerToolchain.FindStringSubmatch(string(out)); m != nil {
 			// The module asks for a newer toolchain than the image ships and
 			// the session pins GOTOOLCHAIN, so the install a reader would get
 			// was never attempted. That is kibble's gap, not the document's.
 			res.Status = StatusSkipped
+			res.Reason = ReasonMissingDependency
 			res.Detail = fmt.Sprintf("needs Go %s, newer than %s provides", m[1], image)
 		} else if reNetworkError.MatchString(string(out)) {
 			res.Status = StatusError
@@ -267,7 +379,6 @@ if [ -z "$bin" ] && [ -n "$own" ]; then
 fi
 [ -z "$bin" ] && bin=$(printf '%%s\n' "$newbins" | grep -v '^$' | head -n1)
 if [ -n "$bin" ]; then bin="$BINDIR/$bin"; fi
-if [ -z "$bin" ] && command -v "%[4]s" >/dev/null 2>&1; then bin=$(command -v "%[4]s"); fi
 if [ -z "$bin" ]; then
   printf 'NOBIN=1\n'
   exit 0
@@ -317,8 +428,6 @@ printf 'BUILDCODE=0\n'
 bin=''
 if [ -x "$GOBIN/%[3]s" ]; then
   bin="$GOBIN/%[3]s"
-elif command -v "%[3]s" >/dev/null 2>&1; then
-  bin=$(command -v "%[3]s")
 else
   bin=$(find /work -maxdepth 5 -type f -perm -u+x -name "%[3]s" 2>/dev/null | head -n1)
   if [ -z "$bin" ]; then b=$(ls "$GOBIN" 2>/dev/null | head -n1); [ -n "$b" ] && bin="$GOBIN/$b"; fi
@@ -533,13 +642,13 @@ func (d *DockerRunner) runBrewInstall(ctx context.Context, step InstallStep) Res
 	// one, and saying so is the honest answer.
 	if name, ok := strings.CutPrefix(step.Module, "cask:"); ok {
 		return Result{
-			Step: step, Status: StatusSkipped, Duration: time.Since(start),
+			Step: step, Status: StatusSkipped, Reason: ReasonOtherPlatform, Duration: time.Since(start),
 			Detail: fmt.Sprintf("%s is a cask, which installs on macOS rather than in this container", name),
 		}
 	}
 	if strings.ContainsAny(step.Module, "$`;&|<>()") {
 		return Result{
-			Step: step, Status: StatusSkipped, Duration: time.Since(start),
+			Step: step, Status: StatusSkipped, Reason: ReasonUnrecognizedTarget, Duration: time.Since(start),
 			Detail: "formula name has shell characters, so it is not run",
 		}
 	}
@@ -715,16 +824,19 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 		res.Status = StatusFail
 		res.Detail = lastLine(tail)
 	case noBin:
-		res.Status = StatusPass
-		res.Detail = "recipe ran (no binary produced to smoke-test)"
+		res.Status = StatusRan
+		res.Detail = "recipe exited 0 but produced no binary to smoke-test"
 	case smokeCode == 0:
-		res.Status = StatusPass
-	case reArchMismatch.MatchString(res.SmokeLine) || reArchMismatch.MatchString(out):
-		res.Status = StatusPass
+		res.Status = StatusVerified
+	case reArchMismatch.MatchString(res.SmokeLine):
+		// Only the smoke line convicts. Scanning the whole output once let an
+		// arch string anywhere in a build log or help screen relabel a real
+		// smoke-test crash as a harmless cross-architecture skip.
+		res.Status = StatusCrossArch
 		res.SmokeLine = ""
 		res.Detail = "installed, but the binary targets another architecture, smoke test not possible here"
 	default:
-		res.Status = StatusPassBuild
+		res.Status = StatusBuilt
 		res.Detail = fmt.Sprintf("binary built but smoke exit=%d", smokeCode)
 	}
 	return res

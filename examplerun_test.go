@@ -53,8 +53,8 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=0",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusPass, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusVerified, StatusVerified},
 	}, { // Test 1: a plain failure names the line and fails the repo.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -65,7 +65,7 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
 		WantStatus: StatusFail,
-		WantLines:  []Status{StatusPass, StatusFail, StatusPass},
+		WantLines:  []Status{StatusVerified, StatusFail, StatusVerified},
 	}, { // Test 2: a documented nonzero exit passes.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -74,8 +74,8 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=0",
 			"KIBBLE-LINE b1:2 CODE=1",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusPass, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusVerified, StatusVerified},
 	}, { // Test 2a: a setting the document never names is the document's gap.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -86,7 +86,7 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
 		WantStatus: StatusGap,
-		WantLines:  []Status{StatusPass, StatusGap, StatusPass},
+		WantLines:  []Status{StatusVerified, StatusGap, StatusVerified},
 	}, { // Test 2b: a credential-shaped name without missing wording still
 		// fails, so a real error naming a token is not swallowed.
 		Out: sessionOut(
@@ -98,7 +98,7 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
 		WantStatus: StatusFail,
-		WantLines:  []Status{StatusPass, StatusFail, StatusPass},
+		WantLines:  []Status{StatusVerified, StatusFail, StatusVerified},
 	}, { // Test 2c: when the document names the setting, supplying it is the
 		// reader's job, so the same failure is a skip and not a gap.
 		Plan: &Plan{
@@ -117,8 +117,8 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=1",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusSkipped, StatusSkipped, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusSkipped, StatusSkipped, StatusVerified},
 	}, { // Test 3: a named setting the document omits is a gap, so this
 		// fixture's key reports rather than disappearing into a skip.
 		Out: sessionOut(
@@ -130,7 +130,7 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
 		WantStatus: StatusGap,
-		WantLines:  []Status{StatusPass, StatusGap, StatusPass},
+		WantLines:  []Status{StatusVerified, StatusGap, StatusVerified},
 	}, { // Test 4: a wrapped 124 is a hang, and it wins over pass lines.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -141,14 +141,14 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-DONE"),
 		Wrapped:    map[string]bool{"b1:0": true},
 		WantStatus: StatusTimeout,
-		WantLines:  []Status{StatusTimeout, StatusPass, StatusPass},
+		WantLines:  []Status{StatusTimeout, StatusVerified, StatusVerified},
 	}, { // Test 5: a killed session times out the running line, rest not run.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
 			"KIBBLE-STEP b1 START",
 			"KIBBLE-LINE b1:0 CODE=0"),
 		WantStatus: StatusTimeout,
-		WantLines:  []Status{StatusPass, StatusTimeout, StatusSkipped},
+		WantLines:  []Status{StatusVerified, StatusTimeout, StatusSkipped},
 	}, { // Test 6: an aborted install skips the examples.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=1",
@@ -164,8 +164,8 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=4",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
 	}, { // Test 8: a missing helper command skips.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -175,8 +175,8 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=3",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
 	}, { // Test 8a: a tool that asks for an interactive terminal skips.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -186,8 +186,8 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=1",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
 	}, { // Test 8b: a tool that aborts an interactive approval changed
 		// nothing, so the document is not broken.
 		Out: sessionOut(
@@ -198,8 +198,8 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=8",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
 	}, { // Test 8c: a Makefile reaching for a tool the image lacks skips.
 		// dash reports it without the word command, and make exits 2 rather
 		// than 127, so neither of the older signals fires.
@@ -212,8 +212,8 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=2",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
 	}, { // Test 8d: a search that matches nothing exits 1 and says nothing,
 		// which settles nothing about the document either way.
 		Out: sessionOut(
@@ -223,8 +223,8 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=1",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
 	}, { // Test 8e: an exit 1 that printed a real error is still a failure.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -235,7 +235,7 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
 		WantStatus: StatusFail,
-		WantLines:  []Status{StatusPass, StatusFail, StatusPass},
+		WantLines:  []Status{StatusVerified, StatusFail, StatusVerified},
 	}, { // Test 8f: a capability left out of this build is the install's
 		// shape, not a mistake in the line.
 		Out: sessionOut(
@@ -246,8 +246,8 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=2",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
 	}, { // Test 9: a missing system dependency skips, not fails.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -257,8 +257,8 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=1",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -307,8 +307,8 @@ func TestClassifyExampleMarkerRecovery(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=0",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusPass, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusVerified, StatusVerified},
 	}, { // Test 1: a failing line whose output has no trailing newline.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -318,7 +318,7 @@ func TestClassifyExampleMarkerRecovery(t *testing.T) {
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
 		WantStatus: StatusFail,
-		WantLines:  []Status{StatusPass, StatusFail, StatusPass},
+		WantLines:  []Status{StatusVerified, StatusFail, StatusVerified},
 	}, { // Test 2: the newline the session prints keeps the marker on its own line.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -328,8 +328,8 @@ func TestClassifyExampleMarkerRecovery(t *testing.T) {
 			"KIBBLE-LINE b1:1 CODE=0",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusPass, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusVerified, StatusVerified},
 	}, { // Test 3: output glued to the marker is still that line's output.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -338,8 +338,8 @@ func TestClassifyExampleMarkerRecovery(t *testing.T) {
 			"ffmpeg is not installedKIBBLE-LINE b1:1 CODE=1",
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
-		WantStatus: StatusPass,
-		WantLines:  []Status{StatusPass, StatusSkipped, StatusPass},
+		WantStatus: StatusVerified,
+		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -397,11 +397,11 @@ func TestResolveDependentFailures(t *testing.T) {
 	}, { // Test 2b: the same failure stands when the named command did run
 		// and passed, since then the document's sequence really is broken.
 		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
-			{Cmd: "tool request", Status: StatusPass},
+			{Cmd: "tool request", Status: StatusVerified},
 			{Cmd: "tool promote", Status: StatusFail,
 				output: "tool: no hold id: pass --id or run tool request first"},
 		}}},
-		Want: []Status{StatusPass, StatusFail},
+		Want: []Status{StatusVerified, StatusFail},
 	}, { // Test 3: a failure citing a line the document's own gap stopped is
 		// a skip, so the gap is reported once instead of once per dependent
 		// command. The gap itself stays a gap.
@@ -454,6 +454,11 @@ func TestSessionScript(t *testing.T) {
 		"KIBBLE-STEP b1 START",
 		"timeout 90 tool init",
 		`printf '\nKIBBLE-LINE b1:1 SKIP\n'`,
+		// Each runnable line captures its pipeline status so a failing
+		// producer is not hidden by a consumer that exits zero.
+		"__pipecode()",
+		`__ps=("${PIPESTATUS[@]}")`,
+		`__pipecode "${__ps[@]}"`,
 		"KIBBLE-DONE",
 	} {
 		if !strings.Contains(script, want) {
@@ -545,9 +550,9 @@ func TestResolveMissingBinaries(t *testing.T) {
 		Have: map[string]bool{"tool": true},
 		In: []lineResult{
 			{Cmd: "conda install -c conda-forge tool", Status: StatusFail},
-			{Cmd: "tool run", Status: StatusPass},
+			{Cmd: "tool run", Status: StatusVerified},
 		},
-		Want: []Status{StatusSkipped, StatusPass},
+		Want: []Status{StatusSkipped, StatusVerified},
 	}, { // Test 1: a failure on a present binary stays a failure.
 		Have: map[string]bool{"tool": true},
 		In:   []lineResult{{Cmd: "tool run", Status: StatusFail}},

@@ -76,7 +76,7 @@ func TestBuildPlan(t *testing.T) {
 		Markdown:  "```sh\ntool add --key <api-key>\n```\n",
 		WantSteps: [][]planLine{{{Cmd: "tool add --key <api-key>", Skip: true}}},
 	}, { // Test 2d: a documented line that creates the file clears the gap.
-		Markdown:     "```sh\ntouch data.txt\ntool run data.txt\n```\n",
+		Markdown:  "```sh\ntouch data.txt\ntool run data.txt\n```\n",
 		WantSteps: [][]planLine{{{Cmd: "touch data.txt"}, {Cmd: "tool run data.txt"}}},
 	}, { // Test 2e: a copy's destination is what the line produces, so it is
 		// not a missing input even though nothing created it first.

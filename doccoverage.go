@@ -144,7 +144,7 @@ func docCoverageChecks(results []Result) []Result {
 		if r.helpText == "" {
 			continue
 		}
-		if r.Status != StatusPass && r.Status != StatusPassBuild {
+		if r.Status != StatusVerified && r.Status != StatusBuilt {
 			continue
 		}
 		root := r.helpRoot
@@ -182,7 +182,7 @@ func docCoverageChecks(results []Result) []Result {
 			check.Detail = fmt.Sprintf("%d of %d commands documented nowhere: %s",
 				len(undocumented), len(cmds), strings.Join(undocumented, " "))
 		default:
-			check.Status = StatusPass
+			check.Status = StatusVerified
 			check.Detail = fmt.Sprintf("%d commands documented", len(cmds))
 			if len(outsideReadme) > 0 {
 				check.Detail += fmt.Sprintf(", %d only outside the README (%s)",

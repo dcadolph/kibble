@@ -45,7 +45,7 @@ func TestMarks(t *testing.T) {
 		Status Status
 		Want   string
 	}{{ // Test 0: a pass is a tick.
-		Status: StatusPass, Want: "✓",
+		Status: StatusVerified, Want: "✓",
 	}, { // Test 1: a failure is a cross.
 		Status: StatusFail, Want: "✗",
 	}, { // Test 2: an error kibble caused reads like a failure to the eye.

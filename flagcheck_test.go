@@ -108,16 +108,16 @@ func TestFlagChecks(t *testing.T) {
 	}{{ // Test 0: all cited flags exist, dash count normalized.
 		Result: Result{
 			Step:     InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{Flags: []string{"json", "dialect"}}},
-			Status:   StatusPass,
+			Status:   StatusVerified,
 			helpText: help,
 		},
-		WantStatus: StatusPass,
+		WantStatus: StatusVerified,
 	}, { // Test 1: a flag cited on the bare binary and missing from the help
 		// is drift, since the root screen is the one that settles it.
 		Result: Result{
 			Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
 				Flags: []string{"nope"}, FlagSub: map[string]string{"nope": ""}}},
-			Status:   StatusPass,
+			Status:   StatusVerified,
 			helpText: help,
 		},
 		WantStatus: StatusDrift, WantDetail: "missing --nope",
@@ -127,27 +127,27 @@ func TestFlagChecks(t *testing.T) {
 		Result: Result{
 			Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
 				Flags: []string{"every"}, FlagSub: map[string]string{"every": "schedule add"}}},
-			Status:   StatusPass,
+			Status:   StatusVerified,
 			helpText: help,
 		},
-		WantStatus: StatusPass,
+		WantStatus: StatusVerified,
 		WantDetail: "0 cited flags ok, 0 subcommands cited, 1 unverified (--every)",
 	}, { // Test 1b: a flag a table lists without ever invoking it cannot be
 		// attributed to a screen, so it is unverified too.
 		Result: Result{
 			Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
 				Flags: []string{"allow-orphan"}}},
-			Status:   StatusPass,
+			Status:   StatusVerified,
 			helpText: help,
 		},
-		WantStatus: StatusPass,
+		WantStatus: StatusVerified,
 		WantDetail: "0 cited flags ok, 0 subcommands cited, 1 unverified (--allow-orphan)",
 	}, { // Test 1c: a flag cited on a subcommand that did answer with usage
 		// is settled by that screen, so a missing flag is drift.
 		Result: Result{
 			Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
 				Flags: []string{"gone"}, FlagSub: map[string]string{"gone": "walk"}}},
-			Status:    StatusPass,
+			Status:    StatusVerified,
 			helpText:  help,
 			subCodes:  map[string]int{"walk": 0},
 			helpBySub: map[string]string{"walk": "Usage: tool walk\n  --keep  keep going\n"},
@@ -156,14 +156,14 @@ func TestFlagChecks(t *testing.T) {
 	}, { // Test 2: a rejected subcommand is drift.
 		Result: Result{
 			Step:     InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{Subs: []string{"sync"}}},
-			Status:   StatusPass,
+			Status:   StatusVerified,
 			helpText: help,
 		},
 		WantStatus: StatusDrift, WantDetail: "unknown subcommand sync",
 	}, { // Test 3: no help output means the check is skipped, not drifted.
 		Result: Result{
 			Step:   InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{Flags: []string{"json"}}},
-			Status: StatusPass,
+			Status: StatusVerified,
 		},
 		WantStatus: StatusSkipped,
 	}, { // Test 4: a failed install produces no flag check at all.
@@ -173,7 +173,7 @@ func TestFlagChecks(t *testing.T) {
 		},
 		WantNone: true,
 	}, { // Test 5: a step with no citations produces no flag check.
-		Result:   Result{Step: InstallStep{Repo: "r", Binary: "tool"}, Status: StatusPass},
+		Result:   Result{Step: InstallStep{Repo: "r", Binary: "tool"}, Status: StatusVerified},
 		WantNone: true,
 	}}
 	for testNum, test := range tests {
@@ -215,7 +215,7 @@ func TestRejectedSub(t *testing.T) {
 	}{{ // Test 0: a subcommand the binary accepted is not drift.
 		SubCodes: map[string]int{"scan": 0}, Sub: "scan", Want: false,
 	}, { // Test 1: a parser naming this subcommand as unknown is a rejection.
-		SubCodes:  map[string]int{"bogus": 1}, Sub: "bogus", Want: true,
+		SubCodes: map[string]int{"bogus": 1}, Sub: "bogus", Want: true,
 		HelpBySub: map[string]string{"bogus": `unknown subcommand "bogus"`},
 	}, { // Test 1a: a nonzero probe on its own is not. A subcommand that takes
 		// arguments rather than flags exits nonzero on --help while existing,
@@ -224,7 +224,7 @@ func TestRejectedSub(t *testing.T) {
 		HelpBySub: map[string]string{
 			"schedule": `mytool: schedule: unknown subcommand "--help"; use add, list, or remove`},
 	}, { // Test 1b: another shape of the same thing.
-		SubCodes:  map[string]int{"run": 1}, Sub: "run", Want: false,
+		SubCodes: map[string]int{"run": 1}, Sub: "run", Want: false,
 		HelpBySub: map[string]string{"run": `mytool: run: unknown workflow: "--help"`},
 	}, { // Test 2: a probe that timed out says nothing about the docs.
 		SubCodes: map[string]int{"serve": 124}, Sub: "serve", Want: false,
@@ -236,7 +236,7 @@ func TestRejectedSub(t *testing.T) {
 	}, { // Test 5: a subcommand the probe never reached is not judged.
 		SubCodes: map[string]int{}, Sub: "scan", Want: false,
 	}, { // Test 6: a nested subcommand is judged on its own probe, by name.
-		SubCodes:  map[string]int{"walk rotate": 2}, Sub: "walk rotate", Want: true,
+		SubCodes: map[string]int{"walk rotate": 2}, Sub: "walk rotate", Want: true,
 		HelpBySub: map[string]string{"walk rotate": `Error: unknown command "rotate"`},
 	}}
 	for testNum, test := range tests {
@@ -325,7 +325,7 @@ func TestFlagProbeOutranksScreens(t *testing.T) {
 	}{{ // Test 0: a hidden but valid flag parses cleanly under the probe, so
 		// a screen that omits it cannot turn it into an accusation.
 		Probe:      "Usage of tool:\n  -json emit JSON\n",
-		WantStatus: StatusPass,
+		WantStatus: StatusVerified,
 		WantDetail: "2 cited flags ok, 0 subcommands cited",
 	}, { // Test 1: the parser refusing the flag by name convicts it.
 		Probe:      `unknown flag: --debug`,
@@ -335,7 +335,7 @@ func TestFlagProbeOutranksScreens(t *testing.T) {
 		// parser, which is acceptance where it counts: parsers reject unknown
 		// flags first and by name, so a later error is the tool's own.
 		Probe:      "tool: config not found",
-		WantStatus: StatusPass,
+		WantStatus: StatusVerified,
 		WantDetail: "2 cited flags ok, 0 subcommands cited",
 	}}
 	for testNum, test := range tests {
@@ -346,7 +346,7 @@ func TestFlagProbeOutranksScreens(t *testing.T) {
 					Flags:   []string{"json", "debug"},
 					FlagSub: map[string]string{"json": "", "debug": ""},
 				}},
-				Status:     StatusPass,
+				Status:     StatusVerified,
 				helpText:   help,
 				helpByFlag: map[string]string{"debug": test.Probe},
 			}

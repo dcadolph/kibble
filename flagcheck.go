@@ -205,7 +205,7 @@ func rejectedSub(r Result, sub string) bool {
 func flagChecks(results []Result) []Result {
 	var out []Result
 	for _, r := range results {
-		if r.Step.Usage == nil || (r.Status != StatusPass && r.Status != StatusPassBuild) {
+		if r.Step.Usage == nil || (r.Status != StatusVerified && r.Status != StatusBuilt) {
 			continue
 		}
 		check := Result{
@@ -259,7 +259,7 @@ func flagChecks(results []Result) []Result {
 		sort.Strings(badSubs)
 		switch {
 		case len(missing) == 0 && len(badSubs) == 0:
-			check.Status = StatusPass
+			check.Status = StatusVerified
 			check.Detail = fmt.Sprintf("%d cited flags ok, %d subcommands cited",
 				len(r.Step.Usage.Flags)-len(unverifiable), len(r.Step.Usage.Subs))
 			if len(unverifiable) > 0 {
