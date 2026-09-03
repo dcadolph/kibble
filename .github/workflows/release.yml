@@ -32,3 +32,10 @@ jobs:
           GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      # Move the v1 alias onto this release, so anyone pinned to it gets the
+      # newest version. Forcing v1 does not re-run this workflow, since v1 is
+      # not a version tag and the push trigger matches only those.
+      - name: Move the v1 alias to this release
+        run: |
+          git tag -f v1 "${{ github.ref_name }}"
+          git push -f origin v1
