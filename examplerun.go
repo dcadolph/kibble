@@ -41,6 +41,9 @@ type lineResult struct {
 	Cmd string
 	// Status classifies the line.
 	Status Status
+	// Reason is the machine-readable why behind a skip or gap, empty when the
+	// status speaks for itself.
+	Reason Reason
 	// Code is the exit code the line returned, or -1 when it never ran.
 	Code int
 	// Detail explains a skip, failure, or documented nonzero exit.
@@ -528,9 +531,11 @@ func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[stri
 				if l.Gap {
 					lr.Status = StatusGap
 				}
+				lr.Reason = l.SkipReason
 				lr.Detail = l.Skip
 			case !seen && (ended || done):
 				lr.Status = StatusSkipped
+				lr.Reason = ReasonDependsOnSkipped
 				lr.Detail = "not run: session ended earlier"
 			case !seen:
 				lr.Status = StatusTimeout
@@ -750,15 +755,19 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 	case o.code == 127 || reShellNotFound.MatchString(o.output) ||
 		reNoExec.MatchString(o.output):
 		lr.Status = StatusSkipped
+		lr.Reason = ReasonMissingDependency
 		lr.Detail = "invokes a command the container lacks: " + tail
 	case reNotBuiltIn.MatchString(o.output):
 		lr.Status = StatusSkipped
+		lr.Reason = ReasonMissingDependency
 		lr.Detail = "needs a build feature this install does not include: " + tail
 	case reMissingDep.MatchString(o.output):
 		lr.Status = StatusSkipped
+		lr.Reason = ReasonMissingDependency
 		lr.Detail = "needs a system dependency the container lacks: " + tail
 	case reTTYErr.MatchString(o.output):
 		lr.Status = StatusSkipped
+		lr.Reason = ReasonInteractive
 		lr.Detail = "needs a terminal, which the container lacks"
 	case undocumentedSetting(o.output, documented) != "":
 		// The tool named a setting the document never mentions, so the reader
@@ -770,27 +779,34 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		// The document names this setting, so supplying it is the reader's
 		// job and the container simply cannot.
 		lr.Status = StatusSkipped
+		lr.Reason = ReasonMissingFixture
 		lr.Detail = "needs a setting the reader supplies: " + tail
 	case reCredErr.MatchString(o.output):
 		lr.Status = StatusSkipped
+		lr.Reason = ReasonNeedsCredentials
 		lr.Detail = "needs credentials a clean container lacks"
 	case reNetErr.MatchString(o.output):
 		lr.Status = StatusSkipped
+		lr.Reason = ReasonMissingDependency
 		lr.Detail = "needs a network service the container lacks"
 	case reNoChange.MatchString(o.output):
 		lr.Status = StatusSkipped
+		lr.Reason = ReasonNoDataExpected
 		lr.Detail = "changed nothing, since the session cannot approve it: " + tail
 	case o.code == 1 && strings.TrimSpace(o.output) == "":
 		// A search reports no match by exiting 1 and saying nothing. Silence
 		// and a 1 settle nothing either way, so the line is not a verdict on
 		// the document.
 		lr.Status = StatusSkipped
+		lr.Reason = ReasonNoOutputExit1
 		lr.Detail = "exited 1 without output, as a search does when it matches nothing"
 	case reNoData.MatchString(o.output) || tail == "not found":
 		lr.Status = StatusSkipped
+		lr.Reason = ReasonNoDataExpected
 		lr.Detail = "query found no data in the fresh session"
 	case reEmptyInput.MatchString(o.output):
 		lr.Status = StatusSkipped
+		lr.Reason = ReasonInteractive
 		lr.Detail = "rejected the empty input of the session's stubbed editor"
 	case o.code == 123 && reNoInputFiles.MatchString(o.output):
 		// Exit 123 is xargs reporting that an invocation it ran failed, and
@@ -802,6 +818,7 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		// replacement had already rewritten every match the later variant
 		// would have found.
 		lr.Status = StatusSkipped
+		lr.Reason = ReasonNoDataExpected
 		lr.Detail = "the pipeline's search matched nothing in the fresh session: " + tail
 	case missingFileArg(lr.Cmd, o.output) != "":
 		// The tool asked for a file the command names and the session does
