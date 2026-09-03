@@ -73,3 +73,53 @@ func TestReplayDocs(t *testing.T) {
 		})
 	}
 }
+
+// TestInstallDocs checks that install-step extraction reaches install
+// documents beyond the README while staying narrower than example replay, so a
+// tutorial or FAQ that shows a command in passing is not read as an install.
+func TestInstallDocs(t *testing.T) {
+	t.Parallel()
+	body := "# T\n```sh\ngo install example.com/tool@latest\n```\n"
+	tests := []struct {
+		Files map[string]string
+		Want  []string
+	}{{ // Test 0: an installation guide under docs is read.
+		Files: map[string]string{"README.md": body, "docs/installation.md": body},
+		Want:  []string{"README.md", "docs/installation.md"},
+	}, { // Test 1: a top-level INSTALL file is read.
+		Files: map[string]string{"README.md": body, "INSTALL.md": body},
+		Want:  []string{"README.md", "INSTALL.md"},
+	}, { // Test 2: a getting-started guide counts as install instructions.
+		Files: map[string]string{"README.md": body, "docs/getting-started.md": body},
+		Want:  []string{"README.md", "docs/getting-started.md"},
+	}, { // Test 3: an FAQ or tutorial is not an install document, unlike replay.
+		Files: map[string]string{"README.md": body, "FAQ.md": body, "docs/tutorial.md": body},
+		Want:  []string{"README.md"},
+	}, { // Test 4: a contributing guide is never read.
+		Files: map[string]string{"README.md": body, "INSTALLING-CONTRIBUTORS.md": body,
+			"CONTRIBUTING.md": body},
+		Want: []string{"README.md", "INSTALLING-CONTRIBUTORS.md"},
+	}, { // Test 5: generated and vendored trees are left alone.
+		Files: map[string]string{"README.md": body, "node_modules/pkg/INSTALL.md": body},
+		Want:  []string{"README.md"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, b := range test.Files {
+				full := filepath.Join(dir, name)
+				if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+				if err := os.WriteFile(full, []byte(b), 0o600); err != nil {
+					t.Fatalf("write %s: %v", name, err)
+				}
+			}
+			got := installDocs(dir, "README.md")
+			if diff := cmp.Diff(test.Want, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

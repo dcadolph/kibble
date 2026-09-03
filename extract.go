@@ -79,6 +79,19 @@ var (
 	// reBrewTap matches a `brew tap owner/name` invocation, so a formula
 	// documented to come from a tapped repository is not called missing.
 	reBrewTap = regexp.MustCompile(`\bbrew\s+tap\s+([\w.-]+/[\w.-]+)`)
+	// reScriptInstall matches a piped shell installer such as `curl -sSf URL | sh`
+	// or `sh -c "$(curl URL)"`. kibble records it but does not run it, since
+	// executing an arbitrary remote script is a risk a docs check should not take.
+	reScriptInstall = regexp.MustCompile(
+		`(?:curl|wget)\b[^|]*\|\s*(?:sudo\s+)?(?:sh|bash|zsh)\b` +
+			`|(?:sh|bash|zsh)\s+-c\s+["']?\$\((?:curl|wget)\b`)
+	// reScriptURL captures the fetched URL in a piped installer, for the report.
+	reScriptURL = regexp.MustCompile(`https?://[^\s"'|)]+`)
+	// reOSPackage matches a system package-manager install such as
+	// `sudo apt install foo` or `dnf install foo`. kibble records it but does
+	// not run it, since it needs root and a distro whose repository holds it.
+	reOSPackage = regexp.MustCompile(
+		`\b(apt-get|apt|dnf|yum|pacman|apk|zypper|snap)\s+(?:install|add|-S[yu]*)\b(.*)`)
 )
 
 // cloneValueFlags are the git-clone flags that consume the following token as
@@ -315,7 +328,38 @@ func classifyLine(repo, line string) (InstallStep, string, bool) {
 			}, repo + "|clone|" + target, true
 		}
 	}
+	// A piped shell installer and a system package are recorded but not run, so
+	// a repository whose only install is one of these is reported honestly
+	// rather than passing as if nothing were documented.
+	if reScriptInstall.MatchString(line) {
+		url := reScriptURL.FindString(line)
+		return InstallStep{
+			Repo: repo, Kind: "script-install", Raw: strings.TrimSpace(line), Module: url,
+		}, repo + "|script|" + url, true
+	}
+	if m := reOSPackage.FindStringSubmatch(line); m != nil {
+		if pkg := osPackageName(m[2]); pkg != "" {
+			return InstallStep{
+				Repo: repo, Kind: "os-package", Raw: strings.TrimSpace(line), Module: m[1] + ":" + pkg,
+			}, repo + "|ospkg|" + m[1] + "|" + pkg, true
+		}
+	}
 	return InstallStep{}, "", false
+}
+
+// osPackageName returns the first package named after a system install verb,
+// skipping the flags that can sit before it, so `-y foo` names foo.
+func osPackageName(tail string) string {
+	for _, f := range strings.Fields(tail) {
+		if strings.HasPrefix(f, "-") {
+			continue
+		}
+		if strings.ContainsAny(f, "|&;$`") {
+			return ""
+		}
+		return f
+	}
+	return ""
 }
 
 // pkgInvocations are the documented package installs kibble runs, in the order
