@@ -366,3 +366,49 @@ func TestPkgScriptPrefersNamedBinary(t *testing.T) {
 		t.Error("pipx script gained a lookup only pip needs")
 	}
 }
+
+// TestStripANSI checks that terminal control sequences are removed from
+// captured output. A tool that colors its own errors would otherwise put raw
+// escapes into a JSON report, a CI annotation, and the table's alignment.
+func TestStripANSI(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In   string
+		Want string
+	}{{ // Test 0: plain text is returned untouched.
+		In: "no such file", Want: "no such file",
+	}, { // Test 1: color codes go, the message stays.
+		In: "\x1b[31merror:\x1b[0m not found", Want: "error: not found",
+	}, { // Test 2: a carriage return from a progress bar goes too.
+		In: "downloading\r100%", Want: "downloading100%",
+	}, { // Test 3: cursor movement is a control sequence like any other.
+		In: "\x1b[2K\x1b[1Gbuilding", Want: "building",
+	}, { // Test 4: an operating system command, as used to set a title.
+		In: "\x1b]0;title\x07done", Want: "done",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if got := stripANSI(test.In); got != test.Want {
+				t.Errorf("stripANSI = %q, want %q", got, test.Want)
+			}
+		})
+	}
+}
+
+// TestClassifyStripsANSI checks the stripping happens where output is turned
+// into a verdict, so the detail a report carries is already clean.
+func TestClassifyStripsANSI(t *testing.T) {
+	t.Parallel()
+	out := "BUILDCODE=1\n\x1b[1;31mfatal:\x1b[0m repository not found\n"
+	res := classify(InstallStep{Kind: "git-clone"}, out, 0)
+	if res.Status != StatusFail {
+		t.Fatalf("status = %s, want %s", res.Status, StatusFail)
+	}
+	if strings.Contains(res.Detail, "\x1b") {
+		t.Errorf("detail carries escapes: %q", res.Detail)
+	}
+	if !strings.Contains(res.Detail, "repository not found") {
+		t.Errorf("detail lost the message: %q", res.Detail)
+	}
+}
