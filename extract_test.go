@@ -262,3 +262,39 @@ func TestPackageBinary(t *testing.T) {
 		})
 	}
 }
+
+// TestCloneTarget checks the repository is read past any flags. Taking the
+// first token after the subcommand reported --depth as the repository for
+// fzf's documented clone, and the recipe that followed passed without ever
+// cloning anything.
+func TestCloneTarget(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In   string
+		Want string
+	}{{ // Test 0: the plain form.
+		In: "git clone https://github.com/example/tool.git", Want: "https://github.com/example/tool.git",
+	}, { // Test 1: a flag with a value sits before the target.
+		In:   "git clone --depth 1 https://github.com/example/tool.git ~/.tool",
+		Want: "https://github.com/example/tool.git",
+	}, { // Test 2: several flags, one of them attached to its value.
+		In:   "git clone -b main --depth=1 --recursive https://github.com/example/tool.git",
+		Want: "https://github.com/example/tool.git",
+	}, { // Test 3: an ssh remote is a remote.
+		In: "git clone git@github.com:example/tool.git", Want: "git@github.com:example/tool.git",
+	}, { // Test 4: a branch name is not mistaken for the target.
+		In: "git clone -b v2 https://example.com/t.git", Want: "https://example.com/t.git",
+	}, { // Test 5: a bare local path is used when nothing remote-shaped is there.
+		In: "git clone --quiet mirror", Want: "mirror",
+	}, { // Test 6: a prompt marker and quotes do not become part of the target.
+		In: `git clone "https://example.com/t.git"`, Want: "https://example.com/t.git",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if got := cloneTarget(test.In); got != test.Want {
+				t.Errorf("cloneTarget = %q, want %q", got, test.Want)
+			}
+		})
+	}
+}

@@ -27,3 +27,21 @@ guarantee. So:
 In CI, the GitHub Action downloads the released binary for the version you pinned and
 verifies its checksum against the release's `checksums.txt` before running it, so a CI
 log can say which kibble produced its verdict.
+
+## Cloud metadata, and what is not blocked
+
+A CI runner is usually a cloud instance, and cloud instances answer on a metadata
+address that hands out credentials to anything that asks from inside. A documented line
+kibble runs is untrusted input running inside that instance, so the well-known metadata
+hostnames, `metadata.google.internal` and friends, are pointed at an address that answers
+nothing.
+
+That closes the named path and not the numbered one. `169.254.169.254` and the other
+literal addresses stay reachable, because Docker offers no portable way to drop a route
+to a single address, and both alternatives are worse: an internal network breaks every
+install kibble exists to run, and host firewall rules are not kibble's to install.
+
+So this is a speed bump, not a wall. If you run kibble against documentation you do not
+control, on a runner whose instance role can reach anything you care about, scope that
+role down. The container boundary is the thing protecting you, and it was never a
+guarantee.

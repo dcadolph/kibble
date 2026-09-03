@@ -67,9 +67,45 @@ var (
 	// --cask; reading a flag as the formula accused working docs of citing a
 	// formula that does not exist.
 	reBrew = regexp.MustCompile(`\bbrew\s+install\s+((?:-[\w-]+\s+)*)(\S+)`)
-	// reGitClone matches a `git clone <target>` invocation.
-	reGitClone = regexp.MustCompile(`\bgit\s+clone\s+(\S+)`)
+	// reGitClone matches a `git clone` invocation. It deliberately does not
+	// capture the target, since flags sit between the subcommand and the URL
+	// and the first token is often one of them. cloneTarget reads the target.
+	reGitClone = regexp.MustCompile(`\bgit\s+clone\b`)
 )
+
+// cloneTarget returns the repository a documented clone names. Taking the
+// first token after the subcommand is wrong, because flags and their values
+// come first: `git clone --depth 1 https://host/repo.git` once reported
+// --depth as the repository, and the recipe that followed cloned nothing and
+// passed. The target is found by shape instead, since a remote looks like a
+// remote and a flag value does not.
+func cloneTarget(line string) string {
+	fields := strings.Fields(line)
+	i := 0
+	for ; i < len(fields); i++ {
+		if fields[i] == "clone" {
+			i++
+			break
+		}
+	}
+	// A bare local path is a legitimate but rare target, so it is remembered
+	// and used only when nothing remote-shaped turns up.
+	plain := ""
+	for ; i < len(fields); i++ {
+		f := strings.Trim(fields[i], "\"'`")
+		if f == "" || strings.HasPrefix(f, "-") {
+			continue
+		}
+		if strings.Contains(f, "://") || strings.Contains(f, "@") ||
+			strings.HasSuffix(f, ".git") || strings.Contains(f, "/") {
+			return f
+		}
+		if plain == "" {
+			plain = f
+		}
+	}
+	return plain
+}
 
 // DefaultExtractor returns an Extractor that reads code from fenced blocks,
 // indented blocks, and inline spans, and classifies the install commands
@@ -224,10 +260,12 @@ func classifyLine(repo, line string) (InstallStep, string, bool) {
 			Module: pkg, Binary: packageBinary(pkg), Run: true,
 		}, repo + "|" + kind + "|" + pkg, true
 	}
-	if m := reGitClone.FindStringSubmatch(line); m != nil {
-		return InstallStep{
-			Repo: repo, Kind: "git-clone", Raw: strings.TrimSpace(line), Module: m[1], Run: true,
-		}, repo + "|clone|" + m[1], true
+	if reGitClone.MatchString(line) {
+		if target := cloneTarget(line); target != "" {
+			return InstallStep{
+				Repo: repo, Kind: "git-clone", Raw: strings.TrimSpace(line), Module: target, Run: true,
+			}, repo + "|clone|" + target, true
+		}
 	}
 	return InstallStep{}, "", false
 }
