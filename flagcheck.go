@@ -185,12 +185,6 @@ func helpFlags(helpText string) map[string]bool {
 	return out
 }
 
-// reUsageScreen matches output that is a usage screen rather than a
-// complaint. A parser built on the standard library's flag package answers
-// --help by printing usage and exiting nonzero, so the exit code alone says
-// nothing about whether the subcommand exists.
-var reUsageScreen = regexp.MustCompile(`(?im)^\s*(usage|options|flags|arguments|commands):`)
-
 // unknownNamed builds a pattern for a parser saying it does not have the
 // subcommand that was probed. Naming matters: a subcommand that exists but
 // takes no --help answers "schedule: unknown subcommand \"--help\"", which
@@ -257,17 +251,14 @@ func flagChecks(results []Result) []Result {
 				}
 				continue
 			}
-			// A flag cited on a subcommand kibble never got help for is
-			// unverifiable, not missing, and so is one a flag table lists
-			// without ever invoking it. Reporting either as drift blames the
-			// document for a screen the probe did not collect.
-			owner, attributed := r.Step.Usage.FlagSub[f]
-			if !attributed || helpIsPartial(r.helpText) ||
-				(owner != "" && !helpfulSub(r, owner)) {
-				unverifiable = append(unverifiable, r.Step.Usage.dashOf(f)+f)
-				continue
-			}
-			missing = append(missing, r.Step.Usage.dashOf(f)+f)
+			// Absence from a help screen is not drift. Only an explicit
+			// by-name rejection from a probe convicts a flag, since a flag can
+			// be real and still not appear in help: hidden, valued so the probe
+			// reports a value is required, an action flag that runs instead of
+			// printing help, or a repeated short flag such as -vv. A cited flag
+			// kibble did not see the binary reject is reported as unverified,
+			// never as missing.
+			unverifiable = append(unverifiable, r.Step.Usage.dashOf(f)+f)
 		}
 		sort.Strings(unverifiable)
 		var badSubs []string
@@ -355,14 +346,4 @@ func flagRejected(probe, name string) bool {
 		return true
 	}
 	return false
-}
-
-// helpfulSub reports whether a subcommand's help probe produced a screen worth
-// checking a flag against. A probe that never ran, or that answered with
-// nothing resembling usage, cannot settle whether a flag exists.
-func helpfulSub(r Result, sub string) bool {
-	if _, probed := r.subCodes[sub]; !probed {
-		return false
-	}
-	return reUsageScreen.MatchString(r.helpBySub[sub])
 }
