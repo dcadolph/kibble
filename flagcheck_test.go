@@ -137,15 +137,19 @@ func TestFlagChecks(t *testing.T) {
 			helpText: help,
 		},
 		WantStatus: StatusVerified,
-	}, { // Test 1: a flag cited on the bare binary and missing from the help
-		// is drift, since the root screen is the one that settles it.
+	}, { // Test 1: a flag cited on the bare binary and missing from the help,
+		// with no probe rejecting it, is unverified rather than drift. Absence
+		// from a screen is not proof a flag is gone: it may be hidden, take a
+		// value, or act instead of printing help. Only a probe that rejects it
+		// by name convicts.
 		Result: Result{
 			Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
 				Flags: []string{"nope"}, FlagSub: map[string]string{"nope": ""}}},
 			Status:   StatusVerified,
 			helpText: help,
 		},
-		WantStatus: StatusDrift, WantDetail: "missing --nope",
+		WantStatus: StatusVerified,
+		WantDetail: "0 cited flags ok, 0 subcommands cited, 1 unverified (--nope)",
 	}, { // Test 1a: a flag cited on a subcommand whose help never arrived is
 		// unverified, not drift. Blaming the document for a screen the probe
 		// failed to collect is how a checker starts crying wolf.
@@ -167,8 +171,10 @@ func TestFlagChecks(t *testing.T) {
 		},
 		WantStatus: StatusVerified,
 		WantDetail: "0 cited flags ok, 0 subcommands cited, 1 unverified (--allow-orphan)",
-	}, { // Test 1c: a flag cited on a subcommand that did answer with usage
-		// is settled by that screen, so a missing flag is drift.
+	}, { // Test 1c: a flag absent from a subcommand's collected screen, with no
+		// probe rejecting it, is unverified, not drift. Even a screen kibble did
+		// collect can omit a valid flag, so absence alone never convicts; a
+		// probe rejection is what settles it, as the rejection tests below show.
 		Result: Result{
 			Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
 				Flags: []string{"gone"}, FlagSub: map[string]string{"gone": "walk"}}},
@@ -177,7 +183,31 @@ func TestFlagChecks(t *testing.T) {
 			subCodes:  map[string]int{"walk": 0},
 			helpBySub: map[string]string{"walk": "Usage: tool walk\n  --keep  keep going\n"},
 		},
-		WantStatus: StatusDrift, WantDetail: "missing --gone",
+		WantStatus: StatusVerified,
+		WantDetail: "0 cited flags ok, 0 subcommands cited, 1 unverified (--gone)",
+	}, { // Test 1d: a flag the probe ran without rejecting is verified even when
+		// it is absent from the help text. This is the ruff case: a real flag
+		// such as --add-ignore prints help when probed and never appears in the
+		// root screen, and calling it drift was a false accusation.
+		Result: Result{
+			Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
+				Flags: []string{"add-ignore"}, FlagSub: map[string]string{"add-ignore": "check"}}},
+			Status:     StatusVerified,
+			helpText:   help,
+			helpByFlag: map[string]string{"add-ignore": "Run tool on the given files\n  --json  emit json\n"},
+		},
+		WantStatus: StatusVerified,
+		WantDetail: "1 cited flags ok, 0 subcommands cited",
+	}, { // Test 1e: a flag the probe rejected by name is drift, so real removals
+		// are still caught.
+		Result: Result{
+			Step: InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{
+				Flags: []string{"format"}, FlagSub: map[string]string{"format": "check"}}},
+			Status:     StatusVerified,
+			helpText:   help,
+			helpByFlag: map[string]string{"format": "error: unexpected argument '--format' found\n"},
+		},
+		WantStatus: StatusDrift, WantDetail: "missing --format",
 	}, { // Test 2: a rejected subcommand is drift.
 		Result: Result{
 			Step:     InstallStep{Repo: "r", Binary: "tool", Usage: &Usage{Subs: []string{"sync"}}},
