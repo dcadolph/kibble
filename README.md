@@ -14,6 +14,11 @@
     src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
 </p>
 
+<p align="center">
+  <img src="assets/kibble-demo.gif" width="100%"
+    alt="kibble reads a README's install steps and flags a documented brew install that names a formula that does not exist, with the line number and the reason">
+</p>
+
 Eating your own dog food means using what you ship the way a stranger would. Nobody does
 it for documentation, because your machine already has everything installed and the
 instructions pass by inspection. kibble is the bowl: it runs your documented steps in a
