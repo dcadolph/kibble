@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -40,9 +41,20 @@ type ExamplesConfig struct {
 	SkipDocs []string `yaml:"skipDocs"`
 }
 
-// StepRule overrides the planner's judgment for lines matching a substring.
+// StepRule overrides the planner's judgment for the lines it selects. A rule
+// must carry at least one selector, and the structured ones are preferred:
+// Binary and Subcommand say what a line invokes, which is what the author
+// means, while Match compares text and can only approximate it.
 type StepRule struct {
-	// Match is the substring that selects documented lines.
+	// Binary selects lines that invoke this documented binary.
+	Binary string `yaml:"binary"`
+	// Subcommand selects lines whose first subcommand is exactly this. It
+	// pairs with Binary and is ignored without one, since a subcommand name
+	// on its own belongs to no particular tool.
+	Subcommand string `yaml:"subcommand"`
+	// Match selects lines containing this text as a run of whole words, so
+	// `tool run` does not select `tool run-production`. It is the escape
+	// hatch for what Binary and Subcommand cannot say; prefer those.
 	Match string `yaml:"match"`
 	// Run forces a line to run even when the planner would skip it.
 	Run bool `yaml:"run"`
@@ -70,6 +82,20 @@ func loadExamplesConfig(dir string) (*ExamplesConfig, error) {
 	var cfg kibbleConfig
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
 		return nil, err
+	}
+	if cfg.Examples != nil {
+		for i, rule := range cfg.Examples.Steps {
+			// A rule that selects nothing is reported rather than ignored. It
+			// is always a mistake, and silently matching no line makes the
+			// owner think their override applied when it never did.
+			if rule.Binary == "" && rule.Match == "" {
+				return nil, fmt.Errorf("steps[%d]: a rule needs a binary or a match", i)
+			}
+			if rule.Subcommand != "" && rule.Binary == "" {
+				return nil, fmt.Errorf("steps[%d]: subcommand %q needs a binary",
+					i, rule.Subcommand)
+			}
+		}
 	}
 	return cfg.Examples, nil
 }

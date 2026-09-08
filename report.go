@@ -34,6 +34,10 @@ func reportJSON(w io.Writer, results []Result) {
 		Reason string `json:"reason,omitempty"`
 		Code   int    `json:"code"`
 		Detail string `json:"detail,omitempty"`
+		// Synthetic names the files kibble fabricated for this line, so a
+		// consumer can tell a pass against the document's own inputs from a
+		// pass against inputs kibble invented.
+		Synthetic []string `json:"synthetic,omitempty"`
 	}
 	type stepRow struct {
 		ID      string    `json:"id"`
@@ -68,7 +72,7 @@ func reportJSON(w io.Writer, results []Result) {
 				for _, l := range s.Lines {
 					sr.Lines = append(sr.Lines, lineRow{
 						Cmd: l.Cmd, Status: string(l.Status), Reason: string(l.Reason),
-						Code: l.Code, Detail: l.Detail,
+						Code: l.Code, Detail: l.Detail, Synthetic: l.Synthetic,
 					})
 				}
 				out.Steps = append(out.Steps, sr)
@@ -84,7 +88,7 @@ func reportJSON(w io.Writer, results []Result) {
 // reportTable writes a compact aligned table and a summary line.
 func reportTable(w io.Writer, results []Result) {
 	c := newPalette(w)
-	var pass, fail, gap, other int
+	var pass, fail, gap, other, blocked int
 	var total time.Duration
 	repo := ""
 	for _, r := range results {
@@ -106,6 +110,7 @@ func reportTable(w io.Writer, results []Result) {
 			c.dim(fmt.Sprintf("%5s", r.Duration.Round(time.Second))),
 			c.statusWord(r.Status), detail)
 		writeFailure(w, c, r)
+		blocked += blockedLines(r)
 		switch r.Status {
 		case StatusVerified:
 			pass++
@@ -117,7 +122,7 @@ func reportTable(w io.Writer, results []Result) {
 			other++
 		}
 	}
-	_, _ = fmt.Fprintf(w, "\n%s\n", verdictLine(c, fail, gap, other))
+	_, _ = fmt.Fprintf(w, "\n%s\n", verdictLine(c, fail, gap, other+blocked))
 	_, _ = fmt.Fprintf(w, "%s\n", summaryLine(c, pass, fail, gap, other, len(results), total))
 }
 
@@ -136,6 +141,27 @@ func verdictLine(c palette, fail, gap, other int) string {
 	default:
 		return c.strong(ansiGreen, "VERIFIED") + c.dim("  every documented line ran and worked")
 	}
+}
+
+// blockedLines counts the documented lines of a result that ran without
+// settling. They are counted apart from the result's own status because a
+// session that verified some lines is reported as verified, and the lines it
+// could not read would otherwise vanish behind that green: a run that settled
+// five lines of twenty has not verified the document, and the reader has to
+// be told so on the verdict line rather than in a detail string.
+func blockedLines(r Result) int {
+	if r.example == nil {
+		return 0
+	}
+	n := 0
+	for _, s := range r.example.Steps {
+		for _, l := range s.Lines {
+			if l.Status == StatusBlocked {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // writeFailure prints the documented line that broke, where it is written,

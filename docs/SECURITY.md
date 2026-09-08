@@ -11,8 +11,13 @@ is mounted in; the repository is streamed in as a tar of its working tree.
 
 The boundary that stays open is the network, because verifying an install *is* fetching
 it: `go install`, `cargo install`, and `npm install -g` are network operations. A
-malicious documented command can therefore reach out from inside the container. The
-container is disposable and unprivileged, but Docker isolation is a wall, not a
+malicious documented command can therefore reach out from inside the container.
+
+The container is disposable, and it is not unprivileged. The session runs as root
+inside it, since installing documented packages requires that, and `SETUID` and
+`SETGID` are among the capabilities kept for `apt`. What is left is a root process
+with a reduced capability set that cannot gain new ones, on a network with no
+outbound restriction, behind the Docker boundary. That boundary is a wall, not a
 guarantee. So:
 
 - Running kibble on your own repository in CI is the designed case: anyone who can edit

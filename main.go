@@ -21,6 +21,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/dcadolph/kibble/internal/sandbox"
 )
 
 // config holds the resolved run options.
@@ -127,7 +129,7 @@ func main() {
 	}
 
 	if hasRunnable(steps) {
-		if err := DockerAvailable(ctx); err != nil {
+		if err := sandbox.Available(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "kibble needs Docker to run install steps: %v\n", err)
 			os.Exit(2)
 		}
