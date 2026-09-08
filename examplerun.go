@@ -143,7 +143,9 @@ var (
 	// anywhere in a line rather than only at its start, so a documented
 	// command whose output ends without a newline cannot swallow the marker
 	// that follows it and turn a real result into a missing one.
-	reLineMarker = regexp.MustCompile(`KIBBLE-LINE (\S+):(\d+) (?:CODE=(-?\d+)|SKIP)$`)
+	// A BG marker carries a readiness result rather than an exit code, for a
+	// background line that was still running when the step was judged.
+	reLineMarker = regexp.MustCompile(`KIBBLE-LINE (\S+):(\d+) (?:CODE=(-?\d+)|BG=(\d+)|SKIP)$`)
 )
 
 // markerLead is printed before every session marker. A documented command
@@ -179,7 +181,7 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 		return res
 	}
 
-	script, wrapped := sessionScript(plan, int(d.Timeout.Seconds()))
+	script, wrapped := sessionScript(plan, int(d.Timeout.Seconds()), int(d.lineBudget().Seconds()))
 	ctx, cancel := context.WithTimeout(ctx, sessionBudget(plan, d.Timeout))
 	defer cancel()
 
@@ -204,7 +206,7 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 			Detail: "run was interrupted, so the examples have no verdict",
 		}
 	}
-	res = classifyExample(step, plan, string(out), wrapped, time.Since(start))
+	res = classifyExample(step, plan, string(out), wrapped, time.Since(start), d.lineBudget())
 	if image != d.Image {
 		res.Image = image
 	}
@@ -282,7 +284,7 @@ func sessionBudget(plan *Plan, install time.Duration) time.Duration {
 // sessionScript renders the plan as one bash script with markers the parent
 // parses. It returns the script and the set of step:line keys that were
 // wrapped in a line timeout, so a 124 exit can be read as a hang.
-func sessionScript(plan *Plan, installSecs int) (string, map[string]bool) {
+func sessionScript(plan *Plan, installSecs, lineSecs int) (string, map[string]bool) {
 	wrapped := map[string]bool{}
 	var b strings.Builder
 	b.WriteString(`export GOBIN="$(go env GOPATH 2>/dev/null || echo /root/go)/bin"
@@ -306,6 +308,7 @@ __pipecode() {
   done
   printf '%s' "$last"
 }
+export -f __pipecode
 `)
 	if len(plan.Packages) > 0 {
 		fmt.Fprintf(&b, `apt-get update -qq >/dev/null 2>&1
@@ -359,8 +362,18 @@ if [ "$have" -eq 0 ]; then printf '\nKIBBLE-NOBIN\n'; exit 0; fi
 			for _, dir := range redirectDirs(flatten(cmd)) {
 				fmt.Fprintf(&b, "mkdir -p %s >/dev/null 2>&1 || true\n", dir)
 			}
-			if isSimpleCommand(flatten(cmd)) {
-				cmd = fmt.Sprintf("timeout %d %s", int(lineTimeout.Seconds()), cmd)
+			switch {
+			case isSimpleCommand(flatten(cmd)):
+				cmd = fmt.Sprintf("timeout %d %s", lineSecs, cmd)
+				wrapped[fmt.Sprintf("%s:%d", s.ID, i)] = true
+			case isolatable(cmd):
+				// The line runs in a shell of its own so timeout has
+				// something to kill. Its pipeline status is reduced inside
+				// that shell by the same rule the session uses outside, so
+				// the exit reported means what an unwrapped line's would.
+				cmd = fmt.Sprintf("timeout %d bash -c '%s\n__ps=(\"${PIPESTATUS[@]}\")\n"+
+					"exit \"$(__pipecode \"${__ps[@]}\")\"'",
+					lineSecs, shellSafe(cmd))
 				wrapped[fmt.Sprintf("%s:%d", s.ID, i)] = true
 			}
 			b.WriteString(cmd + "\n")
@@ -379,16 +392,27 @@ printf '\nKIBBLE-DONE\n'
 	return b.String(), wrapped
 }
 
-// writeBackgroundStep renders a background step: its lines run in a
-// subshell behind the session, readiness is a log match when the plan names
-// one, and every runnable line shares the readiness result.
+// writeBackgroundStep renders a background step: its lines run in a subshell
+// behind the session, and readiness is a log match when the plan names one.
+//
+// Each line records its own exit as it finishes. That matters because a
+// background block is usually a short setup line or two followed by the one
+// command that serves and never returns, and reporting the readiness result
+// for all of them claimed evidence for lines nothing had checked: a setup
+// line could fail outright while the service still came up, and the step
+// reported every line as fine. Only the line still running when readiness is
+// judged gets the readiness verdict now, and it is reported as readiness
+// rather than as an exit code, because it never produced one.
 func writeBackgroundStep(b *strings.Builder, s PlanStep) {
 	log := "/tmp/kibble-" + s.ID + ".log"
-	b.WriteString("(\n")
-	for _, l := range s.Lines {
-		if l.Skip == "" {
-			b.WriteString(l.Cmd + "\n")
+	status := "/tmp/kibble-" + s.ID + ".status"
+	fmt.Fprintf(b, ": > %s\n(\n", status)
+	for i, l := range s.Lines {
+		if l.Skip != "" {
+			continue
 		}
+		b.WriteString(l.Cmd + "\n")
+		fmt.Fprintf(b, "printf 'KIBBLE-BG %s:%d CODE=%%d\\n' \"$?\" >> %s\n", s.ID, i, status)
 	}
 	fmt.Fprintf(b, ") >%s 2>&1 &\nKIBBLE_BG=\"${KIBBLE_BG:-} $!\"\n", log)
 	if s.ReadyLog != "" {
@@ -403,8 +427,12 @@ for i in $(seq 1 30); do grep -q '%s' %s 2>/dev/null && ready=0 && break; sleep 
 			fmt.Fprintf(b, "printf '"+markerLead+"KIBBLE-LINE %s:%d SKIP\\n'\n", s.ID, i)
 			continue
 		}
-		fmt.Fprintf(b,
-			"printf '"+markerLead+"KIBBLE-LINE %s:%d CODE=%%d\\n' \"$ready\"\n", s.ID, i)
+		// A line that finished has its own exit. A line with none is the one
+		// still running, and readiness is all that is known about it.
+		fmt.Fprintf(b, `__c=$(sed -n 's/^KIBBLE-BG %s:%d CODE=//p' %s 2>/dev/null | tail -n1)
+if [ -n "$__c" ]; then printf '`+markerLead+`KIBBLE-LINE %s:%d CODE=%%d\n' "$__c"
+else printf '`+markerLead+`KIBBLE-LINE %s:%d BG=%%d\n' "$ready"; fi
+`, s.ID, i, status, s.ID, i, s.ID, i)
 	}
 }
 
@@ -424,22 +452,49 @@ func sortedKeys(m map[string]string) []string {
 	return keys
 }
 
-// isSimpleCommand reports whether a flattened line is one plain command
-// with no shell structure, so a timeout wrapper does not change what it
-// means. Builtins and assignments must run in the session shell unwrapped.
+// isSimpleCommand reports whether a line is one plain command with no shell
+// structure, so prefixing it with a timeout does not change what it means.
+// Builtins and assignments must run in the session shell unwrapped. The
+// judgment comes from a parse rather than a scan for metacharacters, which
+// used to refuse `tool --name "a | b"` for a pipe inside a quoted argument.
 func isSimpleCommand(flat string) bool {
-	if strings.ContainsAny(flat, "|;&<>`#") || strings.Contains(flat, "$(") {
+	line, ok := parseShell(flat)
+	if !ok {
 		return false
 	}
-	fields := strings.Fields(flat)
-	if len(fields) == 0 {
+	return len(line.Cmds) == 1 && !line.Structured && !line.StateChanging &&
+		!line.Background && !line.Heredoc && line.Cmds[0].Name() != ""
+}
+
+// isolatable reports whether a line that is not simple can still be run in
+// its own shell, which is what lets it carry a timeout. Without this, a line
+// with any shell structure had no bound at all: `tool serve | tee log` could
+// spend the entire session budget, and every line behind it reported that the
+// session ended rather than what it did.
+//
+// The limits are what a subshell costs. A line that changes the shell cannot
+// be isolated, since a cd or an export performed in a subshell is discarded
+// when it exits. A heredoc cannot, since rewriting one risks changing the
+// data it carries. Nor can a line that expands a variable: an earlier
+// documented line may have set it without exporting it, and a subshell would
+// see an empty value and fail a document that works. Exporting those
+// assignments would fix the visibility and change what the tools receive, so
+// the narrower rule is the honest one.
+func isolatable(cmd string) bool {
+	line, ok := parseShell(cmd)
+	if !ok {
 		return false
 	}
-	switch fields[0] {
-	case "cd", "export", "source", ".", "eval", "unset", "alias":
+	if len(line.Cmds) == 0 || !line.Structured || line.StateChanging ||
+		line.Background || line.Heredoc {
 		return false
 	}
-	return !reAssignPrefix.MatchString(flat)
+	for _, c := range line.Cmds {
+		if c.Expanded {
+			return false
+		}
+	}
+	return true
 }
 
 // lineOutcome is one parsed KIBBLE-LINE marker with the output that
@@ -449,6 +504,11 @@ type lineOutcome struct {
 	code int
 	// output is the text the line printed before its marker.
 	output string
+	// background marks a line still running when its step was judged, so it
+	// never produced an exit code and ready carries what is known instead.
+	background bool
+	// ready reports whether the step reached its documented readiness signal.
+	ready bool
 }
 
 // markerTail splits a line on a session marker, returning the output that
@@ -467,7 +527,7 @@ func markerTail(line, marker string) (before, after string, ok bool) {
 // classifyExample parses session output into a Result: per-line outcomes
 // feed step results, and the worst outcome names the repo's example status.
 func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[string]bool,
-	dur time.Duration) Result {
+	dur, lineBudget time.Duration) Result {
 	res := Result{Step: step, Duration: dur}
 	outcomes := map[string]lineOutcome{}
 	have := map[string]bool{}
@@ -501,11 +561,16 @@ func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[strin
 		case reLineMarker.MatchString(line):
 			m := reLineMarker.FindStringSubmatch(line)
 			keep(line[:len(line)-len(m[0])])
-			code := -1
-			if m[3] != "" {
-				code, _ = strconv.Atoi(m[3])
+			o := lineOutcome{code: -1, output: strings.Join(chunk, "\n")}
+			switch {
+			case m[3] != "":
+				o.code, _ = strconv.Atoi(m[3])
+			case m[4] != "":
+				ready, _ := strconv.Atoi(m[4])
+				o.background = true
+				o.ready = ready == 0
 			}
-			outcomes[m[1]+":"+m[2]] = lineOutcome{code: code, output: strings.Join(chunk, "\n")}
+			outcomes[m[1]+":"+m[2]] = o
 			chunk = nil
 		default:
 			keep(line)
@@ -521,7 +586,7 @@ func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[strin
 		res.Detail = "installed tool is not on PATH under any documented name; examples not run"
 		return res
 	}
-	run, worst, detail := buildOutcomes(plan, outcomes, wrapped, done, have)
+	run, worst, detail := buildOutcomes(plan, outcomes, wrapped, done, have, lineBudget)
 	res.example = run
 	res.Status = worst
 	res.Detail = detail
@@ -535,7 +600,7 @@ func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[strin
 // failures that only depend on skipped lines, and returns the per-step
 // outcomes with the aggregate status and its summary detail.
 func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[string]bool,
-	done bool, have map[string]bool) (*exampleRun, Status, string) {
+	done bool, have map[string]bool, lineBudget time.Duration) (*exampleRun, Status, string) {
 	run := &exampleRun{}
 	documented := documentedSettings(plan)
 	ended := false
@@ -566,7 +631,7 @@ func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[stri
 				lr.Detail = "session ended while this line ran"
 				ended = true
 			default:
-				lr = classifyLineResult(lr, l, o, wrapped[key], documented)
+				lr = classifyLineResult(lr, l, o, wrapped[key], documented, lineBudget)
 			}
 			es.Lines = append(es.Lines, lr)
 		}
@@ -795,16 +860,30 @@ func documentedNonzeroCode(code int) bool {
 // blocked: run, unexplained, and claiming nothing about the document. What
 // resembles nothing is a failure.
 func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
-	documented map[string]bool) lineResult {
+	documented map[string]bool, lineBudget time.Duration) lineResult {
 	lr.Code = o.code
 	// The same reason as classify: a documented line that colors its output
 	// must not carry escapes into a report or an annotation.
 	o.output = stripANSI(o.output)
 	tail := failureLine(strings.Split(o.output, "\n"))
 	switch {
+	case o.background:
+		// The line never exited, so there is no exit code to read. What the
+		// session observed is whether the service it started announced
+		// itself, and the verdict says exactly that and no more.
+		if o.ready {
+			lr.Status = StatusVerified
+			lr.Detail = "started and reached its documented readiness signal, without exiting"
+			return lr
+		}
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonLongRunning
+		lr.Detail = "ran without exiting and never reached its documented readiness signal"
+		lr.output = o.output
+		return lr
 	case wrapped && o.code == 124:
 		lr.Status = StatusTimeout
-		lr.Detail = fmt.Sprintf("gave no result within %s", lineTimeout)
+		lr.Detail = fmt.Sprintf("gave no result within %s", lineBudget)
 	case o.code == 0:
 		lr.Status = StatusVerified
 		if len(lr.Synthetic) > 0 {
@@ -957,8 +1036,11 @@ func missingFileArg(cmd, output string) string {
 	if name == "" || strings.HasPrefix(name, "-") {
 		return ""
 	}
-	for _, tok := range strings.Fields(cmd) {
-		if strings.Trim(tok, "'\"\x60") == name {
+	// Whole-word comparison against the words the shell would pass, so a
+	// quoted path containing a space is one argument here rather than two,
+	// and a name matches the argument the command really named.
+	for _, tok := range shellArgWordsOf(cmd) {
+		if tok == name {
 			return name
 		}
 	}
@@ -966,6 +1048,22 @@ func missingFileArg(cmd, output string) string {
 		return name
 	}
 	return ""
+}
+
+// shellArgWordsOf returns a line's words, falling back to whitespace
+// splitting only when the line does not parse. A line reaching here has
+// already run, so it came from a document kibble could read; the fallback
+// exists so a parse kibble did not anticipate degrades to the old answer
+// rather than to no answer.
+func shellArgWordsOf(cmd string) []string {
+	if words, ok := shellArgWords(cmd); ok {
+		return words
+	}
+	out := strings.Fields(cmd)
+	for i, tok := range out {
+		out[i] = strings.Trim(tok, "'\"\x60")
+	}
+	return out
 }
 
 // missingCommandName returns the program a shell reported missing, or empty
@@ -981,8 +1079,8 @@ func missingCommandName(cmd, output string) string {
 		return ""
 	}
 	name := m[1]
-	for _, tok := range strings.Fields(cmd) {
-		if strings.Trim(tok, "'\"\x60") == name {
+	for _, tok := range shellArgWordsOf(cmd) {
+		if tok == name {
 			return ""
 		}
 	}

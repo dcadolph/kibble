@@ -27,16 +27,30 @@ examples:
       contents: |
         setting: value
   steps:
-    - match: mytool serve
+    - binary: mytool              # selects what the line invokes, not its text
+      subcommand: serve
       background: true
       readyLog: listening on
-    - match: mytool scan          # a scanner exits nonzero on findings by design
+    - binary: mytool
+      subcommand: scan            # a scanner exits nonzero on findings by design
       nonzeroOk: true
     - match: mytool *.go          # a documented form the clean session cannot run
       skip: file-glob loading is unreliable here
-    - match: mytool demo          # force a line the planner would skip
+    - binary: mytool
+      subcommand: demo            # force a line the planner would skip
       run: true
 ```
+
+A rule needs `binary` or `match`, and a rule with neither is an error rather than a
+rule that quietly selects nothing. Prefer `binary` and `subcommand`: they are compared
+against what a line actually invokes, so a rule about `mytool` cannot be triggered by
+a line that only mentions the name in a path or an argument. `subcommand` requires
+`binary`, since a subcommand name on its own belongs to no particular tool.
+
+`match` is the escape hatch for what those cannot say. It selects lines containing its
+text as a run of whole words, so `match: mytool run` does not select
+`mytool run-production`. Both sides are read as shell, so quoting resolves the same way
+on each and a match written the way the document writes it selects the same line.
 
 ## Let a model write it
 

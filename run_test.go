@@ -153,6 +153,126 @@ func TestDockerExampleSession(t *testing.T) {
 	}
 }
 
+// TestDockerIsolatedLineTimeout checks the bound on a line with shell
+// structure, in a real container. A line holding a pipe used to receive no
+// per-line timeout at all, so a documented `tool serve | tee log` could spend
+// the whole session budget and leave every line behind it reporting that the
+// session ended rather than what it did. The three cases are the three things
+// isolation must get right at once: a working pipeline still passes, a
+// failing producer is still convicted rather than hidden behind a consumer
+// that exits zero, and a hanging pipeline is killed on its own.
+func TestDockerIsolatedLineTimeout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("container test skipped in short mode")
+	}
+	if os.Getenv("KIBBLE_INTEGRATION") == "" {
+		t.Skip("set KIBBLE_INTEGRATION=1 to run container tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := DockerAvailable(ctx); err != nil {
+		t.Skipf("docker is not reachable: %v", err)
+	}
+	plan := &Plan{
+		Repo:     "repo",
+		Installs: []PlanInstall{{Cmd: "true"}},
+		Steps: []PlanStep{{ID: "b1", Lines: []PlanLine{
+			{Cmd: "echo hello | tee /tmp/x.log"},
+			// The producer fails loudly on purpose. A silent exit 1 is
+			// blocked rather than failed, by the rule that silence is not
+			// evidence, so a quiet `false` here would test that rule instead
+			// of the pipeline status this case exists to check.
+			{Cmd: "sh -c 'echo boom >&2; exit 3' | tee /tmp/y.log"},
+			{Cmd: "sleep 600 | tee /tmp/z.log"},
+		}}},
+	}
+	// Every line here has shell structure, so every one must be bounded.
+	_, wrapped := sessionScript(plan, 60, 3)
+	for i := range plan.Steps[0].Lines {
+		if key := fmt.Sprintf("b1:%d", i); !wrapped[key] {
+			t.Errorf("line %s carries no timeout", key)
+		}
+	}
+	runner := &DockerRunner{Image: "debian:stable-slim", Timeout: 60 * time.Second,
+		LineTimeout: 3 * time.Second}
+	step := InstallStep{Repo: "repo", Kind: "example", Run: true, plan: plan, dir: t.TempDir()}
+	res := runner.runExample(ctx, step)
+	if res.example == nil {
+		t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+	}
+	var got []Status
+	var codes []int
+	for _, l := range res.example.Steps[0].Lines {
+		got = append(got, l.Status)
+		codes = append(codes, l.Code)
+	}
+	want := []Status{StatusVerified, StatusFail, StatusTimeout}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("line statuses mismatch (-want +got):\n%s\ncodes: %v detail: %s",
+			diff, codes, res.Detail)
+	}
+	// The hang is reported as a timeout on its own line rather than as the
+	// session running out, which is the whole point of bounding it.
+	if codes[2] != 124 {
+		t.Errorf("hanging line exited %d, want 124", codes[2])
+	}
+}
+
+// TestDockerBackgroundPerLine checks that a background step reports evidence
+// per line rather than one readiness result repeated. The step here is the
+// shape a document actually writes: a setup line, then the server that never
+// returns. The setup line fails outright while the service still comes up, so
+// the old behavior reported both as fine and the broken line disappeared.
+func TestDockerBackgroundPerLine(t *testing.T) {
+	if testing.Short() {
+		t.Skip("container test skipped in short mode")
+	}
+	if os.Getenv("KIBBLE_INTEGRATION") == "" {
+		t.Skip("set KIBBLE_INTEGRATION=1 to run container tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := DockerAvailable(ctx); err != nil {
+		t.Skipf("docker is not reachable: %v", err)
+	}
+	plan := &Plan{
+		Repo:     "repo",
+		Installs: []PlanInstall{{Cmd: "true"}},
+		Steps: []PlanStep{{
+			ID:         "b1",
+			Background: true,
+			ReadyLog:   "listening on",
+			Lines: []PlanLine{
+				{Cmd: "sh -c 'echo setup failed >&2; exit 4'"},
+				{Cmd: "sh -c 'echo listening on 8080; sleep 600'"},
+			},
+		}},
+	}
+	runner := &DockerRunner{Image: "debian:stable-slim", Timeout: 60 * time.Second}
+	step := InstallStep{Repo: "repo", Kind: "example", Run: true, plan: plan, dir: t.TempDir()}
+	res := runner.runExample(ctx, step)
+	if res.example == nil {
+		t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+	}
+	lines := res.example.Steps[0].Lines
+	var got []Status
+	for _, l := range lines {
+		got = append(got, l.Status)
+	}
+	// The setup line is convicted on its own exit; the server is verified on
+	// readiness, which is the only thing observed about it.
+	want := []Status{StatusFail, StatusVerified}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("line statuses mismatch (-want +got):\n%s\ndetail: %s", diff, res.Detail)
+	}
+	if lines[0].Code != 4 {
+		t.Errorf("setup line exited %d, want its own 4", lines[0].Code)
+	}
+	if !strings.Contains(lines[1].Detail, "readiness") {
+		t.Errorf("server line detail = %q, want it to say readiness", lines[1].Detail)
+	}
+}
+
 // TestRewriteSSH checks that GitHub SSH remotes become HTTPS for keyless clones.
 func TestRewriteSSH(t *testing.T) {
 	t.Parallel()

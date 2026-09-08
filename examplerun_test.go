@@ -276,7 +276,7 @@ func TestClassifyExample(t *testing.T) {
 			if plan == nil {
 				plan = examplePlan()
 			}
-			res := classifyExample(step, plan, test.Out, test.Wrapped, 0)
+			res := classifyExample(step, plan, test.Out, test.Wrapped, 0, lineTimeout)
 			if res.Status != test.WantStatus {
 				t.Errorf("status = %s, want %s (detail %q)", res.Status, test.WantStatus, res.Detail)
 			}
@@ -353,7 +353,7 @@ func TestClassifyExampleMarkerRecovery(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			res := classifyExample(step, examplePlan(), test.Out, nil, 0)
+			res := classifyExample(step, examplePlan(), test.Out, nil, 0, lineTimeout)
 			if res.Status != test.WantStatus {
 				t.Errorf("status = %s, want %s (detail %q)", res.Status, test.WantStatus, res.Detail)
 			}
@@ -457,7 +457,7 @@ func TestSessionScript(t *testing.T) {
 	plan.Env = map[string]string{"B": "2", "A": "1"}
 	plan.Fixtures = []Fixture{{Path: "docs/notes.md", Contents: "hello\n"}}
 	plan.Steps[0].Lines[1].Skip = "needs an interactive sign-in"
-	script, wrapped := sessionScript(plan, 240)
+	script, wrapped := sessionScript(plan, 240, 90)
 
 	for _, want := range []string{
 		"bash -ec 'go install example.com/tool@latest'",
@@ -641,7 +641,7 @@ func TestRepoTar(t *testing.T) {
 func TestEmptyPipelineSkips(t *testing.T) {
 	t.Parallel()
 	lr := classifyLineResult(lineResult{Cmd: "rg foo -0 | xargs -0 sed -i 's/foo/bar/g'"},
-		PlanLine{}, lineOutcome{code: 123, output: "sed: no input files"}, false, nil)
+		PlanLine{}, lineOutcome{code: 123, output: "sed: no input files"}, false, nil, lineTimeout)
 	if lr.Status != StatusSkipped {
 		t.Errorf("status = %s, want %s", lr.Status, StatusSkipped)
 	}
@@ -650,7 +650,7 @@ func TestEmptyPipelineSkips(t *testing.T) {
 	}
 	// A sed that failed for a real reason keeps its failure.
 	lr = classifyLineResult(lineResult{Cmd: "rg foo | xargs sed -i 's/foo/'"},
-		PlanLine{}, lineOutcome{code: 123, output: "sed: -e expression #1, char 7: unterminated `s' command"}, false, nil)
+		PlanLine{}, lineOutcome{code: 123, output: "sed: -e expression #1, char 7: unterminated `s' command"}, false, nil, lineTimeout)
 	if lr.Status != StatusFail {
 		t.Errorf("status = %s, want %s", lr.Status, StatusFail)
 	}
@@ -679,7 +679,7 @@ func TestNonzeroOKCap(t *testing.T) {
 		t.Run(fmt.Sprintf("test %d %s", testNum, test.Name), func(t *testing.T) {
 			t.Parallel()
 			lr := classifyLineResult(lineResult{Cmd: "tool check"},
-				PlanLine{NonzeroOK: true}, lineOutcome{code: test.Code, output: test.Output}, false, nil)
+				PlanLine{NonzeroOK: true}, lineOutcome{code: test.Code, output: test.Output}, false, nil, lineTimeout)
 			if lr.Status != test.WantStatus {
 				t.Errorf("status = %s, want %s (detail %q)", lr.Status, test.WantStatus, lr.Detail)
 			}

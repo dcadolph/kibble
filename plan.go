@@ -429,7 +429,7 @@ func (pl *planner) addBlock(block codeBlock) {
 			line.NonzeroOK = true
 		}
 		pl.synthetic = nil
-		line.Skip, line.SkipReason, line.Gap = pl.skipReason(flat)
+		line.Skip, line.SkipReason, line.Gap = pl.skipReason(ln, flat)
 		line.Synthetic = pl.synthetic
 		if line.Skip == "" && scopedTo != "" {
 			line.Skip = fmt.Sprintf("documented for %s rather than this container", scopedTo)
@@ -540,9 +540,21 @@ func (pl *planner) qualifies(lines []string) bool {
 // when it can. The checks run in order of how specific their reason is.
 // Substitutions have already been applied, so a placeholder that survives
 // here is one the reader was meant to fill in.
-func (pl *planner) skipReason(flat string) (string, Reason, bool) {
+func (pl *planner) skipReason(cmd, flat string) (string, Reason, bool) {
 	if rePlaceholder.MatchString(commandHead(flat)) {
 		return "docs use a placeholder the reader must fill in", ReasonPlaceholder, false
+	}
+	// Asked before the rules that read the line as shell, and after the
+	// placeholder rule, since `--key <YOUR-KEY>` is an unparseable line whose
+	// real reason is the placeholder. The parse is of the line as written,
+	// never the flattened form: flattening truncates a heredoc to its opening
+	// word, which no parser accepts and which the session never runs. A line
+	// left over here is one kibble cannot claim to understand, and running it
+	// to see what happens would be executing something whose meaning nobody
+	// established.
+	if !parses(cmd) {
+		return "is not something a shell parser accepts, so kibble did not guess at it",
+			ReasonUnparseable, false
 	}
 	if reLocalhost.MatchString(flat) {
 		return "needs a local service the docs assume is running", ReasonMissingDependency, false
@@ -692,16 +704,18 @@ func withoutSingleQuoted(flat string) string {
 // as in `FOO=bar cmd`, since a line may expand what it just set.
 func localAssignments(flat string) map[string]bool {
 	out := map[string]bool{}
-	fields := strings.Fields(strings.TrimSpace(flat))
-	for _, f := range fields {
-		if f == "export" {
-			continue
+	line, ok := parseShell(flat)
+	if !ok {
+		return out
+	}
+	// The parser separates assignment prefixes from words, so this no longer
+	// has to scan tokens and stop at the first one that does not look like an
+	// assignment. It also sees the ones a list puts later in the line, which
+	// scanning from the front could never reach.
+	for _, c := range line.Cmds {
+		for _, a := range c.Assigns {
+			out[a] = true
 		}
-		m := reAssignPrefix.FindStringSubmatch(f)
-		if m == nil {
-			break
-		}
-		out[m[1]] = true
 	}
 	return out
 }
@@ -749,8 +763,7 @@ var reKernelPath = regexp.MustCompile(`(^|[\s'"=])/(proc|sys)/`)
 // `lint "src/util/**/*.js"` shows the shape of a command against the reader's
 // tree, and a repository without src/util cannot honestly run it.
 func (pl *planner) missingGlob(flat string) string {
-	for _, tok := range strings.Fields(stripComment(flat)) {
-		tok = strings.Trim(tok, `'"`)
+	for _, tok := range shellOperands(flat) {
 		if strings.HasPrefix(tok, "-") || strings.ContainsAny(tok, ":,") {
 			continue
 		}
@@ -812,10 +825,8 @@ var reUpperArg = regexp.MustCompile(`^[A-Z][A-Z0-9_]+$`)
 // conventional placeholder word, or empty when none is. The command word
 // itself is exempt, since a tool could be named pattern.
 func bareWordPlaceholder(flat string) string {
-	fields := strings.Fields(stripComment(flat))
-	for i, tok := range fields {
-		tok = strings.Trim(tok, `'"`)
-		if i == 0 || strings.HasPrefix(tok, "-") {
+	for _, tok := range shellOperands(flat) {
+		if strings.HasPrefix(tok, "-") {
 			continue
 		}
 		if placeholderWords[tok] || upperPlaceholderWords[tok] ||
@@ -938,7 +949,7 @@ func (pl *planner) applyRules(line *PlanLine, step *PlanStep, flat string) {
 		return
 	}
 	for _, rule := range pl.cfg.Steps {
-		if rule.Match == "" || !strings.Contains(flat, rule.Match) {
+		if !pl.ruleSelects(rule, flat) {
 			continue
 		}
 		if rule.Skip != "" {
@@ -958,6 +969,28 @@ func (pl *planner) applyRules(line *PlanLine, step *PlanStep, flat string) {
 			step.ReadyLog = rule.ReadyLog
 		}
 	}
+}
+
+// ruleSelects reports whether a configured rule applies to a line. Binary and
+// subcommand are compared against what the line actually invokes, so a rule
+// naming a tool cannot be triggered by that tool's name appearing in an
+// argument or a path. Match compares whole words, so `tool run` no longer
+// selects `tool run-production`, which is the kind of accident a rule written
+// for one example used to have on every other example that shared a prefix.
+func (pl *planner) ruleSelects(rule StepRule, flat string) bool {
+	if rule.Binary != "" {
+		bin, sub := invokedBinary(flat, map[string]bool{rule.Binary: true})
+		if bin != rule.Binary {
+			return false
+		}
+		if rule.Subcommand != "" && sub != rule.Subcommand {
+			return false
+		}
+	}
+	if rule.Match != "" && !matchesWords(flat, rule.Match) {
+		return false
+	}
+	return rule.Binary != "" || rule.Match != ""
 }
 
 // missingFile returns the first file token a line references that neither
@@ -1082,7 +1115,7 @@ func prepareLines(raw []string) []string {
 	if twoColumn(raw) {
 		var out []string
 		for _, l := range raw {
-			if m := reTwoColumn.FindStringSubmatch(l); m != nil && balancedQuotes(m[1]) {
+			if m := reTwoColumn.FindStringSubmatch(l); m != nil && commandColumn(m[1]) {
 				out = append(out, m[1])
 				continue
 			}
@@ -1103,17 +1136,19 @@ func twoColumn(raw []string) bool {
 			continue
 		}
 		total++
-		if m := reTwoColumn.FindStringSubmatch(l); m != nil && balancedQuotes(m[1]) {
+		if m := reTwoColumn.FindStringSubmatch(l); m != nil && commandColumn(m[1]) {
 			hits++
 		}
 	}
 	return hits >= 2 && hits*2 >= total
 }
 
-// balancedQuotes reports whether s contains an even number of double and
-// single quotes, so a two-column split never cuts inside a quoted string.
-func balancedQuotes(s string) bool {
-	return strings.Count(s, `"`)%2 == 0 && strings.Count(s, `'`)%2 == 0
+// commandColumn reports whether a two-column split left a command the shell
+// can actually read, so the split did not cut through a quoted string. It
+// used to count quote characters, which called `echo "it's fine"` unbalanced
+// for the apostrophe and `echo "a" "b` balanced for the even count.
+func commandColumn(s string) bool {
+	return parses(s)
 }
 
 // logicalLines groups physical lines into logical commands: a trailing
@@ -1158,20 +1193,21 @@ func flatten(logical string) string {
 // subcommand, or empty strings when the line invokes none. Leading VAR=value
 // prefixes are stepped over, so `KEY=x tool sub` still names the tool.
 func invokedBinary(flat string, binaries map[string]bool) (string, string) {
-	for _, seg := range splitSegments(stripComment(flat)) {
-		fields := strings.Fields(seg)
-		i := 0
-		for i < len(fields) && reAssignPrefix.MatchString(fields[i]) {
-			i++
-		}
-		if i >= len(fields) || !binaries[fields[i]] {
+	line, ok := parseShell(flat)
+	if !ok {
+		return "", ""
+	}
+	for _, c := range line.Cmds {
+		// Assignment prefixes are not words, so the parser has already set
+		// them aside and `KEY=x tool sub` names the tool without stepping.
+		if !binaries[c.Name()] {
 			continue
 		}
 		sub := ""
-		if i+1 < len(fields) && reSubName.MatchString(fields[i+1]) {
-			sub = fields[i+1]
+		if a := c.Arg(0); reSubName.MatchString(a) {
+			sub = a
 		}
-		return fields[i], sub
+		return c.Name(), sub
 	}
 	return "", ""
 }
@@ -1200,15 +1236,10 @@ var outputFlags = map[string]bool{
 // hasBareStdinDash reports whether a line passes a bare - argument with no
 // pipe feeding it, meaning it would block reading the session's empty stdin.
 func hasBareStdinDash(flat string) bool {
-	f := stripComment(flat)
-	if strings.Contains(f, "|") {
+	if lineHasPipe(flat) {
 		return false
 	}
-	fields := strings.Fields(f)
-	if len(fields) < 2 {
-		return false
-	}
-	for _, tok := range fields[1:] {
+	for _, tok := range shellOperands(flat) {
 		if tok == "-" {
 			return true
 		}

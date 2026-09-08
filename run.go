@@ -156,6 +156,9 @@ const (
 	ReasonUnreachable Reason = "unreachable"
 	// ReasonNotExecuted marks a step kibble has not run in this kind of pass.
 	ReasonNotExecuted Reason = "not-executed"
+	// ReasonUnparseable marks a documented line no shell parser accepts, so
+	// kibble declines to guess at what it would have run.
+	ReasonUnparseable Reason = "unparseable"
 	// ReasonUnsupportedMethod marks a documented install method kibble sees but
 	// does not run, such as a piped shell installer or a system package.
 	ReasonUnsupportedMethod Reason = "unsupported-method"
@@ -220,6 +223,17 @@ type DockerRunner struct {
 	// that the formula exists. Slower by minutes, and the only way a brew
 	// step earns the right to fail a build.
 	BrewInstall bool
+	// LineTimeout bounds one documented example line. Zero means the default,
+	// which is what every caller but a test wants.
+	LineTimeout time.Duration
+}
+
+// lineBudget returns the per-line timeout this runner applies.
+func (d *DockerRunner) lineBudget() time.Duration {
+	if d.LineTimeout > 0 {
+		return d.LineTimeout
+	}
+	return lineTimeout
 }
 
 // Run executes the step: go-install and git-clone run in a fresh container
