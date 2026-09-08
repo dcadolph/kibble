@@ -50,6 +50,9 @@ type lineResult struct {
 	Detail string
 	// Line is the 1-based README line the command sits on, 0 when unknown.
 	Line int
+	// Synthetic names the fabricated files this line read, carried from the
+	// plan so a pass can say what it was a pass against.
+	Synthetic []string
 	// output is what the line printed, kept for dependency analysis.
 	output string
 }
@@ -99,11 +102,13 @@ var (
 	reNoChange = regexp.MustCompile(
 		`(?i)\bnothing was changed\b|\bno changes (were )?made\b` +
 			`|\baborted by (the )?user\b|\bnothing to (do|change|commit)\b`)
-	// reShellNotFound matches a shell reporting a command it cannot find.
-	// dash is /bin/sh on Debian images, so it is what make runs recipes with,
-	// and it says "zip: not found" without the word command. Requiring that
-	// word, or exit 127, misses every missing tool a Makefile reaches for.
-	reShellNotFound = regexp.MustCompile(`(?m)\b[\w.+-]+: (command )?not found\b`)
+	// reShellNotFound matches a shell reporting a command it cannot find, and
+	// captures the name. dash is /bin/sh on Debian images, so it is what make
+	// runs recipes with, and it says "zip: not found" without the word
+	// command. Requiring that word, or exit 127, misses every missing tool a
+	// Makefile reaches for. The name is captured because the same shape is
+	// what a tool prints about its own inputs, and only the name says which.
+	reShellNotFound = regexp.MustCompile(`(?m)\b([\w.+-]+): (?:command )?not found\b`)
 	// reNotBuiltIn matches a tool reporting that an optional capability was
 	// not compiled into this build, as ripgrep does for PCRE2 when installed
 	// without the feature. The command is right; the build is smaller.
@@ -112,12 +117,27 @@ var (
 			`built without|requires the \S+ feature|feature is not enabled`)
 	// reNoExec matches the Go exec error for a missing helper program.
 	reNoExec = regexp.MustCompile(`executable file not found`)
-	// reMissingDep matches a tool reporting that a system dependency it needs
-	// is absent, such as vhs requiring ffmpeg. The dependency is the container's
-	// gap, not the document's, so the line is skipped.
+	// reMissingBinary matches a tool reporting that a program is absent from
+	// PATH. PATH is the shell's own idea, so a tool naming it is describing
+	// the container rather than its own state, which makes this the one
+	// missing-dependency wording strong enough to excuse a line.
+	reMissingBinary = regexp.MustCompile(`(?i)\bnot found in (your )?\$?PATH\b`)
+	// reMissingDep matches a tool reporting that something it needs is not
+	// installed, such as vhs requiring ffmpeg. The wording is not proof of
+	// the container's gap: a tool says the same words about its own plugins,
+	// extensions, and optional components, which are steps the document owes
+	// the reader. The line is therefore blocked rather than skipped.
 	reMissingDep = regexp.MustCompile(
-		`(?i)\bis not installed\b|\b(please|must) install\b|\bnot found in (your )?\$?PATH\b` +
+		`(?i)\bis not installed\b|\b(please|must) install\b` +
 			`|\brequires? \S+ to be installed\b`)
+	// reCrash matches a process dying rather than reporting. A crash convicts
+	// whatever else the output happens to say, so it is checked before any
+	// rule that excuses a line: a tool that panicked after printing "no
+	// results" did not find no results, it broke.
+	reCrash = regexp.MustCompile(
+		`(?im)^(panic|fatal error|traceback \(most recent call last\)):` +
+			`|\bsegmentation fault\b|\bassertion failed\b|\bstack overflow\b` +
+			`|\bunhandled exception\b|\bthread '.*' panicked at\b`)
 	// reLineMarker parses a KIBBLE-LINE marker into step ID, line index,
 	// and either an exit code or the SKIP token. The marker is matched
 	// anywhere in a line rather than only at its start, so a documented
@@ -523,7 +543,7 @@ func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[stri
 		es := exampleStep{ID: s.ID, Heading: s.Heading}
 		for i, l := range s.Lines {
 			key := fmt.Sprintf("%s:%d", s.ID, i)
-			lr := lineResult{Cmd: flatten(l.Cmd), Code: -1, Line: l.Line}
+			lr := lineResult{Cmd: flatten(l.Cmd), Code: -1, Line: l.Line, Synthetic: l.Synthetic}
 			o, seen := outcomes[key]
 			switch {
 			case l.Skip != "":
@@ -534,9 +554,13 @@ func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[stri
 				lr.Reason = l.SkipReason
 				lr.Detail = l.Skip
 			case !seen && (ended || done):
-				lr.Status = StatusSkipped
+				// The session stopped before reaching this line. Kibble chose
+				// nothing here, so the line is unestablished rather than
+				// skipped: a run that spent its budget early must not report
+				// the lines it never reached as deliberate.
+				lr.Status = StatusBlocked
 				lr.Reason = ReasonDependsOnSkipped
-				lr.Detail = "not run: session ended earlier"
+				lr.Detail = "not run: the session ended before reaching it"
 			case !seen:
 				lr.Status = StatusTimeout
 				lr.Detail = "session ended while this line ran"
@@ -582,13 +606,16 @@ func resolveMissingBinaries(run *exampleRun, plan *Plan, have map[string]bool) {
 	}
 }
 
-// resolveDependentFailures downgrades failures caused by lines that never
-// ran: a failure whose output names such a command needed it, and a failure
-// in the same step and subcommand family as an earlier one follows a recipe
-// the session could not fully run. Both are skips, not documentation
-// failures. A gap counts as not having run, since the document's own hole
-// stopped the line, and reporting the same hole once per dependent command
-// would bury the one line worth fixing.
+// resolveDependentFailures downgrades failures that may follow from lines
+// which never ran: a failure whose output names such a command, and a failure
+// in the same step and subcommand family as an earlier one. Neither
+// observation is causal. A tool prints its own name in hints that have
+// nothing to do with why it failed, and a second invocation of a subcommand
+// is usually independent of the first. What the observation supports is that
+// the session is no longer a clean test of this line, which is why these
+// become blocked rather than skipped: the cascade stops being reported as
+// several broken lines without any of them being called fine. A gap counts as
+// not having run, since the document's own hole stopped the line.
 func resolveDependentFailures(run *exampleRun, plan *Plan) {
 	bins := map[string]bool{}
 	for _, b := range plan.Binaries {
@@ -626,17 +653,20 @@ func resolveDependentFailures(run *exampleRun, plan *Plan) {
 				continue
 			}
 			if cited := citedSkipped(l.output, skippedCmds); cited != "" {
-				l.Status = StatusSkipped
-				l.Detail = fmt.Sprintf("needs `%s`, which did not run", cited)
+				l.Status = StatusBlocked
+				l.Reason = ReasonDependsOnSkipped
+				l.Detail = fmt.Sprintf("failed naming `%s`, which did not run", cited)
 				continue
 			}
 			if prior := earlierSkipInFamily(s.Lines[:li], l.Cmd, bins); prior != "" {
-				l.Status = StatusSkipped
-				l.Detail = fmt.Sprintf("follows `%s`, which did not run", prior)
+				l.Status = StatusBlocked
+				l.Reason = ReasonDependsOnSkipped
+				l.Detail = fmt.Sprintf("failed after `%s` did not run", prior)
 				continue
 			}
 			if need := namedSiblingNotRun(l.output, bins, passed); need != "" {
-				l.Status = StatusSkipped
+				l.Status = StatusBlocked
+				l.Reason = ReasonDependsOnSkipped
 				l.Detail = fmt.Sprintf("says to run `%s` first, which did not run", need)
 			}
 		}
@@ -673,19 +703,30 @@ func earlierSkipInFamily(prior []lineResult, cmd string, bins map[string]bool) s
 
 // summarize reduces per-line outcomes to the aggregate status and detail:
 // the first failure names the broken line, a timeout names the hang, a pass
-// counts coverage, and a run with nothing to do says why.
+// counts coverage, and a run with nothing to do says why. Blocked lines are
+// counted and reported but do not outrank a pass, since a session that
+// verified lines did verify them; what they must never do is disappear, so
+// the count travels with every summary that has one.
 func summarize(run *exampleRun) (Status, string) {
-	ran, skipped, gaps := 0, 0, 0
-	var firstFail, firstTimeout, firstSkip, firstGap string
+	ran, skipped, gaps, blocked, synthetic := 0, 0, 0, 0, 0
+	var firstFail, firstTimeout, firstSkip, firstGap, firstBlocked string
 	for _, s := range run.Steps {
 		for _, l := range s.Lines {
 			switch l.Status {
 			case StatusVerified:
 				ran++
+				if len(l.Synthetic) > 0 {
+					synthetic++
+				}
 			case StatusSkipped:
 				skipped++
 				if firstSkip == "" {
 					firstSkip = l.Detail
+				}
+			case StatusBlocked:
+				blocked++
+				if firstBlocked == "" {
+					firstBlocked = fmt.Sprintf("%s %q %s", s.ID, l.Cmd, l.Detail)
 				}
 			case StatusGap:
 				gaps++
@@ -703,6 +744,15 @@ func summarize(run *exampleRun) (Status, string) {
 			}
 		}
 	}
+	tally := fmt.Sprintf("%d lines ran, %d skipped", ran, skipped)
+	if blocked > 0 {
+		tally += fmt.Sprintf(", %d blocked", blocked)
+	}
+	if synthetic > 0 {
+		// Named on the summary line rather than only in the JSON, since the
+		// summary is what a reader actually reads before believing the green.
+		tally += fmt.Sprintf(" (%d against fabricated files)", synthetic)
+	}
 	switch {
 	case firstFail != "":
 		return StatusFail, firstFail
@@ -712,7 +762,11 @@ func summarize(run *exampleRun) (Status, string) {
 		return StatusGap, fmt.Sprintf("%d %s, first: %s",
 			gaps, plural(gaps, "documentation gap", "documentation gaps"), firstGap)
 	case ran > 0:
-		return StatusVerified, fmt.Sprintf("%d lines ran, %d skipped", ran, skipped)
+		return StatusVerified, tally
+	case blocked > 0:
+		// Nothing was verified and something was tried without settling. The
+		// session has no verdict on this document and must not imply one.
+		return StatusBlocked, fmt.Sprintf("%s, first: %s", tally, firstBlocked)
 	default:
 		detail := "no lines runnable"
 		if firstSkip != "" {
@@ -733,9 +787,13 @@ func documentedNonzeroCode(code int) bool {
 	return code >= 1 && code <= 125 && code != 124
 }
 
-// classifyLineResult turns one recorded exit into a line result. Errors that
-// only mean the container lacks a terminal, credentials, a network service,
-// a helper command, or data are honest skips, not documentation failures.
+// classifyLineResult turns one recorded exit into a line result. The rules
+// fall into three kinds and the distinction is the point. Some evidence comes
+// from outside the tool, such as the shell's own 127 or a terminal error, and
+// excuses the line as a skip. Some evidence is only a resemblance, such as a
+// 403 that may be a missing account or a wrong argument, and leaves the line
+// blocked: run, unexplained, and claiming nothing about the document. What
+// resembles nothing is a failure.
 func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 	documented map[string]bool) lineResult {
 	lr.Code = o.code
@@ -749,11 +807,23 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		lr.Detail = fmt.Sprintf("gave no result within %s", lineTimeout)
 	case o.code == 0:
 		lr.Status = StatusVerified
+		if len(lr.Synthetic) > 0 {
+			// The claim is narrower than a bare pass and has to say so: the
+			// command accepted a file kibble wrote, because the document
+			// named one and never created it.
+			lr.Detail = "ran against " + strings.Join(lr.Synthetic, ", ") +
+				", which kibble fabricated because no documented step creates it"
+		}
 	case l.NonzeroOK && documentedNonzeroCode(o.code):
 		lr.Status = StatusVerified
 		lr.Detail = fmt.Sprintf("exit %d is documented behavior", o.code)
-	case o.code == 127 || reShellNotFound.MatchString(o.output) ||
-		reNoExec.MatchString(o.output):
+	case reCrash.MatchString(o.output):
+		// Checked before every excuse: a process that died did not report a
+		// condition kibble can forgive, whatever else it printed first.
+		lr.Status = StatusFail
+		lr.Detail = fmt.Sprintf("crashed with exit %d: %s", o.code, tail)
+	case o.code == 127 || reNoExec.MatchString(o.output) ||
+		missingCommandName(lr.Cmd, o.output) != "":
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonMissingDependency
 		lr.Detail = "invokes a command the container lacks: " + tail
@@ -761,10 +831,18 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonMissingDependency
 		lr.Detail = "needs a build feature this install does not include: " + tail
-	case reMissingDep.MatchString(o.output):
+	case reMissingBinary.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonMissingDependency
-		lr.Detail = "needs a system dependency the container lacks: " + tail
+		lr.Detail = "names a program absent from PATH: " + tail
+	case reMissingDep.MatchString(o.output):
+		// A tool says "is not installed" about a system package the container
+		// lacks and about its own plugins alike. The first is the container's
+		// gap and the second is a step the document never wrote down, and the
+		// wording does not separate them.
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonMissingDependency
+		lr.Detail = "reports something not installed, which may be the container or a missing step: " + tail
 	case reTTYErr.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonInteractive
@@ -782,28 +860,39 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		lr.Reason = ReasonMissingFixture
 		lr.Detail = "needs a setting the reader supplies: " + tail
 	case reCredErr.MatchString(o.output):
-		lr.Status = StatusSkipped
+		// A refusal is a refusal. Whether the reader is missing an account or
+		// the document names the wrong resource produces the same 403, and
+		// this rule cannot tell which, so it settles neither.
+		lr.Status = StatusBlocked
 		lr.Reason = ReasonNeedsCredentials
-		lr.Detail = "needs credentials a clean container lacks"
+		lr.Detail = "was refused, which may be missing credentials or a wrong argument: " + tail
 	case reNetErr.MatchString(o.output):
-		lr.Status = StatusSkipped
+		// The container runs no services, and a document may also name a port
+		// nothing was ever going to serve. Both refuse the connection.
+		lr.Status = StatusBlocked
 		lr.Reason = ReasonMissingDependency
-		lr.Detail = "needs a network service the container lacks"
+		lr.Detail = "could not reach a service, which the container may lack or the document may misname: " + tail
 	case reNoChange.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonNoDataExpected
 		lr.Detail = "changed nothing, since the session cannot approve it: " + tail
 	case o.code == 1 && strings.TrimSpace(o.output) == "":
-		// A search reports no match by exiting 1 and saying nothing. Silence
-		// and a 1 settle nothing either way, so the line is not a verdict on
-		// the document.
-		lr.Status = StatusSkipped
+		// A search reports no match by exiting 1 and saying nothing. So does
+		// a command that died without a word. Silence is the absence of
+		// evidence, so it cannot be read as the good case.
+		lr.Status = StatusBlocked
 		lr.Reason = ReasonNoOutputExit1
-		lr.Detail = "exited 1 without output, as a search does when it matches nothing"
-	case reNoData.MatchString(o.output) || tail == "not found":
+		lr.Detail = "exited 1 without output, which a search does on no match and a broken command also does"
+	case reNoData.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonNoDataExpected
 		lr.Detail = "query found no data in the fresh session"
+	case tail == "not found":
+		// Two words and a nonzero exit. They are what a lookup prints when it
+		// holds nothing and what a broken command prints when it breaks.
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonNoDataExpected
+		lr.Detail = "said only \"not found\", which settles nothing about the document"
 	case reEmptyInput.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonInteractive
@@ -877,6 +966,27 @@ func missingFileArg(cmd, output string) string {
 		return name
 	}
 	return ""
+}
+
+// missingCommandName returns the program a shell reported missing, or empty
+// when the output's "not found" is the tool talking about its own input. The
+// two are worded identically: dash says "zip: not found" for a program a
+// Makefile reached for, and a tool says "apikey: not found" for a key it
+// looked up. The name separates them. A name the documented line passes as an
+// argument is the tool's subject, not a program the container lacks, so it
+// convicts nothing and the line falls through to its real verdict.
+func missingCommandName(cmd, output string) string {
+	m := reShellNotFound.FindStringSubmatch(output)
+	if m == nil {
+		return ""
+	}
+	name := m[1]
+	for _, tok := range strings.Fields(cmd) {
+		if strings.Trim(tok, "'\"\x60") == name {
+			return ""
+		}
+	}
+	return name
 }
 
 // tarSkipDirs are directories a build produces or a package manager fills.

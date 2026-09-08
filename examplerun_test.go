@@ -142,13 +142,16 @@ func TestClassifyExample(t *testing.T) {
 		Wrapped:    map[string]bool{"b1:0": true},
 		WantStatus: StatusTimeout,
 		WantLines:  []Status{StatusTimeout, StatusVerified, StatusVerified},
-	}, { // Test 5: a killed session times out the running line, rest not run.
+	}, { // Test 5: a killed session times out the running line, and the lines
+		// behind it are blocked rather than skipped. The session spent its
+		// budget before reaching them, which is kibble's limit and not a
+		// decision it made about the document.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
 			"KIBBLE-STEP b1 START",
 			"KIBBLE-LINE b1:0 CODE=0"),
 		WantStatus: StatusTimeout,
-		WantLines:  []Status{StatusVerified, StatusTimeout, StatusSkipped},
+		WantLines:  []Status{StatusVerified, StatusTimeout, StatusBlocked},
 	}, { // Test 6: an aborted install skips the examples.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=1",
@@ -214,8 +217,10 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-DONE"),
 		WantStatus: StatusVerified,
 		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
-	}, { // Test 8d: a search that matches nothing exits 1 and says nothing,
-		// which settles nothing about the document either way.
+	}, { // Test 8d: an exit 1 with nothing to say is blocked. A search that
+		// matches nothing looks exactly like this, and so does a command that
+		// died without a word, so the silence is not evidence for the good
+		// reading.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
 			"KIBBLE-STEP b1 START",
@@ -224,7 +229,7 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
 		WantStatus: StatusVerified,
-		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
+		WantLines:  []Status{StatusVerified, StatusBlocked, StatusVerified},
 	}, { // Test 8e: an exit 1 that printed a real error is still a failure.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
@@ -248,7 +253,11 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-DONE"),
 		WantStatus: StatusVerified,
 		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
-	}, { // Test 9: a missing system dependency skips, not fails.
+	}, { // Test 9: a tool reporting something not installed is blocked, not
+		// skipped and not failed. This wording is how a tool names a system
+		// package the container lacks and how it names its own plugin, which
+		// would be a step the document never wrote down. Kibble cannot read
+		// which from the sentence, so it claims neither.
 		Out: sessionOut(
 			"KIBBLE-BUILD CODE=0",
 			"KIBBLE-STEP b1 START",
@@ -258,7 +267,7 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
 		WantStatus: StatusVerified,
-		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
+		WantLines:  []Status{StatusVerified, StatusBlocked, StatusVerified},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -339,7 +348,7 @@ func TestClassifyExampleMarkerRecovery(t *testing.T) {
 			"KIBBLE-LINE b1:2 CODE=0",
 			"KIBBLE-DONE"),
 		WantStatus: StatusVerified,
-		WantLines:  []Status{StatusVerified, StatusSkipped, StatusVerified},
+		WantLines:  []Status{StatusVerified, StatusBlocked, StatusVerified},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -367,33 +376,37 @@ func TestResolveDependentFailures(t *testing.T) {
 	tests := []struct {
 		Steps []exampleStep
 		Want  []Status
-	}{{ // Test 0: a failure citing a skipped command becomes a skip.
+	}{{ // Test 0: a failure citing a skipped command is blocked. Naming the
+		// command is grounds to stop calling the line broken, since the
+		// session never ran what it asked for, but not grounds to call the
+		// document fine.
 		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
 			{Cmd: "tool recall x", Status: StatusFail,
 				output: "no index found: run `tool reindex` first"},
 			{Cmd: "tool reindex", Status: StatusSkipped},
 		}}},
-		Want: []Status{StatusSkipped, StatusSkipped},
-	}, { // Test 1: a failure after a skip in the same family becomes a skip.
+		Want: []Status{StatusBlocked, StatusSkipped},
+	}, { // Test 1: a failure after a skip in the same family is blocked. The
+		// shared subcommand is a resemblance, not a cause.
 		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
 			{Cmd: "tool encrypt enable", Status: StatusSkipped},
 			{Cmd: "tool encrypt disable", Status: StatusFail, output: "vault is not encrypted"},
 		}}},
-		Want: []Status{StatusSkipped, StatusSkipped},
+		Want: []Status{StatusSkipped, StatusBlocked},
 	}, { // Test 2: an unrelated failure stays a failure.
 		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
 			{Cmd: "tool stats", Status: StatusFail, output: "panic: bad state"},
 		}}},
 		Want: []Status{StatusFail},
 	}, { // Test 2a: a failure whose output tells the reader to run a sibling
-		// command that never ran is describing session state, not a hole in
-		// the document.
+		// command that never ran is describing session state. That is reason
+		// enough not to convict the document and not reason to clear it.
 		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
 			{Cmd: "tool login", Status: StatusSkipped},
 			{Cmd: "tool promote", Status: StatusFail,
 				output: "tool: no hold id: pass --id or run tool request first"},
 		}}},
-		Want: []Status{StatusSkipped, StatusSkipped},
+		Want: []Status{StatusSkipped, StatusBlocked},
 	}, { // Test 2b: the same failure stands when the named command did run
 		// and passed, since then the document's sequence really is broken.
 		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
@@ -403,20 +416,21 @@ func TestResolveDependentFailures(t *testing.T) {
 		}}},
 		Want: []Status{StatusVerified, StatusFail},
 	}, { // Test 3: a failure citing a line the document's own gap stopped is
-		// a skip, so the gap is reported once instead of once per dependent
-		// command. The gap itself stays a gap.
+		// blocked, so the gap is reported once instead of once per dependent
+		// command. The gap itself stays a gap, and it is the finding worth
+		// fixing.
 		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
 			{Cmd: "tool recall x", Status: StatusFail,
 				output: "no index found: run `tool reindex` first"},
 			{Cmd: "tool reindex", Status: StatusGap},
 		}}},
-		Want: []Status{StatusSkipped, StatusGap},
-	}, { // Test 4: a failure after a gap in the same family is a skip too.
+		Want: []Status{StatusBlocked, StatusGap},
+	}, { // Test 4: a failure after a gap in the same family is blocked too.
 		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
 			{Cmd: "tool index build", Status: StatusGap},
 			{Cmd: "tool index query", Status: StatusFail, output: "no index"},
 		}}},
-		Want: []Status{StatusGap, StatusSkipped},
+		Want: []Status{StatusGap, StatusBlocked},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

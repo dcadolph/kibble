@@ -89,6 +89,11 @@ type PlanLine struct {
 	Gap bool `json:"gap,omitempty"`
 	// NonzeroOK accepts a nonzero exit as documented behavior.
 	NonzeroOK bool `json:"nonzeroOk,omitempty"`
+	// Synthetic names the files kibble fabricated so this line had something
+	// to read. The document referenced them and never created them, so a pass
+	// here proves the command accepts kibble's invented input, which is a
+	// weaker claim than the documented example working.
+	Synthetic []string `json:"synthetic,omitempty"`
 	// Line is the 1-based README line the command sits on, 0 when unknown.
 	Line int `json:"line,omitempty"`
 }
@@ -352,6 +357,11 @@ type planner struct {
 	packages map[string]bool
 	// fixed tracks fixture paths already fabricated, to avoid duplicates.
 	fixed map[string]bool
+	// synthetic collects the fixtures fabricated while classifying the line
+	// currently being planned, and is drained onto that line. A line that
+	// reads a file kibble invented was not tested against the document's own
+	// example, and the verdict has to be able to say so.
+	synthetic []string
 	// cfg is the repo's .kibble.yml overrides, or nil.
 	cfg *ExamplesConfig
 }
@@ -418,7 +428,9 @@ func (pl *planner) addBlock(block codeBlock) {
 		if shownErr[strings.TrimSpace(flat)] {
 			line.NonzeroOK = true
 		}
+		pl.synthetic = nil
 		line.Skip, line.SkipReason, line.Gap = pl.skipReason(flat)
+		line.Synthetic = pl.synthetic
 		if line.Skip == "" && scopedTo != "" {
 			line.Skip = fmt.Sprintf("documented for %s rather than this container", scopedTo)
 			line.SkipReason = ReasonOtherPlatform
@@ -982,6 +994,7 @@ func (pl *planner) missingFile(flat string) string {
 				pl.created[rel] = true
 				pl.plan.Fixtures = append(pl.plan.Fixtures, Fixture{Path: rel, Contents: synthFixture})
 			}
+			pl.synthetic = append(pl.synthetic, rel)
 			continue
 		}
 		return tok

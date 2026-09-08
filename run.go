@@ -42,8 +42,18 @@ const (
 	// something that does not exist.
 	StatusFail Status = "FAIL"
 	// StatusSkipped means kibble intentionally did not run this step. The
-	// Reason field carries why in a machine-readable form.
+	// Reason field carries why in a machine-readable form. A skip is a
+	// decision made before execution, on evidence kibble holds: a placeholder
+	// token, another platform, a file no documented step creates.
 	StatusSkipped Status = "SKIP"
+	// StatusBlocked means kibble ran the step and could not establish whether
+	// the documented behavior works. It is the honest answer whenever the only
+	// evidence is that the output resembled a condition kibble excuses: a
+	// status code that reads as missing credentials, a refusal that reads as a
+	// missing service, a failure that names a command which did not run. Such
+	// output is consistent with a working document and with a broken one, and
+	// a skip would claim the first. Blocked claims neither.
+	StatusBlocked Status = "BLOCKED"
 	// StatusGap means the documentation is incomplete: a documented line
 	// names a file, directory, or variable that no documented step creates,
 	// so a reader following the document cannot run it. Unlike a skip, the
@@ -92,6 +102,8 @@ func (s Status) Bucket() Bucket {
 		return BucketDocDrift
 	case StatusSkipped:
 		return BucketNotAttempted
+	case StatusBlocked:
+		return BucketInconclusive
 	default:
 		return BucketInconclusive
 	}

@@ -114,11 +114,43 @@ environment cannot speak to either way. kibble answers one question well, whethe
 documented steps work from zero in a reproducible environment, and declines the larger
 question it cannot settle.
 
-## SKIP, GAP, and FAIL
+## SKIP, BLOCKED, GAP, and FAIL
 
-A `SKIP` says kibble could not judge the line. A `GAP` says it did judge it, and the
-document is incomplete: the line names a file, directory, or setting that no documented
-step creates. `cp skill/SKILL.md ~/.claude/skills/tool/SKILL.md` fails for every reader
+A `SKIP` says kibble decided not to run the line, and decided it beforehand, on
+evidence it holds: the line carries a placeholder, its block is scoped to another
+platform, the shell itself reported the command missing. The reader can check the
+reasoning without trusting a guess about what an error message meant.
+
+A `BLOCKED` says kibble ran the line and could not read the result. The two were once
+the same verdict, and collapsing them was the most dangerous thing kibble did. Most of
+what earned a skip after execution was a resemblance rather than a fact: `403` is a
+missing account or a documented bucket that does not exist, `connection refused` is a
+service the container lacks or a port the document got wrong, `is not installed` is a
+system package or a plugin step nobody wrote down, and an exit 1 with no output is a
+search matching nothing or a command dying without a word. Each pair produces identical
+output, so a rule reading that output cannot separate them, and a skip told the reader
+the document was never in question. That is a false negative, and for a tool whose
+value is "believe my verdict instead of checking yourself" it is the one failure that
+costs more than being wrong loudly. `BLOCKED` is what those cases say now: run,
+unreadable, claiming neither direction. It counts, it prints, and it fails `-strict`.
+
+The same rule governs the causal downgrades. A failure whose output names a command
+that never ran, and a failure following a skipped line of the same subcommand, are both
+reasons to stop reporting one root cause as several broken lines. Neither is evidence
+of cause: a tool prints its own name in hints unrelated to why it failed. So they
+suppress the cascade without clearing the document, which is exactly `BLOCKED`.
+
+A pass has to say what it was a pass against. When a documented line reads a file no
+documented step creates, kibble fabricates one, and only for prose extensions, since a
+faked `.json` or `.yaml` would change what the example means. Even so the exit that
+follows proves the command accepts kibble's invented input, which is a narrower claim
+than the documented example working. So the fabricated files are recorded on the line,
+named in its detail, counted on the session summary, and carried in the JSON as
+`synthetic`. The verdict stays `VERIFIED`, because the command did run and did succeed;
+what changes is that it can no longer be read as more than it is.
+
+A `GAP` says kibble did judge the line, and the document is incomplete: the line names
+a file, directory, or setting that no documented step creates. `cp skill/SKILL.md ~/.claude/skills/tool/SKILL.md` fails for every reader
 when nothing creates that directory first, and a command that exits reporting a setting
 the document never mentions is the same kind of hole. Both used to disappear into the
 same silent skip as a placeholder the reader is meant to fill in, which is the difference

@@ -86,6 +86,11 @@ func (p palette) mark(s Status) string {
 		return p.yellow("!")
 	case StatusTimeout:
 		return p.yellow("⏱")
+	case StatusBlocked:
+		// A question, not a dash. The dash is for steps kibble chose to leave
+		// alone; this one was run and came back unreadable, and a reader who
+		// sees the two as the same mark learns the wrong thing from both.
+		return p.yellow("?")
 	default:
 		return p.dim("–")
 	}
@@ -100,7 +105,8 @@ func (p palette) statusWord(s Status) string {
 		return ""
 	case StatusFail, StatusError:
 		return p.red(string(s)) + "  "
-	case StatusBuilt, StatusRan, StatusExists, StatusCrossArch, StatusGap, StatusDrift, StatusTimeout:
+	case StatusBuilt, StatusRan, StatusExists, StatusCrossArch, StatusGap, StatusDrift,
+		StatusTimeout, StatusBlocked:
 		return p.yellow(string(s)) + "  "
 	default:
 		return p.dim(string(s)) + "  "

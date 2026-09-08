@@ -147,7 +147,14 @@ verdict claims the documented step works:
   without installing it, and `CROSS-ARCH` installed a binary for another architecture
   this host cannot run. None of them is a pass, and none is an accusation.
 - `FAIL` ran and did not work, or named a package that does not exist.
-- `SKIP` means kibble chose not to run the line; a machine-readable reason says why.
+- `SKIP` means kibble chose not to run the line, before running it, on evidence it
+  holds: a placeholder to fill in, a block scoped to another platform, a command the
+  shell reported missing. A machine-readable reason says which.
+- `BLOCKED` means kibble ran the line and could not establish whether it works. The
+  output resembled a condition kibble excuses, and resembling is all it did: a 403 is
+  a missing account or a wrong argument, a refused connection is an absent service or a
+  misnamed port, an exit 1 with no output is a search finding nothing or a command
+  dying quietly. A skip would claim the document is fine. `BLOCKED` claims nothing.
 - `GAP` means the document is incomplete: a file, directory, or setting nothing creates.
 - `DRIFT` means the docs cite a flag or subcommand the binary no longer has.
 - `TIMEOUT` and `ERROR` keep slow networks and kibble's own trouble out of your verdict.
