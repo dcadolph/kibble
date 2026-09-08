@@ -118,7 +118,7 @@ func statusBadge(s Status) string {
 		return "✅ " + string(s)
 	case StatusFail:
 		return "❌ " + string(s)
-	case StatusDrift, StatusError, StatusTimeout:
+	case StatusDrift, StatusError, StatusTimeout, StatusBlocked:
 		return "⚠️ " + string(s)
 	default:
 		return "⏭️ " + string(s)

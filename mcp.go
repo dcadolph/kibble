@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/dcadolph/kibble/internal/sandbox"
 )
 
 // checkInput asks for a run against one repository.
@@ -32,7 +34,8 @@ type checkOutput struct {
 type checkRow struct {
 	// Kind is the step: go-install, example, flag-check, doc-coverage, brew.
 	Kind string `json:"kind"`
-	// Status is PASS, FAIL, GAP, SKIP, DRIFT, TIMEOUT, or ERROR.
+	// Status is one of the verdict names: VERIFIED, BUILT, RAN, EXISTS,
+	// CROSS-ARCH, FAIL, SKIP, BLOCKED, GAP, DRIFT, TIMEOUT, or ERROR.
 	Status string `json:"status"`
 	// Detail explains the outcome.
 	Detail string `json:"detail,omitempty"`
@@ -159,7 +162,7 @@ func checkToolFor(cfg config) func(context.Context, *mcpsdk.CallToolRequest, che
 		}
 		steps, _, problems := collect([]string{in.Path}, true)
 		if hasRunnable(steps) {
-			if err := DockerAvailable(ctx); err != nil {
+			if err := sandbox.Available(ctx); err != nil {
 				return nil, checkOutput{}, fmt.Errorf("kibble needs Docker to run install steps: %w", err)
 			}
 		}
