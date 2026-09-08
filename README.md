@@ -102,7 +102,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dcadolph/kibble@v0.20.0
+      - uses: dcadolph/kibble@v1
         with:
           repo: .
           # args: -strict   # fail on timeouts, smoke failures, drift, and gaps too
@@ -111,8 +111,12 @@ jobs:
 The runner already has Docker. A failed install or example is annotated on the exact
 README line that broke, so it shows up inline in the pull request the way a failing test
 does; doc drift becomes a warning annotation, and the job summary gets the full results
-table. The action downloads the released binary for the pinned version and verifies its
-checksum before running it. kibble runs on its own README this way on every commit.
+table. kibble runs on its own README this way on every commit.
+
+`@v1` follows every release. Pin an exact release tag instead when you want a run to be
+reproducible a year from now: the action downloads the released binary for whichever
+version it resolves to and verifies its checksum before running it, so a CI log can
+always say which kibble produced its verdict.
 
 ## Flags
 
