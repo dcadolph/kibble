@@ -32,7 +32,8 @@ type checkOutput struct {
 type checkRow struct {
 	// Kind is the step: go-install, example, flag-check, doc-coverage, brew.
 	Kind string `json:"kind"`
-	// Status is PASS, FAIL, GAP, SKIP, DRIFT, TIMEOUT, or ERROR.
+	// Status is one of the verdict names: VERIFIED, BUILT, RAN, EXISTS,
+	// CROSS-ARCH, FAIL, SKIP, BLOCKED, GAP, DRIFT, TIMEOUT, or ERROR.
 	Status string `json:"status"`
 	// Detail explains the outcome.
 	Detail string `json:"detail,omitempty"`

@@ -39,7 +39,10 @@ jobs:
               echo "::endgroup::"
               continue
             fi
-            got=$(jq -r '[([.[]|select(.status=="PASS")]|length),
+            # The status is VERIFIED, not PASS. It was PASS until the verdict
+            # taxonomy was rewritten, and this line was not, so the comparison
+            # counted a status nothing emits and every row read as drifted.
+            got=$(jq -r '[([.[]|select(.status=="VERIFIED")]|length),
                           ([.[]|select(.status=="FAIL")]|length),
                           ([.[]|select(.status=="GAP")]|length)]
                          | map(tostring) | join(",")' \
