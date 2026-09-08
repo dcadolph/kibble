@@ -200,8 +200,10 @@ verdict about your reader's laptop; it is a verdict about a clean machine.
 
 kibble executes commands it read out of documentation, which means **a README is
 untrusted input**: anyone who can change the docs can change what runs. Every command
-runs in a fresh, unprivileged, capability-dropped container with nothing mounted from
-the host, and the network stays open because verifying an install is fetching it. Treat
+runs in a fresh container with nothing mounted from the host, most Linux capabilities
+dropped, and `no-new-privileges` set. It is not an unprivileged container: the session
+is root inside it, because installing the packages a document depends on needs to be.
+The network stays open too, because verifying an install is fetching it. Treat
 a kibble run the way you treat a build script, and read [docs/SECURITY.md](docs/SECURITY.md)
 before pointing it at a repository you do not trust.
 
