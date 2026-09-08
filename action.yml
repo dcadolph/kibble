@@ -10,9 +10,9 @@ inputs:
     default: "."
   version:
     description: >-
-      kibble release to run, such as v0.20.0. Defaults to the ref this action
-      was pinned at, so `uses: dcadolph/kibble@v0.20.0` runs kibble v0.20.0. A
-      non-release ref such as v1 resolves to the latest release.
+      kibble release to run, as a full version tag. Defaults to the ref this
+      action was pinned at, so pinning the action to a release tag runs that
+      release. A non-release ref such as v1 resolves to the latest release.
     required: false
     default: ""
   args:
