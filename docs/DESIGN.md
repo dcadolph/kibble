@@ -305,3 +305,45 @@ healthy document one edit at a time, a flag typo, a renamed subcommand, a comman
 only mention was deleted, and checks that the untouched tree is green and every single
 edit flips it. A verifier is only worth trusting when both directions are pinned:
 correct documentation passes, and one edit of rot is caught.
+
+## Mutations that try to fool the rules
+
+The mutation corpus above corrupts documentation in ways that look like damage. That
+is only half the risk, and not the dangerous half. The failure a verifier cannot
+afford is the opposite one: a documented line that is genuinely broken, whose output
+happens to resemble a condition kibble excuses, reported as though the document was
+never in question. A false positive is an argument with the reader. A false negative
+is the tool quietly lying to them.
+
+So a second suite corrupts in the other direction. Each case is a broken line worded
+so a pattern match alone would call it fine: a migration that dies silently, exiting 1
+with nothing to say, which is also how a search reports no match. A tool's own lookup
+failure worded exactly as a shell reports a missing program. A 403 earned by a
+documented argument that is wrong rather than by a missing account. A crash that
+printed an empty-result line before it died. A pipeline whose failure only looks
+dependent on an earlier skipped command because a hint mentioned its name.
+
+When that suite was first written, eight of its ten cases came back SKIP. Every one of
+those was kibble telling a reader their documentation was fine when it had established
+nothing of the kind. That measurement is what the `BLOCKED` split above was built to
+answer, and the suite is what keeps the answer honest: two of the cases are controls
+that must stay a skip and a pass, so the rules cannot be made safe by convicting
+everything.
+
+## How the code is laid out
+
+Reading a document and executing it are different jobs, and the files say so. The
+planner is split by the question each part answers: what a fence even is and how its
+lines become commands, why a line does not run, what a line needs that the session
+lacks, and what the repository owner's rules override. The executor is split the same
+way: the script the container runs, the probes that ask a binary what it supports, the
+verdict one line's exit earns, and the failures that only look dependent on each other.
+
+Three things are their own packages because they are their own concerns. `internal/shell`
+parses documented commands with a real bash parser and is the only place that decides
+what a line's words are. `internal/verdict` holds the outcome vocabulary, so the
+executor, the report, the JSON, and strict mode cannot drift into disagreeing about
+what a word means. `internal/sandbox` holds the container boundary: the hardening flags,
+the metadata hostnames it closes, and the plumbing that names and tears down containers.
+That one is separate on purpose. It is the security surface, and a security surface
+buried in a thousand lines of result classification is one nobody reviews.

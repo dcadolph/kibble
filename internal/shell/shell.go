@@ -1,4 +1,4 @@
-package main
+package shell
 
 import (
 	"strings"
@@ -19,9 +19,9 @@ import (
 // of guessed at, since a verifier that guesses at syntax has no business
 // claiming what the command did.
 
-// shellCmd is one simple command from a documented line, with its words as
+// Cmd is one simple command from a documented line, with its words as
 // the shell would split them.
-type shellCmd struct {
+type Cmd struct {
 	// Assigns are the NAME=value prefixes attached to this command.
 	Assigns []string
 	// Words are the command and its arguments, one word per argument, with
@@ -34,7 +34,7 @@ type shellCmd struct {
 }
 
 // Name returns the command's program name, or empty when it has none.
-func (c shellCmd) Name() string {
+func (c Cmd) Name() string {
 	if len(c.Words) == 0 {
 		return ""
 	}
@@ -43,18 +43,18 @@ func (c shellCmd) Name() string {
 
 // Arg returns the nth argument after the program name, or empty when the
 // command has no such argument.
-func (c shellCmd) Arg(n int) string {
+func (c Cmd) Arg(n int) string {
 	if n+1 >= len(c.Words) {
 		return ""
 	}
 	return c.Words[n+1]
 }
 
-// shellLine is a parsed documented line.
-type shellLine struct {
+// Line is a parsed documented line.
+type Line struct {
 	// Cmds are the simple commands the line runs, in source order, including
 	// those inside pipelines, lists, subshells, and compound statements.
-	Cmds []shellCmd
+	Cmds []Cmd
 	// Structured marks a line that is more than one simple command: a
 	// pipeline, a list, a redirect, a subshell, a loop, or a conditional.
 	Structured bool
@@ -79,17 +79,17 @@ var shellBuiltins = map[string]bool{
 	"readonly": true, "local": true, "umask": true, "ulimit": true,
 }
 
-// parseShell parses one documented logical line. The second result is false
+// Parse Parses one documented logical line. The second result is false
 // when the line is not something a bash parser accepts, which is a fact
 // about the line worth reporting rather than a reason to fall back to
 // splitting on spaces.
-func parseShell(cmd string) (shellLine, bool) {
+func Parse(cmd string) (Line, bool) {
 	parser := syntax.NewParser(syntax.KeepComments(false), syntax.Variant(syntax.LangBash))
 	file, err := parser.Parse(strings.NewReader(cmd), "")
 	if err != nil {
-		return shellLine{}, false
+		return Line{}, false
 	}
-	var line shellLine
+	var line Line
 	for _, stmt := range file.Stmts {
 		if stmt.Background {
 			line.Background = true
@@ -116,7 +116,7 @@ func parseShell(cmd string) (shellLine, bool) {
 			// through one would otherwise look like it changed nothing.
 			simple++
 			line.StateChanging = true
-			c := shellCmd{Words: []string{n.Variant.Value}}
+			c := Cmd{Words: []string{n.Variant.Value}}
 			for _, a := range n.Args {
 				if a.Name != nil {
 					c.Assigns = append(c.Assigns, a.Name.Value)
@@ -125,7 +125,7 @@ func parseShell(cmd string) (shellLine, bool) {
 			line.Cmds = append(line.Cmds, c)
 		case *syntax.CallExpr:
 			simple++
-			c := shellCmd{}
+			c := Cmd{}
 			for _, a := range n.Assigns {
 				if a.Name != nil {
 					c.Assigns = append(c.Assigns, a.Name.Value)
@@ -223,22 +223,22 @@ func nodeText(node syntax.Node) string {
 	return b.String()
 }
 
-// shellWords returns the words of the first simple command in a line, with
+// Words returns the words of the first simple command in a line, with
 // quoting resolved, and reports whether the line parsed. It is the honest
 // replacement for strings.Fields: a quoted argument comes back as one word.
-func shellWords(cmd string) ([]string, bool) {
-	line, ok := parseShell(cmd)
+func Words(cmd string) ([]string, bool) {
+	line, ok := Parse(cmd)
 	if !ok || len(line.Cmds) == 0 {
 		return nil, ok
 	}
 	return line.Cmds[0].Words, true
 }
 
-// shellArgWords returns every word of every simple command in a line, which
+// ArgWords returns every word of every simple command in a line, which
 // is what a rule about the line's arguments needs to consider. Assignment
 // prefixes are not words and are not included.
-func shellArgWords(cmd string) ([]string, bool) {
-	line, ok := parseShell(cmd)
+func ArgWords(cmd string) ([]string, bool) {
+	line, ok := Parse(cmd)
 	if !ok {
 		return nil, false
 	}
@@ -249,12 +249,12 @@ func shellArgWords(cmd string) ([]string, bool) {
 	return out, true
 }
 
-// shellOperands returns every word of a line that is not a command name, so
+// Operands returns every word of a line that is not a command name, so
 // a rule about a line's arguments never trips over the program itself. A
 // tool named `pattern` is the command in `pattern build` and a placeholder in
 // `tool build pattern`, and only the position separates them.
-func shellOperands(cmd string) []string {
-	line, ok := parseShell(cmd)
+func Operands(cmd string) []string {
+	line, ok := Parse(cmd)
 	if !ok {
 		return nil
 	}
@@ -267,12 +267,12 @@ func shellOperands(cmd string) []string {
 	return out
 }
 
-// lineHasPipe reports whether a line joins commands with a pipe, which is
+// HasPipe reports whether a line joins commands with a pipe, which is
 // what decides whether a bare `-` argument is fed by an upstream command or
 // would sit reading the session's empty stdin. A pipe character inside a
 // quoted argument is not one, which is the reason this asks the parse rather
 // than the string.
-func lineHasPipe(cmd string) bool {
+func HasPipe(cmd string) bool {
 	parser := syntax.NewParser(syntax.Variant(syntax.LangBash))
 	file, err := parser.Parse(strings.NewReader(cmd), "")
 	if err != nil {
@@ -288,15 +288,15 @@ func lineHasPipe(cmd string) bool {
 	return piped
 }
 
-// matchesWords reports whether a line contains the match text as a run of
+// MatchesWords reports whether a line contains the match text as a run of
 // consecutive whole words. Both sides are read as shell, so quoting is
 // resolved the same way on each and a match written the way the document
 // writes it selects the same line. When either side does not parse, the
 // comparison falls back to a substring, which is the old behavior and the
 // only thing left to do with text no parser can read.
-func matchesWords(line, match string) bool {
-	hay, hayOK := shellArgWords(line)
-	needle, needleOK := shellArgWords(match)
+func MatchesWords(line, match string) bool {
+	hay, hayOK := ArgWords(line)
+	needle, needleOK := ArgWords(match)
 	if !hayOK || !needleOK || len(needle) == 0 {
 		return strings.Contains(line, match)
 	}
@@ -315,10 +315,10 @@ func matchesWords(line, match string) bool {
 	return false
 }
 
-// parses reports whether a string is something a bash parser accepts. It
+// Parses reports whether a string is something a bash parser accepts. It
 // replaces a quote counter that called `echo "it's fine"` unbalanced and
 // `echo "a" "b` balanced, being wrong in both directions.
-func parses(s string) bool {
-	_, ok := parseShell(s)
+func Parses(s string) bool {
+	_, ok := Parse(s)
 	return ok
 }

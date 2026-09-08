@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/dcadolph/kibble/internal/sandbox"
 )
 
 // TestClassify checks that container output maps to the right status. A build
@@ -120,7 +122,7 @@ func TestDockerExampleSession(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	if err := DockerAvailable(ctx); err != nil {
+	if err := sandbox.Available(ctx); err != nil {
 		t.Skipf("docker is not reachable: %v", err)
 	}
 	plan := &Plan{
@@ -170,7 +172,7 @@ func TestDockerIsolatedLineTimeout(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	if err := DockerAvailable(ctx); err != nil {
+	if err := sandbox.Available(ctx); err != nil {
 		t.Skipf("docker is not reachable: %v", err)
 	}
 	plan := &Plan{
@@ -232,7 +234,7 @@ func TestDockerBackgroundPerLine(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	if err := DockerAvailable(ctx); err != nil {
+	if err := sandbox.Available(ctx); err != nil {
 		t.Skipf("docker is not reachable: %v", err)
 	}
 	plan := &Plan{

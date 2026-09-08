@@ -1,4 +1,4 @@
-package main
+package shell
 
 import (
 	"fmt"
@@ -20,7 +20,7 @@ func TestShellWords(t *testing.T) {
 		WantWords []string
 		WantOK    bool
 	}{{ // Test 0: a quoted argument is one word, not two.
-		In: `tool --name "hello world"`,
+		In:        `tool --name "hello world"`,
 		WantWords: []string{"tool", "--name", "hello world"}, WantOK: true,
 	}, { // Test 1: the unquoted form really is two arguments, and the two
 		// lines must not come back identical.
@@ -37,14 +37,14 @@ func TestShellWords(t *testing.T) {
 		// fact worth reporting rather than splitting on spaces anyway.
 		In: `echo "a" "b`, WantWords: nil, WantOK: false,
 	}, { // Test 5: an escaped space stays inside its word.
-		In: `tool /tmp/some\ path/x.md`,
+		In:        `tool /tmp/some\ path/x.md`,
 		WantWords: []string{"tool", "/tmp/some path/x.md"}, WantOK: true,
 	}}
 
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			got, ok := shellWords(test.In)
+			got, ok := Words(test.In)
 			if ok != test.WantOK {
 				t.Fatalf("ok = %v, want %v", ok, test.WantOK)
 			}
@@ -93,9 +93,9 @@ func TestParseShellShape(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			line, ok := parseShell(test.In)
+			line, ok := Parse(test.In)
 			if !ok {
-				t.Fatalf("parseShell(%q) did not parse", test.In)
+				t.Fatalf("Parse(%q) did not parse", test.In)
 			}
 			if line.Structured != test.WantStruct {
 				t.Errorf("structured = %v, want %v", line.Structured, test.WantStruct)
@@ -146,54 +146,9 @@ func TestMatchesWords(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			if got := matchesWords(test.Line, test.Match); got != test.Want {
-				t.Errorf("matchesWords(%q, %q) = %v, want %v",
+			if got := MatchesWords(test.Line, test.Match); got != test.Want {
+				t.Errorf("MatchesWords(%q, %q) = %v, want %v",
 					test.Line, test.Match, got, test.Want)
-			}
-		})
-	}
-}
-
-// TestRuleSelects checks the structured selectors against what a line
-// actually invokes, rather than against its text. A rule naming a tool must
-// not fire on a line that merely mentions the tool's name.
-func TestRuleSelects(t *testing.T) {
-	t.Parallel()
-
-	pl := &planner{binaries: map[string]bool{"tool": true}}
-	tests := []struct {
-		Rule StepRule
-		Line string
-		Want bool
-	}{{ // Test 0: binary and subcommand both match what is invoked.
-		Rule: StepRule{Binary: "tool", Subcommand: "serve"},
-		Line: "tool serve --port 8080", Want: true,
-	}, { // Test 1: the same binary with a different subcommand does not.
-		Rule: StepRule{Binary: "tool", Subcommand: "serve"},
-		Line: "tool build", Want: false,
-	}, { // Test 2: a subcommand sharing a prefix is a different subcommand.
-		Rule: StepRule{Binary: "tool", Subcommand: "serve"},
-		Line: "tool serve-all", Want: false,
-	}, { // Test 3: the tool's name in an argument is not an invocation, so a
-		// rule about the tool does not reach a line that only names it.
-		Rule: StepRule{Binary: "tool", Subcommand: "serve"},
-		Line: "cat docs/tool serve.md", Want: false,
-	}, { // Test 4: a binary rule with no subcommand selects any invocation.
-		Rule: StepRule{Binary: "tool"}, Line: "tool anything", Want: true,
-	}, { // Test 5: binary and match must both hold when both are given.
-		Rule: StepRule{Binary: "tool", Match: "--port"},
-		Line: "tool serve --port 8080", Want: true,
-	}, { // Test 6: the same rule does not select without the match.
-		Rule: StepRule{Binary: "tool", Match: "--port"},
-		Line: "tool serve", Want: false,
-	}}
-
-	for testNum, test := range tests {
-		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
-			t.Parallel()
-			if got := pl.ruleSelects(test.Rule, test.Line); got != test.Want {
-				t.Errorf("ruleSelects(%+v, %q) = %v, want %v",
-					test.Rule, test.Line, got, test.Want)
 			}
 		})
 	}

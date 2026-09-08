@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/dcadolph/kibble/internal/sandbox"
 )
 
 // checkInput asks for a run against one repository.
@@ -160,7 +162,7 @@ func checkToolFor(cfg config) func(context.Context, *mcpsdk.CallToolRequest, che
 		}
 		steps, _, problems := collect([]string{in.Path}, true)
 		if hasRunnable(steps) {
-			if err := DockerAvailable(ctx); err != nil {
+			if err := sandbox.Available(ctx); err != nil {
 				return nil, checkOutput{}, fmt.Errorf("kibble needs Docker to run install steps: %w", err)
 			}
 		}
