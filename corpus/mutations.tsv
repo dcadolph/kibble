@@ -11,4 +11,11 @@
 # so a coincidental count cannot pass for a catch. Columns are tab-separated:
 # name, clone URL, pinned commit, file, find, replace, STATUS=count, proof.
 ripgrep	https://github.com/BurntSushi/ripgrep.git	3fce3b5bb0236da2df6d99672afb8a719642eca7	README.md	cargo install ripgrep	cargo install ripgreppp	FAIL=1	ripgreppp
-rich-cli	https://github.com/Textualize/rich-cli.git	46f4d2469097be395558768714a5f07ebccf1412	README.md	brew install rich	brew install richhh	GAP=2	richhh
+# The rich-cli row expected GAP=2 until 2026-09-08. kibble has always answered
+# a brew name that resolves nowhere with FAIL, which is what docs/DESIGN.md
+# says it should and what the unit suite already asserted, so the row was
+# wrong rather than the engine. It went unnoticed because the job compared a
+# status nothing emits and every row read as failing. Verified the same way
+# the repos.tsv counts were: kibble built before and after the change that
+# uncovered it answers FAIL=1 naming richhh either way.
+rich-cli	https://github.com/Textualize/rich-cli.git	46f4d2469097be395558768714a5f07ebccf1412	README.md	brew install rich	brew install richhh	FAIL=1	richhh
