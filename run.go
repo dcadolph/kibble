@@ -195,7 +195,13 @@ var reNewerRust = regexp.MustCompile(`(?i)requires rustc ([0-9][0-9.]*)`)
 // reNetworkError matches container output that names a network failure, so a
 // flaky connection is reported as kibble's error rather than broken docs.
 var reNetworkError = regexp.MustCompile(
-	`Connection refused|Could not resolve host|Temporary failure in name resolution|Network is unreachable|TLS handshake timeout|connection reset by peer|Connection timed out`)
+	`Connection refused|Could not resolve host|Temporary failure in name resolution|Network is unreachable|TLS handshake timeout|connection reset by peer|Connection timed out|` +
+		// Node and npm report a failed fetch as a libuv errno rather than in
+		// any of the wordings above, so a registry that blinked was read as the
+		// document being wrong. That is how a corpus repository failed one run
+		// and passed the next two with nothing changed between them.
+		`\b(EAI_AGAIN|ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH)\b|` +
+		`getaddrinfo|socket hang up|request to \S+ failed, reason`)
 
 // imageFor returns the container image a step runs in. A clone recipe runs in
 // the image that provides the toolchain its commands assume, so a Rust or Node
