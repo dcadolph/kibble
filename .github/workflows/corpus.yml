@@ -49,13 +49,28 @@ jobs:
                   "/tmp/${name}.json")
             if [ "$got" != "$expect" ]; then
               echo "::error::${name}: verdicts moved: expected ${expect} (pass,fail,gap), got ${got}"
+              # A moved count says a verdict changed and not which one, so the
+              # rows are printed here. Reading them is the whole job of anyone
+              # who has to decide whether the new verdict is the better one,
+              # and without them that person has to reproduce the run first.
+              jq -r '.[]|"    \(.status)\t\(.kind)\t\(.detail // "")"' "/tmp/${name}.json"
               status=1
             else
               echo "${name}: ${got} as expected"
             fi
             echo "::endgroup::"
           done < corpus/repos.tsv
+          # Kept whatever the counts said. A count that moved is a question
+          # about judgment, and answering it needs the per-line evidence rather
+          # than the totals the log already carried.
           exit "$status"
+      - name: Keep the verdicts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-verdicts
+          path: /tmp/*.json
+          if-no-files-found: ignore
       # Each mutation row corrupts one documented line of a pinned repository
       # and asserts kibble reaches the expected verdict on the damage. The
       # healthy counts above prove kibble does not cry wolf; these prove rot
