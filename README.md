@@ -20,10 +20,10 @@
 </p>
 
 Eating your own dog food means using what you ship the way a stranger would. Nobody does
-it for documentation, because your machine already has everything installed and the
-instructions pass by inspection. kibble is the bowl: it runs your documented steps in a
-clean Linux container from zero, as a reader with nothing would, so a broken install
-fails in CI instead of in their terminal.
+it for documentation. Your machine already has everything installed, and you stopped
+reading your own docs the day the workflow became muscle memory. kibble is the bowl: it
+runs your documented steps in a clean Linux container from zero, as a reader with
+nothing would, so a broken install fails in CI instead of in their terminal.
 
 That container is one environment, not every environment. kibble answers whether your
 documentation works from zero in a reproducible Linux container, which is a narrower
