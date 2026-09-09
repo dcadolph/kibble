@@ -153,7 +153,14 @@ var reWrapperSummary = regexp.MustCompile(
 		`error: could not compile|error: failed to compile|error: build failed|` +
 		`FAILED:|ninja: build stopped|` +
 		`To reuse those artifacts|Blocking waiting for file lock|` +
-		`(Compiling|Building|Finished|Downloading|Updating) )`)
+		`(Compiling|Building|Finished|Downloading|Updating) )|` +
+		// Modern npm prefixes every line, so the bare prefix says nothing about
+		// which line matters. These are the ones that never do: the exit code,
+		// the install path, the command it ran, its own upgrade nagging, and
+		// the footer naming a debug log inside a container nobody can open.
+		// Skipping them is what leaves the sentence that names the cause.
+		`^npm (notice|warn|WARN)\b|` +
+		`^npm error (code|path|signal|errno|syscall|command|A complete log)\b`)
 
 // reUsageHeading matches the banner a tool prints above its own usage screen
 // when it rejects an argument.
@@ -165,7 +172,11 @@ var reUsageHeading = regexp.MustCompile(`(?i)^(usage|options|flags|commands)\b|^
 var reErrorDeclaration = regexp.MustCompile(
 	`(?i)^(error|fatal|panic)\b|flag provided but not defined|` +
 		`\b(unknown|unrecognized|invalid|unexpected) (flag|option|command|subcommand|argument)\b|` +
-		`\bno such (flag|option|command|subcommand)\b`)
+		`\bno such (flag|option|command|subcommand)\b|` +
+		// npm says "npm error" rather than starting the line with the word, so
+		// without this every npm failure fell past the declarations to the last
+		// line printed, which npm reserves for the path of a debug log.
+		`^npm error\b`)
 
 // failureLine returns the most informative line of a failure. Reporting a
 // wrapper's summary hides the error a reader needs, so the summary is skipped
