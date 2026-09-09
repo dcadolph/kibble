@@ -211,6 +211,17 @@ func missingCommand(out string) (string, bool) {
 		if m := reExecNotFound.FindStringSubmatch(line); m != nil {
 			return m[1], true
 		}
+		// A package's own install script may name what it needs rather than
+		// letting the shell say it, as fd-find does with "Missing required
+		// commands: wget." The shell wording below never appears, so without
+		// this the container's gap was reported as the document being broken.
+		if m := reRequiredCommand.FindStringSubmatch(line); m != nil {
+			// A dot belongs inside a name like python3.11 and not on the end
+			// of one, where it is the sentence finishing.
+			if name := strings.TrimRight(m[1], "."); name != "" {
+				return name, true
+			}
+		}
 		for _, marker := range []string{": command not found", ": not found"} {
 			idx := strings.Index(line, marker)
 			if idx < 0 {
@@ -231,3 +242,10 @@ func missingCommand(out string) (string, bool) {
 // reExecNotFound matches the Go toolchain reporting a program it tried to run
 // is not installed, such as `exec: "easyjson": executable file not found`.
 var reExecNotFound = regexp.MustCompile(`exec: "?([^":]+)"?: executable file not found`)
+
+// reRequiredCommand matches an install script naming a program it needs and
+// could not find, such as `Missing required commands: wget.` The wording is an
+// explicit statement rather than a resemblance, which is what separates it
+// from the phrases a tool also uses about its own optional pieces.
+var reRequiredCommand = regexp.MustCompile(
+	`(?i)missing required commands?:\s*([A-Za-z0-9._+-]+)`)
