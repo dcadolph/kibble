@@ -25,11 +25,14 @@ reading your own docs the day the workflow became muscle memory. kibble is the b
 runs your documented steps in a clean Linux container from zero, as a reader with
 nothing would, so a broken install fails in CI instead of in their terminal.
 
-That container is one environment, not every environment. kibble answers whether your
-documentation works from zero in a reproducible Linux container, which is a narrower
-claim than whether it works for every reader: a macOS path, an ARM host, musl, a
-corporate proxy, and a private registry are all outside what it sees. The narrow claim
-is the one worth making, because it is the one kibble can actually settle.
+The stranger is not always a person now. Coding agents install tools by doing what the
+README says, and they fail differently than people do. Someone who follows a broken
+instruction knows they followed it correctly, reads the error, and works around the
+document. An agent cannot tell a stale command from its own mistake, so it retries,
+invents variants, and reports success it did not have. A line that has been wrong for six
+months gets run all day by something that will never complain about it. Stale
+documentation used to cost a reader ten minutes. Now it is instructions a machine
+executes without ever telling you they were wrong.
 
 Your README tells people to run `go install ...`, then some setup, then a quickstart.
 Every one of those rots the moment the code moves, and you are the last to know. kibble
@@ -39,12 +42,19 @@ front page fills up. A piped shell installer and a system package install are re
 but not run, and reported as skips with a reason, so an install kibble declines to
 execute is still visible rather than silently missed.
 
-The stranger is not always a person now. Coding agents install tools by doing what the
-README says, and they fail differently than people do. Someone who follows a broken
-instruction knows they followed it correctly, reads the error, and works around the
-document. An agent cannot tell a stale command from its own mistake, so it retries,
-invents variants, and reports success it did not have. A line that has been wrong for six
-months gets run all day by something that will never complain about it.
+What comes back is a verdict, not a pass. kibble separates documentation that is wrong
+from documentation it could not check, so a green run means something specific rather
+than nothing went visibly bang. That distinction is pinned in both directions: a corpus
+of real repositories proves correct documentation passes, and deliberate one-line
+corruptions of those same documents prove rot gets caught. A verifier that only ever
+agrees with you is worse than no verifier, so kibble is tested against its own
+willingness to say yes.
+
+That container is one environment, not every environment. kibble answers whether your
+documentation works from zero in a reproducible Linux container, which is a narrower
+claim than whether it works for every reader: a macOS path, an ARM host, musl, a
+corporate proxy, and a private registry are all outside what it sees. The narrow claim
+is the one worth making, because it is the one kibble can actually settle.
 
 ## Install
 
