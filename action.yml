@@ -12,7 +12,7 @@ inputs:
     description: >-
       kibble release to run, as a full version tag. Defaults to the ref this
       action was pinned at, so pinning the action to a release tag runs that
-      release. A non-release ref such as v1 resolves to the latest release.
+      release. A ref that is not a release resolves to the latest release.
     required: false
     default: ""
   args:

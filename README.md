@@ -112,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dcadolph/kibble@v1
+      - uses: dcadolph/kibble@v0.0.1
         with:
           repo: .
           # args: -strict   # fail on timeouts, smoke failures, drift, and gaps too
@@ -123,10 +123,9 @@ README line that broke, so it shows up inline in the pull request the way a fail
 does; doc drift becomes a warning annotation, and the job summary gets the full results
 table. kibble runs on its own README this way on every commit.
 
-`@v1` follows every release. Pin an exact release tag instead when you want a run to be
-reproducible a year from now: the action downloads the released binary for whichever
-version it resolves to and verifies its checksum before running it, so a CI log can
-always say which kibble produced its verdict.
+Pin an exact release tag so a run stays reproducible a year from now: the action
+downloads the released binary for that version and verifies its checksum before running
+it, so a CI log can always say which kibble produced its verdict.
 
 ## Flags
 
