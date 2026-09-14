@@ -1,4 +1,4 @@
-name: kibble
+name: Kibble Docs Verifier
 description: Run a repository's documented install steps in a clean container so a broken install fails the build.
 branding:
   icon: check-circle
