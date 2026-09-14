@@ -53,7 +53,7 @@ func (pl *planner) skipReason(cmd, flat string) (string, Reason, bool) {
 	// A documented binary invoked bare is "run the tool", which the smoke test
 	// already settled. For a watcher or a server it never returns, and waiting
 	// out the timeout buys nothing the install step did not already prove.
-	if bin != "" && len(strings.Fields(stripComment(flat))) == 1 {
+	if bin != "" && len(shellWordsOf(stripComment(flat))) == 1 {
 		return "runs the tool with no arguments, which the install already proved",
 			ReasonAlreadyProven, false
 	}
@@ -320,7 +320,7 @@ var findingSubs = map[string]bool{
 // lines and breaks the ones that follow them. A repo whose -i does mean
 // interactive says so in .kibble.yml.
 func interactiveFlag(flat string) bool {
-	for _, f := range strings.Fields(stripComment(flat)) {
+	for _, f := range shellWordsOf(stripComment(flat)) {
 		if f == "--interactive" {
 			return true
 		}

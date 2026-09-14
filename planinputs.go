@@ -70,7 +70,7 @@ func (pl *planner) missingGlob(flat string) string {
 // are added as fixtures instead of skipping the line.
 func (pl *planner) missingFile(flat string) string {
 	flat = stripComment(flat)
-	fields := strings.Fields(flat)
+	fields := shellWordsOf(flat)
 	for i, raw := range fields {
 		if i == 0 || isOutputArg(fields, i) {
 			continue
@@ -118,7 +118,7 @@ func (pl *planner) recordCreated(flat string) {
 			}
 		}
 	}
-	fields := strings.Fields(flat)
+	fields := shellWordsOf(flat)
 	if len(fields) < 2 {
 		return
 	}
@@ -262,7 +262,7 @@ func (pl *planner) getsOwnModule(flat string) bool {
 	if pl.module == "" {
 		return false
 	}
-	fields := strings.Fields(stripComment(flat))
+	fields := shellWordsOf(stripComment(flat))
 	if len(fields) < 3 || fields[0] != "go" {
 		return false
 	}
@@ -282,7 +282,7 @@ func (pl *planner) getsOwnModule(flat string) bool {
 // that no documented step creates. A document naming ~/src/project is telling
 // the reader where their own work lives, not describing a file it ships.
 func (pl *planner) missingHomePath(flat string) string {
-	fields := strings.Fields(stripComment(flat))
+	fields := shellWordsOf(stripComment(flat))
 	for i, tok := range fields {
 		if i == 0 || isOutputArg(fields, i) {
 			continue
