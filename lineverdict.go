@@ -323,35 +323,6 @@ func shellArgWordsOf(cmd string) []string {
 	if words, ok := shell.ArgWords(cmd); ok {
 		return words
 	}
-	return fieldsFallback(cmd)
-}
-
-// shellWordsOf returns the words of a line's first command, the program name
-// first, falling back to whitespace splitting only when the line does not
-// parse. Planner rules that index by position need this rather than
-// [shellArgWordsOf]: a rule asking what the line runs, or reading its second
-// argument, means the first command's words and not every word in a pipeline.
-func shellWordsOf(cmd string) []string {
-	if words, ok := shell.Words(cmd); ok {
-		return words
-	}
-	return fieldsFallback(cmd)
-}
-
-// shellFirstWord returns the program a line runs, or empty when it runs
-// nothing. It never panics on a blank line, which indexing the split did.
-func shellFirstWord(cmd string) string {
-	words := shellWordsOf(cmd)
-	if len(words) == 0 {
-		return ""
-	}
-	return words[0]
-}
-
-// fieldsFallback splits on whitespace and strips the quote characters the
-// parser would have resolved. It is the old behavior, kept for lines no bash
-// parser accepts, where the choice is a rough answer or none.
-func fieldsFallback(cmd string) []string {
 	out := strings.Fields(cmd)
 	for i, tok := range out {
 		out[i] = strings.Trim(tok, "'\"\x60")

@@ -135,7 +135,7 @@ func documentedBinary(markdown string, known map[string]bool) string {
 			if flat == "" || strings.HasPrefix(flat, "#") {
 				continue
 			}
-			first := shellFirstWord(flat)
+			first := strings.Fields(flat)[0]
 			if known[first] {
 				knownSeen = true
 				continue
