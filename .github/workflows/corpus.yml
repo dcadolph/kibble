@@ -28,13 +28,46 @@ jobs:
             git init -q "$dir"
             git -C "$dir" fetch -q --depth 1 "$url" "$sha"
             git -C "$dir" checkout -q FETCH_HEAD
-            rc=0
-            /tmp/kibble -json "$dir" > "/tmp/${name}.json" || rc=$?
-            # Exit 1 is kibble reporting failures, which is a verdict. Any
-            # other nonzero is kibble unable to do its job, and blaming the
-            # corpus for that would be the same mistake as blaming the docs.
-            if [ "$rc" -gt 1 ] || ! jq -e 'type=="array"' "/tmp/${name}.json" >/dev/null 2>&1; then
-              echo "::error::${name}: kibble itself failed (exit ${rc}), no verdicts to compare"
+            # A run has three possible shapes and the comparison below only
+            # understands two of them. The counts either match the pin or they
+            # moved, and a moved count is a question about judgment that a
+            # person has to answer. The third shape is a run that never
+            # produced a comparable answer: kibble exited unable to work, or a
+            # row came back ERROR ("kibble itself could not run the step") or
+            # TIMEOUT ("no result within the budget"). Folding that into
+            # "verdicts moved" is what makes this job cry wolf, and a corpus
+            # that cries wolf stops being believed, which costs more than the
+            # flake did. So an inconclusive run is retried, and if it stays
+            # inconclusive it fails the job under its own name rather than
+            # borrowing the name of a judgment change.
+            #
+            # BLOCKED is deliberately not in that set. It means the line ran
+            # and settled nothing, which is a verdict kibble stands behind.
+            attempts=3
+            inconclusive=""
+            for attempt in $(seq 1 "$attempts"); do
+              rc=0
+              /tmp/kibble -json "$dir" > "/tmp/${name}.json" || rc=$?
+              # Exit 1 is kibble reporting failures, which is a verdict. Any
+              # other nonzero is kibble unable to do its job, and blaming the
+              # corpus for that would be the same mistake as blaming the docs.
+              if [ "$rc" -gt 1 ] || ! jq -e 'type=="array"' "/tmp/${name}.json" >/dev/null 2>&1; then
+                inconclusive="kibble itself failed (exit ${rc})"
+              else
+                inconclusive=$(jq -r '[.[] | select(.status == "ERROR" or .status == "TIMEOUT")]
+                                      | if length == 0 then ""
+                                        else "\(length) row(s) kibble could not settle: "
+                                             + (map("\(.status) \(.kind)") | join("; "))
+                                        end' "/tmp/${name}.json")
+              fi
+              [ -z "$inconclusive" ] && break
+              echo "${name}: attempt ${attempt} of ${attempts} was inconclusive: ${inconclusive}"
+            done
+            if [ -n "$inconclusive" ]; then
+              echo "::error::${name}: inconclusive after ${attempts} attempts: ${inconclusive}"
+              echo "  This is the runner or the network, not a verdict that moved."
+              echo "  The pin for ${name} is untested by this run."
+              jq -r '.[]|"    \(.status)\t\(.kind)\t\(.detail // "")"' "/tmp/${name}.json"
               status=1
               echo "::endgroup::"
               continue
