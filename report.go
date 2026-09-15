@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -44,19 +45,36 @@ func reportJSON(w io.Writer, results []Result) {
 		Heading string    `json:"heading,omitempty"`
 		Lines   []lineRow `json:"lines"`
 	}
-	type row struct {
-		Repo    string    `json:"repo"`
-		Kind    string    `json:"kind"`
-		Status  string    `json:"status"`
-		Bucket  string    `json:"bucket"`
-		Reason  string    `json:"reason,omitempty"`
-		Seconds int       `json:"seconds"`
-		Module  string    `json:"module,omitempty"`
-		Image   string    `json:"image,omitempty"`
-		Smoke   string    `json:"smoke,omitempty"`
-		Detail  string    `json:"detail,omitempty"`
-		Steps   []stepRow `json:"steps,omitempty"`
+	// evidenceRow records what the verdict was established against. A status
+	// on its own invites the reader to hear "this documentation works", when
+	// what was shown is narrower: these commands, in this container, on this
+	// platform, with a network, without credentials, and against these inputs.
+	// Saying so is what makes a verdict auditable rather than trusted.
+	type evidenceRow struct {
+		Platform    string   `json:"platform"`
+		Image       string   `json:"image,omitempty"`
+		Network     string   `json:"network"`
+		Credentials string   `json:"credentials"`
+		Synthetic   []string `json:"synthetic_inputs,omitempty"`
+		RanAt       string   `json:"ran_at"`
 	}
+	type row struct {
+		Repo     string      `json:"repo"`
+		Kind     string      `json:"kind"`
+		Status   string      `json:"status"`
+		Bucket   string      `json:"bucket"`
+		Reason   string      `json:"reason,omitempty"`
+		Seconds  int         `json:"seconds"`
+		Module   string      `json:"module,omitempty"`
+		Image    string      `json:"image,omitempty"`
+		Smoke    string      `json:"smoke,omitempty"`
+		Detail   string      `json:"detail,omitempty"`
+		Evidence evidenceRow `json:"evidence"`
+		Steps    []stepRow   `json:"steps,omitempty"`
+	}
+	// One stamp for the whole report: every row came out of the same run, and
+	// a per-row clock would imply they did not.
+	ranAt := time.Now().UTC().Format(time.RFC3339)
 	rows := make([]row, 0, len(results))
 	for _, r := range results {
 		out := row{
@@ -66,6 +84,7 @@ func reportJSON(w io.Writer, results []Result) {
 			Module:  r.Step.Module, Image: r.Image,
 			Smoke: r.SmokeLine, Detail: r.Detail,
 		}
+		var synthetic []string
 		if r.example != nil {
 			for _, s := range r.example.Steps {
 				sr := stepRow{ID: s.ID, Heading: s.Heading}
@@ -74,9 +93,15 @@ func reportJSON(w io.Writer, results []Result) {
 						Cmd: l.Cmd, Status: string(l.Status), Reason: string(l.Reason),
 						Code: l.Code, Detail: l.Detail, Synthetic: l.Synthetic,
 					})
+					synthetic = append(synthetic, l.Synthetic...)
 				}
 				out.Steps = append(out.Steps, sr)
 			}
+		}
+		out.Evidence = evidenceRow{
+			Platform: "linux/" + runtime.GOARCH, Image: r.Image,
+			Network: "enabled", Credentials: "none",
+			Synthetic: dedupe(synthetic), RanAt: ranAt,
 		}
 		rows = append(rows, out)
 	}
@@ -124,6 +149,40 @@ func reportTable(w io.Writer, results []Result) {
 	}
 	_, _ = fmt.Fprintf(w, "\n%s\n", verdictLine(c, fail, gap, other+blocked))
 	_, _ = fmt.Fprintf(w, "%s\n", summaryLine(c, pass, fail, gap, other, len(results), total))
+	_, _ = fmt.Fprintf(w, "%s\n", evidenceLine(c, results))
+}
+
+// evidenceLine names what the verdicts above were established against. Read
+// without it, a column of green invites "this documentation works", which is
+// wider than one Linux container with a network and no credentials can show.
+// The reader who needs the narrower claim should not have to open the JSON.
+func evidenceLine(c palette, results []Result) string {
+	var synthetic []string
+	for _, r := range results {
+		if r.example == nil {
+			continue
+		}
+		for _, s := range r.example.Steps {
+			for _, l := range s.Lines {
+				synthetic = append(synthetic, l.Synthetic...)
+			}
+		}
+	}
+	line := fmt.Sprintf("established on linux/%s, network enabled, no credentials",
+		runtime.GOARCH)
+	if n := len(dedupe(synthetic)); n > 0 {
+		line += fmt.Sprintf(", %s", pluralFiles(n))
+	}
+	return c.dim(line)
+}
+
+// pluralFiles renders the fabricated-input count as a phrase, since a verdict
+// that stood on invented files is a narrower claim than one that did not.
+func pluralFiles(n int) string {
+	if n == 1 {
+		return "1 fabricated input"
+	}
+	return fmt.Sprintf("%d fabricated inputs", n)
 }
 
 // verdictLine states what the run established, which is not the same as what
@@ -265,4 +324,23 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(r[:n-1]) + "…"
+}
+
+// dedupe returns the unique values of a list in first-seen order. The same
+// fabricated fixture can serve several lines, and listing it once per line
+// would overstate how much of the run stood on invented input.
+func dedupe(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
 }
