@@ -130,7 +130,7 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonNoDataExpected
 		lr.Detail = "changed nothing, since the session cannot approve it: " + tail
-	case documentedNonzeroCode(o.code) && strings.TrimSpace(o.output) == "":
+	case !o.logged && documentedNonzeroCode(o.code) && strings.TrimSpace(o.output) == "":
 		// A search reports no match by exiting 1 and saying nothing. So does a
 		// command that died without a word. Silence is the absence of evidence,
 		// so it cannot be read as the good case, and it cannot be read as the
@@ -289,6 +289,13 @@ var reNoInputFiles = regexp.MustCompile(`(?i)\bno input files?\b`)
 // reEnoent matches an error that names the file a tool could not find. The
 // name is captured so it can be checked against the command's own arguments:
 // only a file the documented line itself asked for convicts the document.
+// reCommandNotStart matches a tool reporting that a helper program it was
+// told to run could not be executed. ripgrep says it of a --pre preprocessor,
+// and the shape is the same wherever a flag names a program the tool launches.
+// The shell never sees the name, so its own "not found" never appears and the
+// rules that read for it find nothing.
+var reCommandNotStart = regexp.MustCompile(`(?i)command could not start: '?"?([^\s'"]+)`)
+
 var reEnoent = regexp.MustCompile(
 	`(?i)([^\s:'"]+)'?: (?:no such file or directory|` +
 		`io error for operation on [^\s:]+: no such file or directory)`)
@@ -302,6 +309,17 @@ var reEnoent = regexp.MustCompile(
 // quoted expression such as `load("file1.yaml")` is still seen as the reader's
 // missing file rather than a broken tool.
 func missingFileArg(cmd, output string) string {
+	// A helper the line names by a flag, which the tool could not launch. The
+	// document showed the reader its contents and never wrote it to disk, so
+	// what is missing is a step and not the reader's own file.
+	if m := reCommandNotStart.FindStringSubmatch(output); m != nil {
+		helper := strings.Trim(m[1], "'\"\x60")
+		for _, tok := range shellArgWordsOf(cmd) {
+			if tok == helper {
+				return helper
+			}
+		}
+	}
 	m := reEnoent.FindStringSubmatch(output)
 	if m == nil {
 		return ""
