@@ -24,6 +24,11 @@ type lineOutcome struct {
 	background bool
 	// ready reports whether the step reached its documented readiness signal.
 	ready bool
+	// logged marks a line whose step redirected its output to a file, which a
+	// background step does for the whole block. Kibble records such a line's
+	// exit code and never sees its words, so an empty output here means the
+	// output went somewhere else and not that the command was quiet.
+	logged bool
 }
 
 // markerTail splits a line on a session marker, returning the output that
@@ -146,6 +151,10 @@ func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[stri
 				lr.Detail = "session ended while this line ran"
 				ended = true
 			default:
+				// A background step sends the whole block's output to a log, so
+				// silence from one of its lines is kibble's blind spot rather
+				// than the command's.
+				o.logged = s.Background
 				lr = classifyLineResult(lr, l, o, wrapped[key], documented, lineBudget)
 			}
 			es.Lines = append(es.Lines, lr)
