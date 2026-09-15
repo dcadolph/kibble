@@ -36,11 +36,20 @@ executes without ever telling you they were wrong.
 
 Your README tells people to run `go install ...`, then some setup, then a quickstart.
 Every one of those rots the moment the code moves, and you are the last to know. kibble
-reads those steps from the README and from the install documents beside it, an INSTALL
-file or an installation guide under a docs tree, since that is where they go once the
-front page fills up. A piped shell installer and a system package install are recorded
-but not run, and reported as skips with a reason, so an install kibble declines to
-execute is still visible rather than silently missed.
+reads those steps from the README and from everything instructional beside it: a docs
+tree, a getting-started, an install guide, a tutorial, a cookbook, an FAQ. Those rot
+faster than the front page, because they are where instructions go once it fills up and
+nobody reads them on the way past. Documents that describe the project rather than
+instruct a reader are left alone, since running a contributing guide's test commands
+proves nothing about the docs a user follows. A piped shell installer and a system
+package install are recorded but not run, and reported as skips with a reason, so an
+install kibble declines to execute is still visible rather than silently missed.
+
+Commands are not the only thing that rots. kibble takes the flags and subcommands your
+documents cite and puts them to the binary it just installed, so a page still teaching a
+flag the tool dropped is caught as drift rather than passing because nobody happened to
+run that line. It also reads the binary's own help and reports the documented surface
+against the real one.
 
 What comes back is a verdict, not a pass. kibble separates documentation that is wrong
 from documentation it could not check, so a green run means something specific rather
