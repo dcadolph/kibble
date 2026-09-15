@@ -32,20 +32,21 @@ jobs:
             # understands two of them. The counts either match the pin or they
             # moved, and a moved count is a question about judgment that a
             # person has to answer. The third shape is a run that never
-            # produced a comparable answer: kibble exited unable to work, or a
-            # row came back ERROR ("kibble itself could not run the step") or
-            # TIMEOUT ("no result within the budget"). Folding that into
-            # "verdicts moved" is what makes this job cry wolf, and a corpus
-            # that cries wolf stops being believed, which costs more than the
-            # flake did. So an inconclusive run is retried, and if it stays
-            # inconclusive it fails the job under its own name rather than
-            # borrowing the name of a judgment change.
+            # produced a comparable answer, because the runner or the network
+            # failed under it. Folding that into "verdicts moved" is what makes
+            # this job cry wolf, and a corpus that cries wolf stops being
+            # believed, which costs more than the flake did.
             #
-            # BLOCKED is deliberately not in that set. It means the line ran
-            # and settled nothing, which is a verdict kibble stands behind.
+            # The discriminator is not the row type on its own. A TIMEOUT can
+            # be perfectly stable: ripgrep's FAQ documents a search that never
+            # returns, and that row is part of its pinned answer. What marks a
+            # run inconclusive is a count that moved AND an unsettled row to
+            # explain the move. Counts that match are accepted whatever rows
+            # they contain, so a pinned TIMEOUT never blocks a green run.
             attempts=3
             inconclusive=""
             for attempt in $(seq 1 "$attempts"); do
+              inconclusive=""
               rc=0
               /tmp/kibble -json "$dir" > "/tmp/${name}.json" || rc=$?
               # Exit 1 is kibble reporting failures, which is a verdict. Any
@@ -53,14 +54,25 @@ jobs:
               # corpus for that would be the same mistake as blaming the docs.
               if [ "$rc" -gt 1 ] || ! jq -e 'type=="array"' "/tmp/${name}.json" >/dev/null 2>&1; then
                 inconclusive="kibble itself failed (exit ${rc})"
-              else
-                inconclusive=$(jq -r '[.[] | select(.status == "ERROR" or .status == "TIMEOUT")]
-                                      | if length == 0 then ""
-                                        else "\(length) row(s) kibble could not settle: "
-                                             + (map("\(.status) \(.kind)") | join("; "))
-                                        end' "/tmp/${name}.json")
+                echo "${name}: attempt ${attempt} of ${attempts} was inconclusive: ${inconclusive}"
+                continue
               fi
-              [ -z "$inconclusive" ] && break
+              got=$(jq -r '[([.[]|select(.status=="VERIFIED")]|length),
+                            ([.[]|select(.status=="FAIL")]|length),
+                            ([.[]|select(.status=="GAP")]|length)]
+                           | map(tostring) | join(",")' \
+                    "/tmp/${name}.json")
+              [ "$got" = "$expect" ] && break
+              # The counts moved. Only an unsettled row can excuse that as the
+              # runner rather than a judgment change, and ERROR is the only
+              # status that means kibble itself could not do the work.
+              unsettled=$(jq -r '[.[] | select(.status == "ERROR")]
+                                | if length == 0 then ""
+                                  else "\(length) row(s) kibble could not run: "
+                                       + (map("\(.status) \(.kind)") | join("; "))
+                                  end' "/tmp/${name}.json")
+              [ -z "$unsettled" ] && break
+              inconclusive="counts ${got} against pin ${expect}, with ${unsettled}"
               echo "${name}: attempt ${attempt} of ${attempts} was inconclusive: ${inconclusive}"
             done
             if [ -n "$inconclusive" ]; then
@@ -75,11 +87,6 @@ jobs:
             # The status is VERIFIED, not PASS. It was PASS until the verdict
             # taxonomy was rewritten, and this line was not, so the comparison
             # counted a status nothing emits and every row read as drifted.
-            got=$(jq -r '[([.[]|select(.status=="VERIFIED")]|length),
-                          ([.[]|select(.status=="FAIL")]|length),
-                          ([.[]|select(.status=="GAP")]|length)]
-                         | map(tostring) | join(",")' \
-                  "/tmp/${name}.json")
             if [ "$got" != "$expect" ]; then
               echo "::error::${name}: verdicts moved: expected ${expect} (pass,fail,gap), got ${got}"
               # A moved count says a verdict changed and not which one, so the
