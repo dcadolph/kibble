@@ -335,7 +335,7 @@ func (pl *planner) qualifies(lines []string) bool {
 		if flat == "" || strings.HasPrefix(flat, "#") {
 			continue
 		}
-		first := strings.Fields(flat)[0]
+		first := shellFirstWord(flat)
 		switch {
 		case knownCommands[first], pl.binaries[first]:
 		case packageTools[first] != "":
