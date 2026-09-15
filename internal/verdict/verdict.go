@@ -140,8 +140,9 @@ const (
 	ReasonDependsOnSkipped Reason = "depends-on-skipped"
 	// ReasonAlreadyProven marks a command the install smoke test already covered.
 	ReasonAlreadyProven Reason = "already-proven"
-	// ReasonNoOutputExit1 marks a quiet exit-1, as a search does on no match.
-	ReasonNoOutputExit1 Reason = "no-output-exit1"
+	// ReasonNoOutputNonzero marks a quiet nonzero exit, as a search does on no
+	// match and a command that dies without a word also does.
+	ReasonNoOutputNonzero Reason = "no-output-nonzero"
 	// ReasonUnrecognizedTarget marks an install target kibble cannot parse.
 	ReasonUnrecognizedTarget Reason = "unrecognized-target"
 	// ReasonUnreachable marks a lookup kibble could not complete over the network.

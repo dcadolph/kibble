@@ -145,6 +145,28 @@ func lastLine(lines []string) string {
 	return strings.TrimSpace(lines[len(lines)-1])
 }
 
+// reShellTiming matches a line of the report the shell's `time` keyword writes
+// after the command it timed. A document writing `time rg ...` is showing the
+// reader how long the search takes, and the three lines that come back are the
+// shell talking about the run rather than the command talking about its work.
+// Left in, they are the last thing in the output, so they become the failure's
+// explanation and hide the real one, and a command that said nothing at all
+// looks like a command that spoke.
+var reShellTiming = regexp.MustCompile(`^(real|user|sys)\s+[0-9]+m[0-9.]+s$`)
+
+// stripShellTiming removes the shell's timing report from captured output.
+func stripShellTiming(s string) string {
+	lines := strings.Split(s, "\n")
+	out := lines[:0]
+	for _, line := range lines {
+		if reShellTiming.MatchString(strings.TrimSpace(line)) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
 // reWrapperSummary matches the closing line a build tool prints after the tool
 // it invoked has already reported the real error. It names the target that
 // failed and nothing about why.

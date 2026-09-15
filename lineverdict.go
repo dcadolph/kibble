@@ -36,8 +36,10 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 	documented map[string]bool, lineBudget time.Duration) lineResult {
 	lr.Code = o.code
 	// The same reason as classify: a documented line that colors its output
-	// must not carry escapes into a report or an annotation.
-	o.output = stripANSI(o.output)
+	// must not carry escapes into a report or an annotation. The shell's own
+	// timing report goes with them: it is not the command speaking, and every
+	// rule below reads the output as though it were.
+	o.output = stripShellTiming(stripANSI(o.output))
 	tail := failureLine(strings.Split(o.output, "\n"))
 	switch {
 	case o.background:
@@ -128,13 +130,21 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonNoDataExpected
 		lr.Detail = "changed nothing, since the session cannot approve it: " + tail
-	case o.code == 1 && strings.TrimSpace(o.output) == "":
-		// A search reports no match by exiting 1 and saying nothing. So does
-		// a command that died without a word. Silence is the absence of
-		// evidence, so it cannot be read as the good case.
+	case documentedNonzeroCode(o.code) && strings.TrimSpace(o.output) == "":
+		// A search reports no match by exiting 1 and saying nothing. So does a
+		// command that died without a word. Silence is the absence of evidence,
+		// so it cannot be read as the good case, and it cannot be read as the
+		// bad one either. Any ordinary exit qualifies and not only exit 1: a
+		// tool returning 2 for "an error occurred" while printing nothing has
+		// told the reader nothing, and calling the document broken on that
+		// asserts more than the run established. The codes this excludes are
+		// the ones that are evidence on their own: a timeout, a shell that
+		// could not execute the command, and a death by signal all say what
+		// happened without needing to print it.
 		lr.Status = StatusBlocked
-		lr.Reason = ReasonNoOutputExit1
-		lr.Detail = "exited 1 without output, which a search does on no match and a broken command also does"
+		lr.Reason = ReasonNoOutputNonzero
+		lr.Detail = fmt.Sprintf("exited %d without output, which settles nothing: "+
+			"a search does that on no match and a broken command does it too", o.code)
 	case reNoData.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonNoDataExpected
