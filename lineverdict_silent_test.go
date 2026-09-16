@@ -128,3 +128,41 @@ func TestHelperProgramNotStarted(t *testing.T) {
 		})
 	}
 }
+
+// TestNothingSearchedIsUnsettled checks the verdict when a search's own
+// filters leave it nothing to read. ripgrep's guide demonstrates `-tc` against
+// whatever tree the reader has, and ripgrep's own tree holds no C, so the
+// example finds nothing. The command worked. The corpus simply does not
+// contain what the example targets, which is a fact about the corpus and not
+// a hole in the document.
+func TestNothingSearchedIsUnsettled(t *testing.T) {
+	t.Parallel()
+
+	const rgOut = "No files were searched, which means ripgrep probably applied a " +
+		"filter you didn't expect.\nRunning with --debug will show why files are being skipped."
+
+	tests := []struct {
+		Name       string
+		Output     string
+		Code       int
+		WantStatus Status
+	}{{ // Test 0: the filters excluded everything, so nothing was established.
+		Name: "nothing searched", Output: rgOut, Code: 2, WantStatus: StatusBlocked,
+	}, { // Test 1: a real error alongside it is still a real error.
+		Name:   "genuine error",
+		Output: "error: unknown flag --nope", Code: 2, WantStatus: StatusFail,
+	}, { // Test 2: a clean exit is unaffected.
+		Name: "clean", Output: "", Code: 0, WantStatus: StatusVerified,
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d %s", testNum, test.Name), func(t *testing.T) {
+			t.Parallel()
+			lr := classifyLineResult(lineResult{Cmd: "rg 'int main' -tc"}, PlanLine{},
+				lineOutcome{code: test.Code, output: test.Output}, false, nil, lineTimeout)
+			if lr.Status != test.WantStatus {
+				t.Errorf("status = %s, want %s (detail %q)", lr.Status, test.WantStatus, lr.Detail)
+			}
+		})
+	}
+}

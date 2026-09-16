@@ -145,6 +145,12 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		lr.Reason = ReasonNoOutputNonzero
 		lr.Detail = fmt.Sprintf("exited %d without output, which settles nothing: "+
 			"a search does that on no match and a broken command does it too", o.code)
+	case reNothingSearched.MatchString(o.output):
+		// Not a skip: the line ran. Not a failure either, since a search that
+		// was handed nothing to read has not tested what the document claims.
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonNoDataExpected
+		lr.Detail = "its filters matched no file in this repository, so the example settled nothing"
 	case reNoData.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonNoDataExpected
@@ -220,6 +226,15 @@ var (
 	// reNoData matches a query that ran correctly and found nothing, which a
 	// fresh session often cannot avoid: the docs query dates and terms that
 	// have no entries yet.
+	// reNothingSearched matches a search reporting that its filters left it
+	// nothing to look at. The command ran and worked; what it says is that
+	// this repository holds no file of the kind the example targets, as
+	// ripgrep's own guide demonstrates `-tc` against a tree with no C in it.
+	// That is a fact about the corpus and not about the document, so the line
+	// is unsettled rather than broken.
+	reNothingSearched = regexp.MustCompile(
+		`(?i)\bno files were searched\b|\bno files (to search|matched|were matched)\b` +
+			`|\bnothing to search\b|\bno files found to search\b`)
 	reNoData = regexp.MustCompile(
 		`(?i)\bno (entries|results|matches|data|records)\b|\bfound no\b` +
 			`|\bnothing (found|to (show|report))\b|\bno \w+(\s\w+)? found\b` +
