@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -99,14 +101,24 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 		append(sandbox.Args(), "-e", "GOTOOLCHAIN=auto", image, "bash", "-c", script)...)
 	cmd := exec.CommandContext(ctx, sandbox.Bin(), args...)
 	cmd.Cancel = sandbox.RemoveFunc(cmd, name)
-	repo, truncated := repoTar(step.dir)
-	if truncated {
+	// Decided before the container starts, by a stat-only walk, so a repository
+	// that cannot be streamed whole never gets a partial one.
+	if !repoFits(step.dir) {
 		return Result{
 			Step: step, Status: StatusError, Duration: time.Since(start),
-			Detail: "repository too large to stream whole, so the examples have no verdict",
+			Detail: fmt.Sprintf("working tree exceeds the %d MB kibble will stream, so the examples have no verdict",
+				repoStreamCap>>20),
 		}
 	}
-	cmd.Stdin = bytes.NewReader(repo)
+	// Streamed rather than buffered. Holding the whole archive in memory is what
+	// kept the cap small enough to exclude ordinary projects.
+	pr, pw := io.Pipe()
+	go func() {
+		_, err := repoTarTo(pw, step.dir)
+		_ = pw.CloseWithError(err)
+	}()
+	defer func() { _ = pr.Close() }()
+	cmd.Stdin = pr
 	out, _ := cmd.CombinedOutput()
 	if ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) {
 		return Result{
@@ -162,19 +174,70 @@ func sessionBudget(plan *Plan, install time.Duration) time.Duration {
 	return budget
 }
 
+// repoStreamCap bounds what kibble will send into the session. The old cap was
+// 20 MB and the whole archive was built in memory first, so the ceiling was
+// really the memory three concurrent workers could afford rather than anything
+// about documentation. Measured against real projects it was far too low: mise
+// carries a 45 MB working tree, hugo 33 MB and eslint 29 MB, all with .git and
+// generated directories already excluded, and every one of them came back with
+// no verdict at all. Streaming instead of buffering removes the memory reason
+// for a small cap, and what is left is a runaway guard.
+const repoStreamCap = 512 << 20
+
+// repoFits reports whether the working tree is small enough to stream, and is
+// a stat-only walk so the answer is known before a container starts. Deciding
+// after the fact is not an option: a partially streamed repository makes a
+// document look broken when the missing piece is kibble's.
+func repoFits(dir string) bool {
+	if dir == "" {
+		return true
+	}
+	total := int64(0)
+	fits := true
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if tarSkipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.Size() > 2<<20 {
+			return nil
+		}
+		if total += info.Size(); total > repoStreamCap {
+			fits = false
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return fits
+}
+
 // repoTar packs the repo working tree for the session, without generated
 // directories and without files over 2 MB, so documented example files exist
-// in the container. The stream is capped at 20 MB. Truncation is reported
-// rather than absorbed: a repository that arrives incomplete makes a document
-// look broken when the missing piece is kibble's, and a verdict on that is
-// worse than no verdict.
+// in the container. Call [repoFits] first: this writes whatever it walks and
+// does not decide whether the result is complete.
 func repoTar(dir string) ([]byte, bool) {
 	var buf bytes.Buffer
+	truncated, _ := repoTarTo(&buf, dir)
+	return buf.Bytes(), truncated
+}
+
+// repoTarTo writes the same archive to w as it walks, so nothing larger than
+// one file is held at once.
+func repoTarTo(w io.Writer, dir string) (bool, error) {
 	if dir == "" {
-		return buf.Bytes(), false
+		return false, nil
 	}
 	truncated := false
-	tw := tar.NewWriter(&buf)
+	tw := tar.NewWriter(w)
 	total := int64(0)
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -193,7 +256,7 @@ func repoTar(dir string) ([]byte, bool) {
 		if err != nil || info.Size() > 2<<20 {
 			return nil
 		}
-		if total += info.Size(); total > 20<<20 {
+		if total += info.Size(); total > repoStreamCap {
 			truncated = true
 			return filepath.SkipAll
 		}
@@ -218,8 +281,8 @@ func repoTar(dir string) ([]byte, bool) {
 		}
 		return nil
 	})
-	_ = tw.Close()
-	return buf.Bytes(), truncated
+	err := tw.Close()
+	return truncated, err
 }
 
 // tarSkipDirs are directories a build produces or a package manager fills.
