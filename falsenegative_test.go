@@ -164,6 +164,10 @@ func TestDependentFailureFalseNegatives(t *testing.T) {
 	}{{ // Test 0: a config parse error whose hint happens to name a skipped
 		// command. The failure is on line 3 of a config file and has nothing
 		// to do with sync; the word "sync" in a docs pointer is not cause.
+		// This expected BLOCKED until 2026-09-15, which contradicted the
+		// sentence above it: the suite named for catching false negatives was
+		// pinning one. A hint pointing at documentation is not the failing
+		// line saying it needed that command, so the break stays reported.
 		Name: "hint names a skipped command",
 		Lines: []lineResult{
 			{Cmd: "mytool sync --token TOKEN", Status: StatusSkipped},
@@ -172,16 +176,18 @@ func TestDependentFailureFalseNegatives(t *testing.T) {
 				output: "error: config parse failed at line 3\nhint: see docs for mytool sync",
 			},
 		},
-		WantStatus: StatusBlocked,
+		WantStatus: StatusFail,
 	}, { // Test 1: an independent second invocation of a skipped subcommand.
 		// The first was skipped for a placeholder; the second names a real
-		// path and failed on its own merits.
+		// path and failed on its own merits. Sharing a subcommand with an
+		// earlier skip is a resemblance. Only a gap, the document's own hole,
+		// makes the later failure the same finding surfacing twice.
 		Name: "same subcommand family, independent failure",
 		Lines: []lineResult{
 			{Cmd: "mytool walk --depth $DEPTH", Status: StatusSkipped},
 			{Cmd: "mytool walk .", Status: StatusFail, output: "error: permission denied"},
 		},
-		WantStatus: StatusBlocked,
+		WantStatus: StatusFail,
 	}, { // Test 2: a failure naming nothing that was skipped stays a failure.
 		Name: "unrelated failure keeps its verdict",
 		Lines: []lineResult{

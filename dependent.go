@@ -91,10 +91,10 @@ func resolveDependentFailures(run *exampleRun, plan *Plan) {
 				l.Detail = fmt.Sprintf("failed naming `%s`, which did not run", cited)
 				continue
 			}
-			if prior := earlierSkipInFamily(s.Lines[:li], l.Cmd, bins); prior != "" {
+			if prior := earlierGapInFamily(s.Lines[:li], l.Cmd, bins); prior != "" {
 				l.Status = StatusBlocked
 				l.Reason = ReasonDependsOnSkipped
-				l.Detail = fmt.Sprintf("failed after `%s` did not run", prior)
+				l.Detail = fmt.Sprintf("failed after `%s`, which the document's own gap stopped", prior)
 				continue
 			}
 			if need := namedSiblingNotRun(l.output, bins, passed); need != "" {
@@ -106,25 +106,106 @@ func resolveDependentFailures(run *exampleRun, plan *Plan) {
 	}
 }
 
-// citedSkipped returns the first skipped command a failure's output names.
+// rePrerequisiteNear matches the phrasings a tool uses to say that something
+// had to happen first. Suppression needs one of these: a command name on its
+// own appears in URLs, in arguments the tool is rejecting, and in help hints
+// pointing somewhere else entirely, and none of those is the failing line
+// saying it depended on anything.
+var rePrerequisiteNear = regexp.MustCompile(
+	`(?i)\b(run|running|execute|invoke|call|use|do|try)\b[^.\n]{0,40}$|` +
+		`(?i)\b(requires?|required|need(s|ed)?|must|should|first|before|` +
+		`not initiali[sz]ed|no such|missing)\b[^.\n]{0,40}$`)
+
+// reAdvisory matches the tail of a sentence that is offering help rather than
+// naming a prerequisite. "Try tool help for usage" tells the reader where to
+// look next; it does not say the failing line needed that command to run.
+var reAdvisory = regexp.MustCompile(`(?i)\b(try|see|for (usage|help|more)|--help|documentation)\b`)
+
+// citesAsPrerequisite reports whether the output names cmd as something that
+// had to run first, rather than merely containing its text. The name has to
+// stand as whole words, and the words leading up to it have to be making a
+// demand rather than a suggestion.
+func citesAsPrerequisite(output, cmd string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		for _, idx := range wholeWordIndexes(line, cmd) {
+			before := line[:idx]
+			if reAdvisory.MatchString(before) {
+				continue
+			}
+			if rePrerequisiteNear.MatchString(before) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// wholeWordIndexes returns every offset in line where cmd appears bounded by
+// non-word characters, so a name inside a URL path or a longer token does not
+// count as the output naming that command.
+func wholeWordIndexes(line, cmd string) []int {
+	var out []int
+	for off := 0; ; {
+		i := strings.Index(line[off:], cmd)
+		if i < 0 {
+			return out
+		}
+		i += off
+		off = i + 1
+		if i > 0 && isCmdChar(line[i-1]) {
+			continue
+		}
+		if end := i + len(cmd); end < len(line) && isCmdChar(line[end]) {
+			continue
+		}
+		out = append(out, i)
+	}
+}
+
+// isCmdChar reports whether a byte can sit inside a command token, so a
+// boundary check knows what counts as touching one. A slash counts, since a
+// path segment spelling a command name is a path and not an invocation.
+func isCmdChar(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	case b == '-', b == '_', b == '.', b == '/':
+		return true
+	}
+	return false
+}
+
+// citedSkipped returns the first skipped command a failure's output names as
+// something it needed first.
 func citedSkipped(output string, skippedCmds []string) string {
 	for _, c := range skippedCmds {
-		if strings.Contains(output, c) {
+		if citesAsPrerequisite(output, c) {
 			return c
 		}
 	}
 	return ""
 }
 
-// earlierSkipInFamily returns the command of an earlier skipped line that
-// shares the failing line's binary and subcommand, or empty when none does.
-func earlierSkipInFamily(prior []lineResult, cmd string, bins map[string]bool) string {
+// earlierGapInFamily returns the command of an earlier line, in the same
+// binary and subcommand family, that the document's own hole stopped.
+//
+// This rule used to accept any earlier skip, and its own comment conceded that
+// "a second invocation of a subcommand is usually independent of the first".
+// It was: `tool build --debug` being skipped says nothing about why
+// `tool build --release` failed, and suppressing on that turned a reported
+// break into an unsettled one. A gap is the case the rule was written for and
+// the only one it can carry. A gap means a documented step never ran because
+// the document never supplied what it needed, so the next command in the same
+// family failing is the same hole surfacing twice, and reporting it once is
+// the point. A skip is kibble's own choice not to run something, which is a
+// fact about kibble and not about the document's sequence.
+func earlierGapInFamily(prior []lineResult, cmd string, bins map[string]bool) string {
 	bin, sub := invokedBinary(cmd, bins)
 	if bin == "" || sub == "" {
 		return ""
 	}
 	for _, p := range prior {
-		if p.Status != StatusSkipped && p.Status != StatusGap {
+		if p.Status != StatusGap {
 			continue
 		}
 		if pb, ps := invokedBinary(p.Cmd, bins); pb == bin && ps == sub {
@@ -144,9 +225,16 @@ func namedSiblingNotRun(output string, bins map[string]bool, passed map[string]b
 		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(bin) + `\s+([a-z][a-z0-9_-]+)`)
 		for _, m := range re.FindAllStringSubmatch(output, -1) {
 			cmd := bin + " " + m[1]
-			if !passed[cmd] {
-				return cmd
+			if passed[cmd] {
+				continue
 			}
+			// The same standard as a cited skip. A tool that prints its own
+			// name in a hint is pointing the reader somewhere, not reporting
+			// that the failing line needed that command to have run.
+			if !citesAsPrerequisite(output, cmd) {
+				continue
+			}
+			return cmd
 		}
 	}
 	return ""

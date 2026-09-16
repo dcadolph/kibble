@@ -386,13 +386,16 @@ func TestResolveDependentFailures(t *testing.T) {
 			{Cmd: "tool reindex", Status: StatusSkipped},
 		}}},
 		Want: []Status{StatusBlocked, StatusSkipped},
-	}, { // Test 1: a failure after a skip in the same family is blocked. The
-		// shared subcommand is a resemblance, not a cause.
+	}, { // Test 1: a failure after a skip in the same family stays a failure.
+		// The shared subcommand is a resemblance, not a cause, and this case
+		// said so while expecting the failure to be suppressed anyway. A skip
+		// is kibble's own choice not to run something; it is a fact about
+		// kibble and not about the document's sequence.
 		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
 			{Cmd: "tool encrypt enable", Status: StatusSkipped},
 			{Cmd: "tool encrypt disable", Status: StatusFail, output: "vault is not encrypted"},
 		}}},
-		Want: []Status{StatusSkipped, StatusBlocked},
+		Want: []Status{StatusSkipped, StatusFail},
 	}, { // Test 2: an unrelated failure stays a failure.
 		Steps: []exampleStep{{ID: "b1", Lines: []lineResult{
 			{Cmd: "tool stats", Status: StatusFail, output: "panic: bad state"},
