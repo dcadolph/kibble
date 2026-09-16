@@ -433,6 +433,13 @@ func exampleStepFor(repo, dir, doc, md string, bins []string, installs []PlanIns
 // readmeNames are the README file names kibble looks for, in order.
 var readmeNames = []string{"README.md", "readme.md", "README.MD"}
 
+// readmeFallbackDirs are searched when a repository keeps no README at its
+// root. A project that builds a documentation site often puts its front
+// document in the tree the site is generated from, as pipx does with
+// docs/README.md, and giving up at the root reported nothing at all for a
+// repository whose instructions kibble was otherwise able to read.
+var readmeFallbackDirs = []string{"docs", "doc"}
+
 // readREADME returns a repo directory's README contents and the file name it
 // came from, so an annotation can point at the file the repository has. The
 // directory is listed rather than opened by name, because a case-insensitive
@@ -458,6 +465,32 @@ func readREADME(dir string) (string, string, error) {
 			return "", "", err
 		}
 		return string(b), name, nil
+	}
+	// The same listing rule applies inside the fallback directories, so a
+	// case-insensitive filesystem cannot make kibble name a path that a
+	// case-sensitive host does not have.
+	for _, sub := range readmeFallbackDirs {
+		subEntries, err := os.ReadDir(filepath.Join(dir, sub))
+		if err != nil {
+			continue
+		}
+		subPresent := map[string]bool{}
+		for _, e := range subEntries {
+			if !e.IsDir() {
+				subPresent[e.Name()] = true
+			}
+		}
+		for _, name := range readmeNames {
+			if !subPresent[name] {
+				continue
+			}
+			rel := filepath.Join(sub, name)
+			b, err := os.ReadFile(filepath.Join(dir, rel))
+			if err != nil {
+				return "", "", err
+			}
+			return string(b), filepath.ToSlash(rel), nil
+		}
 	}
 	return "", "", fmt.Errorf("no README found")
 }
