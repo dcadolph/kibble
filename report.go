@@ -116,16 +116,40 @@ func reportTable(w io.Writer, results []Result) {
 	var pass, fail, gap, other, blocked int
 	var total time.Duration
 	repo := ""
+	// One cause can produce one row per document, and a repository with a
+	// documentation tree has a lot of documents. mise returned 224 rows saying
+	// the same thing, which reads as a catastrophe rather than as the single
+	// problem it was. Identical rows are counted here and printed once. The
+	// JSON keeps every document, since a consumer asking which documents were
+	// affected deserves the list rather than a summary.
+	shared := sharedCauseCounts(results)
+	printed := map[string]bool{}
 	for _, r := range results {
 		if r.Step.Repo != repo {
 			repo = r.Step.Repo
 			_, _ = fmt.Fprintf(w, "\n%s\n", c.bold(repo))
 		}
+		key := sharedCauseKey(r)
+		if n := shared[key]; n > 1 {
+			if printed[key] {
+				blocked += blockedLines(r)
+				total += r.Duration
+				countVerdict(r.Status, &pass, &fail, &gap, &other)
+				continue
+			}
+			printed[key] = true
+		}
 		detail := r.SmokeLine
 		if r.Detail != "" {
 			detail = r.Detail
 		}
+		detail = strings.TrimPrefix(detail, r.Step.doc+": ")
 		detail = truncate(detail, 62)
+		// Appended after truncation: the count is the reason the row reads as
+		// one finding instead of many, so it must not be the part cut off.
+		if n := shared[sharedCauseKey(r)]; n > 1 {
+			detail = fmt.Sprintf("%s %s", detail, c.dim(fmt.Sprintf("[%d documents]", n)))
+		}
 		if r.Image != "" {
 			detail += c.dim(fmt.Sprintf("  (%s)", r.Image))
 		}
@@ -136,16 +160,7 @@ func reportTable(w io.Writer, results []Result) {
 			c.statusWord(r.Status), detail)
 		writeFailure(w, c, r)
 		blocked += blockedLines(r)
-		switch r.Status {
-		case StatusVerified:
-			pass++
-		case StatusFail:
-			fail++
-		case StatusGap:
-			gap++
-		default:
-			other++
-		}
+		countVerdict(r.Status, &pass, &fail, &gap, &other)
 	}
 	_, _ = fmt.Fprintf(w, "\n%s\n", verdictLine(c, fail, gap, other+blocked))
 	_, _ = fmt.Fprintf(w, "%s\n", summaryLine(c, pass, fail, gap, other, len(results), total))
@@ -343,4 +358,39 @@ func dedupe(in []string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+// sharedCauseKey identifies a result by everything except which document it
+// came from, so rows that say the same thing about different documents group
+// together. The document prefix is stripped from the detail, since that is the
+// only part of an otherwise identical message that differs.
+func sharedCauseKey(r Result) string {
+	detail := r.Detail
+	if r.Step.doc != "" {
+		detail = strings.TrimPrefix(detail, r.Step.doc+": ")
+	}
+	return strings.Join([]string{r.Step.Repo, r.Step.Kind, string(r.Status), string(r.Reason), detail}, "\x00")
+}
+
+// sharedCauseCounts counts how many results share each cause.
+func sharedCauseCounts(results []Result) map[string]int {
+	out := map[string]int{}
+	for _, r := range results {
+		out[sharedCauseKey(r)]++
+	}
+	return out
+}
+
+// countVerdict tallies a status into the summary buckets.
+func countVerdict(s Status, pass, fail, gap, other *int) {
+	switch s {
+	case StatusVerified:
+		*pass++
+	case StatusFail:
+		*fail++
+	case StatusGap:
+		*gap++
+	default:
+		*other++
+	}
 }

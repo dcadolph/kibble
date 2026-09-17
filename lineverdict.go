@@ -145,6 +145,14 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		lr.Reason = ReasonNoOutputNonzero
 		lr.Detail = fmt.Sprintf("exited %d without output, which settles nothing: "+
 			"a search does that on no match and a broken command does it too", o.code)
+	case reUnresolvedRef.MatchString(o.output):
+		// Neither a pass nor a break. The install machinery worked and told
+		// kibble the ref is absent, which settles nothing about whether the
+		// document is wrong or is showing the reader where to put their own.
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonMissingFixture
+		lr.Detail = "names a git ref this repository does not have, which a document writes " +
+			"both as a placeholder the reader replaces and as a ref that moved: " + tail
 	case reNothingSearched.MatchString(o.output):
 		// Not a skip: the line ran. Not a failure either, since a search that
 		// was handed nothing to read has not tested what the document claims.
@@ -226,6 +234,17 @@ var (
 	// reNoData matches a query that ran correctly and found nothing, which a
 	// fresh session often cannot avoid: the docs query dates and terms that
 	// have no entries yet.
+	// reUnresolvedRef matches git reporting that a ref named on the command line
+	// is not in the repository it fetched. A document writes that two ways and
+	// the text is identical: as a placeholder the reader replaces, which pipx
+	// does with `git+...@branch` and `@abc123def`, and as a real ref that has
+	// since been deleted or renamed. Nothing in the output separates them, and
+	// a short hexadecimal placeholder is shaped exactly like a real short
+	// commit, so kibble cannot decide and must not pretend to.
+	reUnresolvedRef = regexp.MustCompile(
+		`(?i)pathspec '([^']+)' did not match any file\(s\) known to git` +
+			`|could not find remote (branch|ref) '?([^\s']+)'?` +
+			`|(?:remote )?ref '?([^\s']+)'? not found`)
 	// reNothingSearched matches a search reporting that its filters left it
 	// nothing to look at. The command ran and worked; what it says is that
 	// this repository holds no file of the kind the example targets, as
