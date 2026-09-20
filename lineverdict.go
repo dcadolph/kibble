@@ -97,6 +97,10 @@ func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
 		lr.Status = StatusBlocked
 		lr.Reason = ReasonMissingDependency
 		lr.Detail = "reports something not installed, which may be the container or a missing step: " + tail
+	case reNestedNotFound.MatchString(o.output):
+		lr.Status = StatusSkipped
+		lr.Reason = ReasonMissingDependency
+		lr.Detail = "ran a command the container lacks, reported by the tool that invoked it: " + tail
 	case reTTYErr.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonInteractive
@@ -234,6 +238,15 @@ var (
 	// reNoData matches a query that ran correctly and found nothing, which a
 	// fresh session often cannot avoid: the docs query dates and terms that
 	// have no entries yet.
+	// reNestedNotFound matches a tool reporting that a command it was asked to
+	// run could not be found, by exit code rather than by the shell's wording.
+	// A benchmark harness is the clear case: hyperfine documents
+	// `hyperfine 'hexdump file' 'xxd file'`, the container has neither program,
+	// and hyperfine exits 1 while saying the thing it ran exited 127. The line
+	// kibble executed worked; what is absent is a program the container lacks,
+	// and that is the container's gap rather than the document's.
+	reNestedNotFound = regexp.MustCompile(
+		`(?i)non-?zero exit (code|status) 127\b|\bexit(ed)? (code |status )?127\b`)
 	// reUnresolvedRef matches git reporting that a ref named on the command line
 	// is not in the repository it fetched. A document writes that two ways and
 	// the text is identical: as a placeholder the reader replaces, which pipx

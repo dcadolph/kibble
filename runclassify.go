@@ -182,7 +182,11 @@ var reWrapperSummary = regexp.MustCompile(
 		// the footer naming a debug log inside a container nobody can open.
 		// Skipping them is what leaves the sentence that names the cause.
 		`^npm (notice|warn|WARN)\b|` +
-		`^npm error (code|path|signal|errno|syscall|command|A complete log)\b`)
+		`^npm error (code|path|signal|errno|syscall|command|A complete log)\b|` +
+		// cargo prints this after the compiler has already said what broke, and
+		// it is the last line, so a tail-first reader hands it back as the
+		// explanation. mise's install reported exactly this and nothing else.
+		`^warning: build failed, waiting for other jobs`)
 
 // reUsageHeading matches the banner a tool prints above its own usage screen
 // when it rejects an argument.
