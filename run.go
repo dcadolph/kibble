@@ -95,6 +95,16 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	var script string
 	switch step.Kind {
 	case "example":
+		// A placeholder for documents the budget left unread. It runs nothing,
+		// and says so, because silence about a document reads as a pass.
+		if step.skippedDocs > 0 {
+			return Result{
+				Step: step, Status: StatusSkipped, Reason: ReasonNotExecuted,
+				Detail: fmt.Sprintf("%d further documents were not replayed: this run reads the first %d, "+
+					"so their examples are unchecked rather than passing",
+					step.skippedDocs, maxReplayDocs),
+			}
+		}
 		res := d.runExample(ctx, step)
 		// Several documents can be replayed for one repository, so a result
 		// that is not about the README says which document it is about.
