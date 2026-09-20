@@ -297,7 +297,25 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan, []Result) {
 		// document being replayed would report a key as undocumented because
 		// the page citing it is a different page.
 		repoSettings := documentedSettingNames(readDocSet(p, name).All)
-		for _, doc := range replayDocs(p, name, cfg) {
+		docs := replayDocs(p, name, cfg)
+		// A documentation tree can be enormous. mise carries 421 markdown files,
+		// and replaying every one of them spends the whole run before reaching a
+		// verdict, so the repository that most needed checking got none. The
+		// budget bounds that, and what it leaves out is reported rather than
+		// dropped: a reader told nothing about a document would reasonably
+		// assume it passed.
+		skippedDocs := 0
+		if len(docs) > maxReplayDocs {
+			skippedDocs = len(docs) - maxReplayDocs
+			docs = docs[:maxReplayDocs]
+		}
+		if skippedDocs > 0 {
+			out = append(out, InstallStep{
+				Repo: repo, Kind: "example", Raw: fmt.Sprintf("%d documents", skippedDocs),
+				skippedDocs: skippedDocs,
+			})
+		}
+		for _, doc := range docs {
 			text := md
 			if doc != name {
 				body, rerr := os.ReadFile(filepath.Join(p, doc))
@@ -429,6 +447,13 @@ func exampleStepFor(repo, dir, doc, md string, bins []string, installs []PlanIns
 	}
 	return step, plan, nil
 }
+
+// maxReplayDocs bounds how many documents one repository contributes to a run.
+// The first documents replayDocs returns are the ones a reader meets first: the
+// README, then the named guides, then the tree. Past that the marginal document
+// is rarely another install path, and mise showed what the unbounded version
+// costs, spending a fifteen minute budget across 421 files and settling nothing.
+const maxReplayDocs = 40
 
 // readmeNames are the README file names kibble looks for, in order.
 var readmeNames = []string{"README.md", "readme.md", "README.MD"}

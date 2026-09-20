@@ -43,6 +43,11 @@ type InstallStep struct {
 	// readme is the README file name the step was extracted from, so an
 	// annotation points at the file the repository actually has.
 	readme string
+	// skippedDocs, when set, marks a placeholder step standing for documents the
+	// run's budget left unread. It carries no plan and runs nothing; it exists
+	// so a reader is told the coverage was bounded rather than left to assume
+	// every document passed.
+	skippedDocs int
 	// doc is the document an example step replays, relative to the repository
 	// root. Empty on every other kind of step.
 	doc string
