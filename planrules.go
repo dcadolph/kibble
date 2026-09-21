@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/shell"
 )
 
@@ -126,7 +127,7 @@ var englishStopwords = map[string]bool{
 func documentedBinary(markdown string, known map[string]bool) string {
 	counts := map[string]int{}
 	knownSeen := false
-	for _, block := range codeBlocks(markdown) {
+	for _, block := range docblock.CodeBlocks(markdown) {
 		if block.Span || !shellLangs[block.Lang] {
 			continue
 		}

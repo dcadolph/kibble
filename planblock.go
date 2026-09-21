@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/shell"
 )
 
@@ -112,7 +113,7 @@ var reShownError = regexp.MustCompile(
 // output is an error. Docs sometimes show a command failing on purpose, to
 // teach why the corrected form that follows is needed, and the demonstrated
 // failure exiting nonzero is the document working as written.
-func shownFailures(block codeBlock) map[string]bool {
+func shownFailures(block docblock.Block) map[string]bool {
 	out := map[string]bool{}
 	current := ""
 	for _, raw := range block.Lines {
@@ -133,7 +134,7 @@ func shownFailures(block codeBlock) map[string]bool {
 // gained continuation lines, so the match compares the first physical line
 // against each raw block line with the prompt stripped. Unmatched lines fall
 // back to the block's first line, and 0 means the block's position is unknown.
-func sourceLineIndex(block codeBlock) func(string) int {
+func sourceLineIndex(block docblock.Block) func(string) int {
 	return func(ln string) int {
 		if block.Line == 0 {
 			return 0

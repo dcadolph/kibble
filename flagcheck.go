@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/dcadolph/kibble/internal/docblock"
 	"regexp"
 	"sort"
 	"strings"
@@ -52,7 +53,7 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 	flagSeen := map[string]bool{}
 	subSeen := map[string]bool{}
 	flagged := map[string]bool{}
-	for _, line := range codeLines(markdown) {
+	for _, line := range docblock.CodeLines(markdown) {
 		line = stripComment(line)
 		for _, seg := range splitSegments(line) {
 			// A synopsis such as `tool schedule [add <workflow> --every <dur>]`
