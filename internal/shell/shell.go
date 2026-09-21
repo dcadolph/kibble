@@ -108,9 +108,19 @@ func Parse(cmd string) (Line, bool) {
 	syntax.Walk(file, func(node syntax.Node) bool {
 		switch n := node.(type) {
 		case *syntax.BinaryCmd, *syntax.Subshell, *syntax.IfClause, *syntax.ForClause,
-			*syntax.WhileClause, *syntax.CaseClause, *syntax.FuncDecl, *syntax.Block,
+			*syntax.WhileClause, *syntax.CaseClause, *syntax.Block,
 			*syntax.LetClause, *syntax.TimeClause, *syntax.ArithmCmd, *syntax.TestClause:
 			line.Structured = true
+		case *syntax.FuncDecl:
+			// Defining a function changes the shell exactly as cd and export do,
+			// and a definition made in a subshell is gone when it exits. Marked
+			// only as structured, such a line was isolated for its timeout, and
+			// the next documented line failed: hyperfine's README defines
+			// my_function and then exports it, and the export reported that no
+			// such function existed. The document was right and the session had
+			// thrown the definition away.
+			line.Structured = true
+			line.StateChanging = true
 		case *syntax.DeclClause:
 			// export, declare, local, readonly, and typeset are their own node
 			// rather than ordinary calls, so a line changing the environment
