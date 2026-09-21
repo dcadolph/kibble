@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/dcadolph/kibble/internal/util"
 )
 
 // report writes results to w, as a table or JSON.
@@ -333,13 +335,7 @@ func summaryLine(c palette, pass, fail, gap, other, checks int, total time.Durat
 }
 
 // truncate shortens s to n runes, adding an ellipsis when it cuts.
-func truncate(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n-1]) + "…"
-}
+func truncate(s string, n int) string { return util.Truncate(s, n) }
 
 // dedupe returns the unique values of a list in first-seen order. The same
 // fabricated fixture can serve several lines, and listing it once per line

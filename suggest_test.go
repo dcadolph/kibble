@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/dcadolph/kibble/internal/advisor"
 )
 
 // TestFirstJSONObject checks that a reply is parsed whatever prose or fencing
@@ -40,7 +42,7 @@ func TestFirstJSONObject(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			got, err := firstJSONObject(test.In)
+			got, err := advisor.FirstJSONObject(test.In)
 			if test.WantOK != (err == nil) {
 				t.Fatalf("err = %v, want ok = %v", err, test.WantOK)
 			}
@@ -120,7 +122,7 @@ func TestSuggestFlow(t *testing.T) {
 	}
 
 	var asked string
-	advisor := AdvisorFunc(func(_ context.Context, system, user string) (string, error) {
+	model := advisor.AdvisorFunc(func(_ context.Context, system, user string) (string, error) {
 		asked = user
 		if !strings.Contains(system, "kibble") {
 			t.Errorf("system prompt lost its brief: %q", system)
@@ -132,7 +134,7 @@ func TestSuggestFlow(t *testing.T) {
 ]}`, nil
 	})
 
-	got, err := askAdvisor(context.Background(), advisor, "repo", cands)
+	got, err := askAdvisor(context.Background(), model, "repo", cands)
 	if err != nil {
 		t.Fatalf("askAdvisor: %v", err)
 	}
