@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"github.com/dcadolph/kibble/internal/sandbox"
 )
 
@@ -137,7 +138,7 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 // install must be servable by one image, since the session is one shell: a
 // project installed with both cargo and npm names two toolchains and is
 // reported as a skip rather than run in an image missing one of them.
-func (d *DockerRunner) exampleImage(plan *Plan) (string, bool) {
+func (d *DockerRunner) exampleImage(plan *kplan.Plan) (string, bool) {
 	eco := ""
 	for _, in := range plan.Installs {
 		if in.Ecosystem == "" {
@@ -157,7 +158,7 @@ func (d *DockerRunner) exampleImage(plan *Plan) (string, bool) {
 // sessionBudget bounds the whole example session: each module build gets the
 // install timeout, each runnable line gets a share, and setup gets a grace
 // period, capped so one repo cannot stall the run.
-func sessionBudget(plan *Plan, install time.Duration) time.Duration {
+func sessionBudget(plan *kplan.Plan, install time.Duration) time.Duration {
 	lines := 0
 	for _, s := range plan.Steps {
 		for _, l := range s.Lines {

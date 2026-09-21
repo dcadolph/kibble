@@ -1,4 +1,4 @@
-package main
+package plan
 
 import (
 	"io/fs"
@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dcadolph/kibble/internal/config"
+	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/shell"
 )
 
@@ -69,8 +71,8 @@ func (pl *planner) missingGlob(flat string) string {
 // the repo, an earlier line, nor a fixture provides. Files kibble can fake
 // are added as fixtures instead of skipping the line.
 func (pl *planner) missingFile(flat string) string {
-	flat = stripComment(flat)
-	fields := shellWordsOf(flat)
+	flat = docblock.StripComment(flat)
+	fields := shell.WordsOrFields(flat)
 	for i, raw := range fields {
 		if i == 0 || isOutputArg(fields, i) {
 			continue
@@ -97,7 +99,7 @@ func (pl *planner) missingFile(flat string) string {
 			if !pl.fixed[rel] {
 				pl.fixed[rel] = true
 				pl.created[rel] = true
-				pl.plan.Fixtures = append(pl.plan.Fixtures, Fixture{Path: rel, Contents: synthFixture})
+				pl.plan.Fixtures = append(pl.plan.Fixtures, config.Fixture{Path: rel, Contents: synthFixture})
 			}
 			pl.synthetic = append(pl.synthetic, rel)
 			continue
@@ -110,7 +112,7 @@ func (pl *planner) missingFile(flat string) string {
 // recordCreated tracks the paths a running line will produce, so later
 // lines that read them are not flagged as missing their file.
 func (pl *planner) recordCreated(flat string) {
-	flat = stripComment(flat)
+	flat = docblock.StripComment(flat)
 	for _, m := range reCreatedToken.FindAllStringSubmatch(flat, -1) {
 		for _, tok := range m[1:] {
 			if tok != "" {
@@ -118,7 +120,7 @@ func (pl *planner) recordCreated(flat string) {
 			}
 		}
 	}
-	fields := shellWordsOf(flat)
+	fields := shell.WordsOrFields(flat)
 	if len(fields) < 2 {
 		return
 	}
@@ -220,9 +222,9 @@ func repoTree(dir string) map[string]bool {
 // told the reader what to supply.
 var reSettingMention = regexp.MustCompile(`\b[A-Z][A-Z0-9]{2,}(_[A-Z0-9*]+)+\b`)
 
-// documentedSettingNames collects every environment setting the document
+// DocumentedSettingNames collects every environment setting the document
 // mentions, in any context.
-func documentedSettingNames(markdown string) []string {
+func DocumentedSettingNames(markdown string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, m := range reSettingMention.FindAllString(markdown, -1) {
@@ -262,7 +264,7 @@ func (pl *planner) getsOwnModule(flat string) bool {
 	if pl.module == "" {
 		return false
 	}
-	fields := shellWordsOf(stripComment(flat))
+	fields := shell.WordsOrFields(docblock.StripComment(flat))
 	if len(fields) < 3 || fields[0] != "go" {
 		return false
 	}
@@ -282,7 +284,7 @@ func (pl *planner) getsOwnModule(flat string) bool {
 // that no documented step creates. A document naming ~/src/project is telling
 // the reader where their own work lives, not describing a file it ships.
 func (pl *planner) missingHomePath(flat string) string {
-	fields := shellWordsOf(stripComment(flat))
+	fields := shell.WordsOrFields(docblock.StripComment(flat))
 	for i, tok := range fields {
 		if i == 0 || isOutputArg(fields, i) {
 			continue

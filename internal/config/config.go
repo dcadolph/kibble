@@ -1,4 +1,11 @@
-package main
+// Package config is the .kibble.yml schema: what a repository may tell kibble
+// about documentation its heuristics cannot read on their own.
+//
+// It is a leaf on purpose. A repository describes fixtures, environment and
+// rules without knowing how any of them will be planned or run, and keeping
+// the schema below the planner is what stops "the config says so" from
+// becoming a way to reach back into the engine.
+package config
 
 import (
 	"fmt"
@@ -8,8 +15,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// kibbleConfig is the root of a repo's .kibble.yml file.
-type kibbleConfig struct {
+// fileConfig is the root of a repo's .kibble.yml file.
+type fileConfig struct {
 	// Version is the config schema version.
 	Version int `yaml:"version"`
 	// Examples tunes example planning for the repo.
@@ -68,10 +75,10 @@ type StepRule struct {
 	ReadyLog string `yaml:"readyLog"`
 }
 
-// loadExamplesConfig reads .kibble.yml from a repo directory. A missing file
+// LoadExamplesConfig reads .kibble.yml from a repo directory. A missing file
 // returns nil config and no error; a malformed file returns the error so the
 // run can name it rather than silently ignoring the owner's intent.
-func loadExamplesConfig(dir string) (*ExamplesConfig, error) {
+func LoadExamplesConfig(dir string) (*ExamplesConfig, error) {
 	b, err := os.ReadFile(filepath.Join(dir, ".kibble.yml"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -79,7 +86,7 @@ func loadExamplesConfig(dir string) (*ExamplesConfig, error) {
 		}
 		return nil, err
 	}
-	var cfg kibbleConfig
+	var cfg fileConfig
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
 		return nil, err
 	}
@@ -98,4 +105,12 @@ func loadExamplesConfig(dir string) (*ExamplesConfig, error) {
 		}
 	}
 	return cfg.Examples, nil
+}
+
+// Fixture is a file the executor writes into the session workdir.
+type Fixture struct {
+	// Path is the file path, relative to the session workdir.
+	Path string `json:"path" yaml:"path"`
+	// Contents is the file body.
+	Contents string `json:"contents" yaml:"contents"`
 }

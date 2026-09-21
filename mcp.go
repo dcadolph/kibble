@@ -83,7 +83,7 @@ type planRow struct {
 // serveMCP runs kibble as a Model Context Protocol server over stdio, so an
 // agent can check a repository's documentation with the same engine and the
 // same verdicts the command line gives.
-func serveMCP(ctx context.Context, cfg config) error {
+func serveMCP(ctx context.Context, cfg runOptions) error {
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{
 		Name:    "kibble",
 		Version: kibbleVersion(),
@@ -95,7 +95,7 @@ func serveMCP(ctx context.Context, cfg config) error {
 // registerTools adds kibble's tools to the protocol server. The descriptions
 // are written in the words someone uses when they ask for this, so a client's
 // tool picker surfaces the right one, and they say plainly which tool is cheap.
-func registerTools(srv *mcpsdk.Server, cfg config) {
+func registerTools(srv *mcpsdk.Server, cfg runOptions) {
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name:  "plan_docs",
 		Title: "See what kibble would run",
@@ -154,7 +154,7 @@ func planTool(_ context.Context, _ *mcpsdk.CallToolRequest, in planInput) (
 
 // checkToolFor builds the tool that runs the documented steps, carrying the
 // image, timeout, worker, and brew settings the command line was started with.
-func checkToolFor(cfg config) func(context.Context, *mcpsdk.CallToolRequest, checkInput) (
+func checkToolFor(cfg runOptions) func(context.Context, *mcpsdk.CallToolRequest, checkInput) (
 	*mcpsdk.CallToolResult, checkOutput, error) {
 	return func(ctx context.Context, _ *mcpsdk.CallToolRequest, in checkInput) (
 		*mcpsdk.CallToolResult, checkOutput, error) {

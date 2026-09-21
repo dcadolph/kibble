@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"regexp"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -322,3 +323,57 @@ func Parses(s string) bool {
 	_, ok := Parse(s)
 	return ok
 }
+
+// ArgWordsOrFields returns a line's words, falling back to whitespace
+// splitting only when the line does not parse. A line reaching here has
+// already run, so it came from a document kibble could read; the fallback
+// exists so a parse kibble did not anticipate degrades to the old answer
+// rather than to no answer.
+func ArgWordsOrFields(cmd string) []string {
+	if words, ok := ArgWords(cmd); ok {
+		return words
+	}
+	return fieldsFallback(cmd)
+}
+
+// WordsOrFields returns the words of a line's first command, the program name
+// first, falling back to whitespace splitting only when the line does not
+// parse. Planner rules that index by position need this rather than
+// [ArgWordsOrFields]: a rule asking what the line runs, or reading its second
+// argument, means the first command's words and not every word in a pipeline.
+func WordsOrFields(cmd string) []string {
+	if words, ok := Words(cmd); ok {
+		return words
+	}
+	return fieldsFallback(cmd)
+}
+
+// FirstWord returns the program a line runs, or empty when it runs
+// nothing. It never panics on a blank line, which indexing the split did.
+func FirstWord(cmd string) string {
+	words := WordsOrFields(cmd)
+	if len(words) == 0 {
+		return ""
+	}
+	return words[0]
+}
+
+// fieldsFallback splits on whitespace and strips the quote characters the
+// parser would have resolved. It is the old behavior, kept for lines no bash
+// parser accepts, where the choice is a rough answer or none.
+func fieldsFallback(cmd string) []string {
+	out := strings.Fields(cmd)
+	for i, tok := range out {
+		out[i] = strings.Trim(tok, "'\"\x60")
+	}
+	return out
+}
+
+// reSubName is the shape of a subcommand token: a lowercase word, possibly
+// hyphenated. It lives here rather than in either caller because the planner
+// and the flag checker both have to agree on what counts as a subcommand, and
+// two copies of that answer would eventually disagree.
+var reSubName = regexp.MustCompile(`^[a-z][a-z0-9_-]+$`)
+
+// IsSubcommandName reports whether a word is shaped like a subcommand.
+func IsSubcommandName(s string) bool { return reSubName.MatchString(s) }

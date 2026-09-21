@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/dcadolph/kibble/internal/docblock"
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"regexp"
 	"strings"
 )
@@ -17,7 +18,7 @@ import (
 // tools while its install provides one, as a conda alternative next to a
 // cargo install, and a line calling the absent one says nothing about the
 // docs being wrong.
-func resolveMissingBinaries(run *exampleRun, plan *Plan, have map[string]bool) {
+func resolveMissingBinaries(run *exampleRun, plan *kplan.Plan, have map[string]bool) {
 	if len(have) == 0 {
 		return
 	}
@@ -32,7 +33,7 @@ func resolveMissingBinaries(run *exampleRun, plan *Plan, have map[string]bool) {
 			if l.Status != StatusFail {
 				continue
 			}
-			if bin, _ := invokedBinary(l.Cmd, bins); bin != "" && !have[bin] {
+			if bin, _ := kplan.InvokedBinary(l.Cmd, bins); bin != "" && !have[bin] {
 				l.Status = StatusSkipped
 				l.Detail = fmt.Sprintf("invokes %s, which the documented install does not provide", bin)
 			}
@@ -50,7 +51,7 @@ func resolveMissingBinaries(run *exampleRun, plan *Plan, have map[string]bool) {
 // become blocked rather than skipped: the cascade stops being reported as
 // several broken lines without any of them being called fine. A gap counts as
 // not having run, since the document's own hole stopped the line.
-func resolveDependentFailures(run *exampleRun, plan *Plan) {
+func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 	bins := map[string]bool{}
 	for _, b := range plan.Binaries {
 		bins[b] = true
@@ -63,7 +64,7 @@ func resolveDependentFailures(run *exampleRun, plan *Plan) {
 			if l.Status != StatusVerified {
 				continue
 			}
-			if bin, sub := invokedBinary(l.Cmd, bins); bin != "" && sub != "" {
+			if bin, sub := kplan.InvokedBinary(l.Cmd, bins); bin != "" && sub != "" {
 				passed[bin+" "+sub] = true
 			}
 		}
@@ -74,7 +75,7 @@ func resolveDependentFailures(run *exampleRun, plan *Plan) {
 			if l.Status != StatusSkipped && l.Status != StatusGap {
 				continue
 			}
-			if bin, sub := invokedBinary(l.Cmd, bins); bin != "" && sub != "" {
+			if bin, sub := kplan.InvokedBinary(l.Cmd, bins); bin != "" && sub != "" {
 				skippedCmds = append(skippedCmds, bin+" "+sub)
 			}
 		}
@@ -201,7 +202,7 @@ func citedSkipped(output string, skippedCmds []string) string {
 // the point. A skip is kibble's own choice not to run something, which is a
 // fact about kibble and not about the document's sequence.
 func earlierGapInFamily(prior []lineResult, cmd string, bins map[string]bool) string {
-	bin, sub := invokedBinary(cmd, bins)
+	bin, sub := kplan.InvokedBinary(cmd, bins)
 	if bin == "" || sub == "" {
 		return ""
 	}
@@ -209,7 +210,7 @@ func earlierGapInFamily(prior []lineResult, cmd string, bins map[string]bool) st
 		if p.Status != StatusGap {
 			continue
 		}
-		if pb, ps := invokedBinary(p.Cmd, bins); pb == bin && ps == sub {
+		if pb, ps := kplan.InvokedBinary(p.Cmd, bins); pb == bin && ps == sub {
 			return docblock.Flatten(p.Cmd)
 		}
 	}

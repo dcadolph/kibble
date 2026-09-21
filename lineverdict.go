@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"github.com/dcadolph/kibble/internal/shell"
 )
 
@@ -32,7 +33,7 @@ func documentedNonzeroCode(code int) bool {
 // 403 that may be a missing account or a wrong argument, and leaves the line
 // blocked: run, unexplained, and claiming nothing about the document. What
 // resembles nothing is a failure.
-func classifyLineResult(lr lineResult, l PlanLine, o lineOutcome, wrapped bool,
+func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped bool,
 	documented map[string]bool, lineBudget time.Duration) lineResult {
 	lr.Code = o.code
 	// The same reason as classify: a documented line that colors its output
@@ -361,7 +362,7 @@ func missingFileArg(cmd, output string) string {
 	// what is missing is a step and not the reader's own file.
 	if m := reCommandNotStart.FindStringSubmatch(output); m != nil {
 		helper := strings.Trim(m[1], "'\"\x60")
-		for _, tok := range shellArgWordsOf(cmd) {
+		for _, tok := range shell.ArgWordsOrFields(cmd) {
 			if tok == helper {
 				return helper
 			}
@@ -378,7 +379,7 @@ func missingFileArg(cmd, output string) string {
 	// Whole-word comparison against the words the shell would pass, so a
 	// quoted path containing a space is one argument here rather than two,
 	// and a name matches the argument the command really named.
-	for _, tok := range shellArgWordsOf(cmd) {
+	for _, tok := range shell.ArgWordsOrFields(cmd) {
 		if tok == name {
 			return name
 		}
@@ -387,51 +388,6 @@ func missingFileArg(cmd, output string) string {
 		return name
 	}
 	return ""
-}
-
-// shellArgWordsOf returns a line's words, falling back to whitespace
-// splitting only when the line does not parse. A line reaching here has
-// already run, so it came from a document kibble could read; the fallback
-// exists so a parse kibble did not anticipate degrades to the old answer
-// rather than to no answer.
-func shellArgWordsOf(cmd string) []string {
-	if words, ok := shell.ArgWords(cmd); ok {
-		return words
-	}
-	return fieldsFallback(cmd)
-}
-
-// shellWordsOf returns the words of a line's first command, the program name
-// first, falling back to whitespace splitting only when the line does not
-// parse. Planner rules that index by position need this rather than
-// [shellArgWordsOf]: a rule asking what the line runs, or reading its second
-// argument, means the first command's words and not every word in a pipeline.
-func shellWordsOf(cmd string) []string {
-	if words, ok := shell.Words(cmd); ok {
-		return words
-	}
-	return fieldsFallback(cmd)
-}
-
-// shellFirstWord returns the program a line runs, or empty when it runs
-// nothing. It never panics on a blank line, which indexing the split did.
-func shellFirstWord(cmd string) string {
-	words := shellWordsOf(cmd)
-	if len(words) == 0 {
-		return ""
-	}
-	return words[0]
-}
-
-// fieldsFallback splits on whitespace and strips the quote characters the
-// parser would have resolved. It is the old behavior, kept for lines no bash
-// parser accepts, where the choice is a rough answer or none.
-func fieldsFallback(cmd string) []string {
-	out := strings.Fields(cmd)
-	for i, tok := range out {
-		out[i] = strings.Trim(tok, "'\"\x60")
-	}
-	return out
 }
 
 // missingCommandName returns the program a shell reported missing, or empty
@@ -447,7 +403,7 @@ func missingCommandName(cmd, output string) string {
 		return ""
 	}
 	name := m[1]
-	for _, tok := range shellArgWordsOf(cmd) {
+	for _, tok := range shell.ArgWordsOrFields(cmd) {
 		if tok == name {
 			return ""
 		}
@@ -458,7 +414,7 @@ func missingCommandName(cmd, output string) string {
 // documentedSettings collects every environment setting the document names,
 // including in lines that do not run, so a placeholder export still counts as
 // the document telling the reader what to supply.
-func documentedSettings(plan *Plan) map[string]bool {
+func documentedSettings(plan *kplan.Plan) map[string]bool {
 	out := map[string]bool{}
 	if plan == nil {
 		return out

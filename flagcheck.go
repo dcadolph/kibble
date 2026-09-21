@@ -3,12 +3,13 @@ package main
 import (
 	"fmt"
 	"github.com/dcadolph/kibble/internal/docblock"
+	"github.com/dcadolph/kibble/internal/shell"
 	"regexp"
 	"sort"
 	"strings"
 )
 
-// Usage is what a README cites for one installed binary: the flags used on
+// Usage is what a README cites for one installed Binary: the flags used on
 // lines that invoke it, and the subcommands those lines call.
 type Usage struct {
 	// Flags are the cited flag names, without leading dashes.
@@ -42,7 +43,6 @@ var (
 	// must be at least two characters, so ambiguous short flags are ignored.
 	reFlagToken = regexp.MustCompile(`(^|\s)(--?[A-Za-z][A-Za-z0-9_-]+)(=|\s|$)`)
 	// reSubName matches a plausible subcommand name.
-	reSubName = regexp.MustCompile(`^[a-z][a-z0-9_-]+$`)
 )
 
 // extractUsage scans a README's code lines and returns the flags and
@@ -83,12 +83,12 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 			}
 			flags := reFlagToken.FindAllStringSubmatch(seg, -1)
 			var sub string
-			if len(fields) > 1 && reSubName.MatchString(fields[1]) {
+			if len(fields) > 1 && shell.IsSubcommandName(fields[1]) {
 				sub = fields[1]
 				// A flag on a nested invocation such as `tool walk rotate --x`
 				// lives on the nested command, so capture the two-token path
 				// and probe its help rather than only the parent's.
-				if len(flags) > 0 && len(fields) > 2 && reSubName.MatchString(fields[2]) {
+				if len(flags) > 0 && len(fields) > 2 && shell.IsSubcommandName(fields[2]) {
 					sub = fields[1] + " " + fields[2]
 				}
 				if key := bin + "|" + sub; !subSeen[key] {

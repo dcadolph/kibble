@@ -10,6 +10,7 @@ import (
 
 	"github.com/dcadolph/kibble/internal/advisor"
 	"github.com/dcadolph/kibble/internal/docblock"
+	kplan "github.com/dcadolph/kibble/internal/plan"
 )
 
 // suggestSystem is the advisor's brief. It is deliberately narrow: the model
@@ -66,7 +67,7 @@ type candidate struct {
 // skipped for a reason a maintainer might overrule, and every line it planned
 // to run whose exit code it cannot predict. Lines skipped for reasons that are
 // certain, such as a placeholder the reader must fill in, are left alone.
-func suggestCandidates(plan *Plan) []candidate {
+func suggestCandidates(plan *kplan.Plan) []candidate {
 	var out []candidate
 	seen := map[string]bool{}
 	for _, step := range plan.Steps {

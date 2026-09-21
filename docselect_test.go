@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/dcadolph/kibble/internal/config"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
@@ -19,7 +20,7 @@ func TestReplayDocs(t *testing.T) {
 	prose := "# T\n\nNo commands here.\n"
 	tests := []struct {
 		Files map[string]string
-		Cfg   *ExamplesConfig
+		Cfg   *config.ExamplesConfig
 		Want  []string
 	}{{ // Test 0: a docs tree is replayed beside the README.
 		Files: map[string]string{"README.md": shell, "docs/quickstart.md": shell},
@@ -45,12 +46,12 @@ func TestReplayDocs(t *testing.T) {
 		Want: []string{"README.md"},
 	}, { // Test 5: a repository adds what the convention misses.
 		Files: map[string]string{"README.md": shell, "walkthrough.md": shell},
-		Cfg:   &ExamplesConfig{Docs: []string{"walkthrough.md"}},
+		Cfg:   &config.ExamplesConfig{Docs: []string{"walkthrough.md"}},
 		Want:  []string{"README.md", "walkthrough.md"},
 	}, { // Test 6: a repository drops what the convention picks up, but the
 		// README is never dropped.
 		Files: map[string]string{"README.md": shell, "docs/wip.md": shell},
-		Cfg:   &ExamplesConfig{SkipDocs: []string{"docs/wip.md", "README.md"}},
+		Cfg:   &config.ExamplesConfig{SkipDocs: []string{"docs/wip.md", "README.md"}},
 		Want:  []string{"README.md"},
 	}}
 	for testNum, test := range tests {

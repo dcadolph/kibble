@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -78,7 +79,7 @@ func TestClassifyFalseNegatives(t *testing.T) {
 			t.Parallel()
 			lr := lineResult{Cmd: test.Cmd, Code: -1}
 			o := lineOutcome{code: test.Code, output: test.Output}
-			got := classifyLineResult(lr, PlanLine{Cmd: test.Cmd}, o, false, test.Documented, lineTimeout)
+			got := classifyLineResult(lr, kplan.PlanLine{Cmd: test.Cmd}, o, false, test.Documented, lineTimeout)
 			if diff := cmp.Diff(test.WantStatus, got.Status); diff != "" {
 				t.Errorf("status mismatch (-want +got):\n%s\ndetail: %s", diff, got.Detail)
 			}
@@ -94,7 +95,7 @@ func TestSyntheticInputIsNotABarePass(t *testing.T) {
 	t.Parallel()
 
 	lr := lineResult{Cmd: "tool render notes.md", Code: -1, Synthetic: []string{"notes.md"}}
-	got := classifyLineResult(lr, PlanLine{}, lineOutcome{code: 0}, false, nil, lineTimeout)
+	got := classifyLineResult(lr, kplan.PlanLine{}, lineOutcome{code: 0}, false, nil, lineTimeout)
 	if got.Status != StatusVerified {
 		t.Errorf("status = %s, want %s", got.Status, StatusVerified)
 	}
@@ -155,7 +156,7 @@ func TestPlanMarksSyntheticInput(t *testing.T) {
 func TestDependentFailureFalseNegatives(t *testing.T) {
 	t.Parallel()
 
-	plan := &Plan{Binaries: []string{"mytool"}}
+	plan := &kplan.Plan{Binaries: []string{"mytool"}}
 
 	tests := []struct {
 		Name       string

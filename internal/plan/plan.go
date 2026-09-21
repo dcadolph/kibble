@@ -1,8 +1,11 @@
-package main
+package plan
 
 import (
 	"fmt"
+	"github.com/dcadolph/kibble/internal/config"
 	"github.com/dcadolph/kibble/internal/docblock"
+	"github.com/dcadolph/kibble/internal/shell"
+	"github.com/dcadolph/kibble/internal/verdict"
 	"sort"
 	"strings"
 )
@@ -27,7 +30,7 @@ type Plan struct {
 	// Env is extra environment exported for the whole session.
 	Env map[string]string `json:"env,omitempty"`
 	// Fixtures are files written into the workdir before any step runs.
-	Fixtures []Fixture `json:"fixtures,omitempty"`
+	Fixtures []config.Fixture `json:"fixtures,omitempty"`
 	// Steps are the example blocks in documented order.
 	Steps []PlanStep `json:"steps,omitempty"`
 	// Settings are environment names the document mentions anywhere, prose
@@ -48,17 +51,9 @@ type PlanInstall struct {
 	Ecosystem string `json:"ecosystem,omitempty"`
 	// binary is the tool this install is expected to provide. It exists to
 	// drop alternative installs of the same tool and is not part of output.
-	binary string
-	// bootstrap installs the package manager itself when the image lacks it.
-	bootstrap string
-}
-
-// Fixture is a file the executor writes into the session workdir.
-type Fixture struct {
-	// Path is the file path, relative to the session workdir.
-	Path string `json:"path" yaml:"path"`
-	// Contents is the file body.
-	Contents string `json:"contents" yaml:"contents"`
+	Binary string
+	// Bootstrap installs the package manager itself when the image lacks it.
+	Bootstrap string
 }
 
 // PlanStep is one documented code block prepared for execution.
@@ -84,7 +79,7 @@ type PlanLine struct {
 	Skip string `json:"skip,omitempty"`
 	// SkipReason is the machine-readable code for Skip, so a consumer can
 	// filter and audit skip reasons without parsing the human-facing string.
-	SkipReason Reason `json:"skipReason,omitempty"`
+	SkipReason verdict.Reason `json:"skipReason,omitempty"`
 	// Gap marks a Skip whose cause is the document rather than the
 	// container: the line names something no documented step creates.
 	Gap bool `json:"gap,omitempty"`
@@ -109,13 +104,39 @@ func (s PlanStep) Runnable() bool {
 	return false
 }
 
-// buildPlan turns a README's code blocks into an execution plan for one
+// BuildPlan turns a README's code blocks into an execution plan for one
 // repo. binaries and modules come from the repo's go-install steps, dir is
 // the local checkout used to resolve file references, and cfg carries the
 // repo's .kibble.yml overrides, if any.
-func buildPlan(repo, dir, markdown string, binaries []string, installs []PlanInstall, cfg *ExamplesConfig) *Plan {
+// Recognizer answers what a documented line is, so the planner can leave
+// install recipes to whatever installs them instead of replaying them as
+// examples. The planner used to hold the patterns itself, which meant the
+// layer deciding what to run also had to know what every ecosystem's install
+// looks like. Asking instead of knowing keeps that knowledge in one place.
+type Recognizer struct {
+	// Clones reports whether a line clones a repository. A block containing
+	// one is a build recipe, not an example, so the whole block is dropped.
+	Clones func(flat string) bool
+	// Installs reports whether a line installs the documented tool. Such a
+	// line is skipped on its own; the rest of the block may still be examples.
+	Installs func(flat string) bool
+}
+
+// clones and installs answer false when no recognizer was supplied, which is
+// the honest default: a caller that says nothing about install lines gets a
+// planner that treats every line as a candidate example.
+func (r *Recognizer) clones(flat string) bool {
+	return r != nil && r.Clones != nil && r.Clones(flat)
+}
+
+func (r *Recognizer) installs(flat string) bool {
+	return r != nil && r.Installs != nil && r.Installs(flat)
+}
+
+func BuildPlan(repo, dir, markdown string, binaries []string, installs []PlanInstall, cfg *config.ExamplesConfig, rec *Recognizer) *Plan {
 	p := &Plan{Repo: repo, Installs: installs, Binaries: binaries}
 	pl := &planner{
+		rec:      rec,
 		plan:     p,
 		binaries: map[string]bool{},
 		tree:     repoTree(dir),
@@ -149,7 +170,7 @@ func buildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 			pl.packages[pkg] = true
 		}
 	}
-	pl.plan.Settings = documentedSettingNames(markdown)
+	pl.plan.Settings = DocumentedSettingNames(markdown)
 	for b := range pl.binaries {
 		if describedAsWatcher(markdown, b) {
 			pl.watcher = true
@@ -178,7 +199,7 @@ func (pl *planner) spreadNonzeroOK() {
 	for _, s := range pl.plan.Steps {
 		for _, l := range s.Lines {
 			if l.NonzeroOK {
-				if bin, sub := invokedBinary(docblock.Flatten(l.Cmd), pl.binaries); bin != "" {
+				if bin, sub := InvokedBinary(docblock.Flatten(l.Cmd), pl.binaries); bin != "" {
 					ok[bin+"|"+sub] = true
 				}
 			}
@@ -190,7 +211,7 @@ func (pl *planner) spreadNonzeroOK() {
 	for si := range pl.plan.Steps {
 		for li := range pl.plan.Steps[si].Lines {
 			l := &pl.plan.Steps[si].Lines[li]
-			if bin, sub := invokedBinary(docblock.Flatten(l.Cmd), pl.binaries); ok[bin+"|"+sub] {
+			if bin, sub := InvokedBinary(docblock.Flatten(l.Cmd), pl.binaries); ok[bin+"|"+sub] {
 				l.NonzeroOK = true
 			}
 		}
@@ -199,6 +220,9 @@ func (pl *planner) spreadNonzeroOK() {
 
 // planner accumulates plan state as blocks are processed in document order.
 type planner struct {
+	// rec answers whether a line clones or installs, so the planner does not
+	// have to carry every ecosystem's install patterns itself.
+	rec *Recognizer
 	// plan is the plan being built.
 	plan *Plan
 	// binaries is the set of documented binary names.
@@ -229,7 +253,7 @@ type planner struct {
 	// example, and the verdict has to be able to say so.
 	synthetic []string
 	// cfg is the repo's .kibble.yml overrides, or nil.
-	cfg *ExamplesConfig
+	cfg *config.ExamplesConfig
 }
 
 // addBlock processes one shell-looking code block into a plan step. Blocks
@@ -245,10 +269,10 @@ func (pl *planner) addBlock(block docblock.Block) {
 	kept := lines[:0]
 	for _, ln := range lines {
 		flat := docblock.Flatten(ln)
-		if reGitClone.MatchString(flat) {
+		if pl.rec.clones(flat) {
 			return
 		}
-		if reGoInstall.MatchString(flat) || reBrew.MatchString(flat) {
+		if pl.rec.installs(flat) {
 			continue
 		}
 		kept = append(kept, ln)
@@ -288,7 +312,7 @@ func (pl *planner) addBlock(block docblock.Block) {
 			line.NonzeroOK = true
 			nonzero = false
 		}
-		if _, sub := invokedBinary(flat, pl.binaries); findingSubs[sub] {
+		if _, sub := InvokedBinary(flat, pl.binaries); findingSubs[sub] {
 			line.NonzeroOK = true
 		}
 		if shownErr[strings.TrimSpace(flat)] {
@@ -299,11 +323,11 @@ func (pl *planner) addBlock(block docblock.Block) {
 		line.Synthetic = pl.synthetic
 		if line.Skip == "" && scopedTo != "" {
 			line.Skip = fmt.Sprintf("documented for %s rather than this container", scopedTo)
-			line.SkipReason = ReasonOtherPlatform
+			line.SkipReason = verdict.ReasonOtherPlatform
 		}
 		if line.Skip == "" && lostDir {
 			line.Skip = "follows a skipped cd, so it would run in the wrong directory"
-			line.SkipReason = ReasonDependsOnSkipped
+			line.SkipReason = verdict.ReasonDependsOnSkipped
 		}
 		pl.applyRules(&line, &step, flat)
 		if line.Skip != "" && strings.HasPrefix(strings.TrimSpace(flat), "cd ") {
@@ -336,7 +360,7 @@ func (pl *planner) qualifies(lines []string) bool {
 		if flat == "" || strings.HasPrefix(flat, "#") {
 			continue
 		}
-		first := shellFirstWord(flat)
+		first := shell.FirstWord(flat)
 		switch {
 		case knownCommands[first], pl.binaries[first]:
 		case packageTools[first] != "":
@@ -348,4 +372,27 @@ func (pl *planner) qualifies(lines []string) bool {
 		commands++
 	}
 	return commands > 0
+}
+
+// CommandEcosystem maps a build command to the ecosystem that provides it.
+// Commands present in every image, such as make and cc, are deliberately
+// absent: they say nothing about which toolchain a recipe needs.
+// CommandEcosystem maps a command to the ecosystem that provides it. Both the
+// planner and the toolchain chooser need this answer, so it has one home.
+var CommandEcosystem = map[string]string{
+	"cargo":  "rust",
+	"rustc":  "rust",
+	"rustup": "rust",
+	"npm":    "node",
+	"npx":    "node",
+	"pnpm":   "node",
+	"yarn":   "node",
+	"node":   "node",
+	"pip":    "python",
+	"pip3":   "python",
+	"poetry": "python",
+	"uv":     "python",
+	"python": "python",
+	"go":     "go",
+	"gofmt":  "go",
 }

@@ -1,4 +1,4 @@
-package main
+package plan
 
 import (
 	"regexp"
@@ -84,3 +84,13 @@ var (
 	// reSimpleWord matches a bare command word.
 	reSimpleWord = regexp.MustCompile(`^[A-Za-z][\w.+-]*$`)
 )
+
+// CreatesToken reports whether a line produces the named path: a redirect
+// target, an -o argument, or an argument to mkdir, touch, cp or mv. The
+// session writer asks this to know which files a step will bring into being.
+func CreatesToken(flat string) [][]string {
+	return reCreatedToken.FindAllStringSubmatch(flat, -1)
+}
+
+// IsSimpleWord reports whether a token is a bare command word.
+func IsSimpleWord(s string) bool { return reSimpleWord.MatchString(s) }

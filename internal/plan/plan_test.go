@@ -1,12 +1,14 @@
-package main
+package plan
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/dcadolph/kibble/internal/config"
 	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -40,7 +42,7 @@ func TestBuildPlan(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		Markdown     string
-		Cfg          *ExamplesConfig
+		Cfg          *config.ExamplesConfig
 		Module       string
 		WantSteps    [][]planLine
 		WantFixtures []string
@@ -202,7 +204,7 @@ func TestBuildPlan(t *testing.T) {
 		}},
 	}, { // Test 12: config rules force lines to run or skip and mark nonzero.
 		Markdown: "```sh\ntool serve\ntool check x.md\n```\n",
-		Cfg: &ExamplesConfig{Steps: []StepRule{
+		Cfg: &config.ExamplesConfig{Steps: []config.StepRule{
 			{Match: "tool serve", Run: true},
 			{Match: "tool check", NonzeroOK: true},
 		}},
@@ -213,7 +215,7 @@ func TestBuildPlan(t *testing.T) {
 		WantFixtures: []string{"x.md"},
 	}, { // Test 13: config substitutions resolve placeholders before checks.
 		Markdown: "```sh\ntool add --key <api-key>\n```\n",
-		Cfg: &ExamplesConfig{
+		Cfg: &config.ExamplesConfig{
 			Substitutions: map[string]string{"<api-key>": "dummy"},
 		},
 		WantSteps: [][]planLine{{{Cmd: "tool add --key dummy"}}},
@@ -243,7 +245,7 @@ func TestBuildPlan(t *testing.T) {
 		WantSteps: [][]planLine{{{Cmd: "tool run --out $HOME/out"}}},
 	}, { // Test 20: a variable the config exports resolves.
 		Markdown:  "```sh\ntool run --key $TOKEN\n```\n",
-		Cfg:       &ExamplesConfig{Env: map[string]string{"TOKEN": "abc"}},
+		Cfg:       &config.ExamplesConfig{Env: map[string]string{"TOKEN": "abc"}},
 		WantSteps: [][]planLine{{{Cmd: "tool run --key $TOKEN"}}},
 	}}
 	for testNum, test := range tests {
@@ -257,8 +259,8 @@ func TestBuildPlan(t *testing.T) {
 					t.Fatalf("write go.mod: %v", err)
 				}
 			}
-			plan := buildPlan("repo", dir, test.Markdown, []string{"tool"},
-				[]PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}}, test.Cfg)
+			plan := BuildPlan("repo", dir, test.Markdown, []string{"tool"},
+				[]PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}}, test.Cfg, testRecognizer())
 			if diff := cmp.Diff(test.WantSteps, projectPlan(plan), cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("steps mismatch (-want +got):\n%s", diff)
 			}
@@ -289,7 +291,7 @@ func TestBuildPlanRepoTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	md := "```sh\ntool index --file examples/people.csv\ntool index --file missing.csv\n```\n"
-	plan := buildPlan("repo", dir, md, []string{"tool"}, nil, nil)
+	plan := BuildPlan("repo", dir, md, []string{"tool"}, nil, nil, testRecognizer())
 	want := [][]planLine{{
 		{Cmd: "tool index --file examples/people.csv"},
 		{Cmd: "tool index --file missing.csv", Skip: true, Gap: true},
@@ -367,7 +369,7 @@ func TestSkipHeuristics(t *testing.T) {
 		Markdown: "```sh\ntool --shell zsh 'echo hi'\n```\n",
 		WantSkip: "zsh shell",
 	}, { // Test 12: a home config the docs never create is skipped.
-		Markdown: "```sh\ntool --config ~/.config/tool/config.toml\n```\n",
+		Markdown: "```sh\ntool --runOptions ~/.config/tool/config.toml\n```\n",
 		WantSkip: "references ~/.config/tool/config.toml",
 	}, { // Test 13: a rule spec inside a flag is not a missing file glob.
 		Markdown: "```sh\ntool --exclude-rules=\"cmd/.*:G204\" ./...\n```\n",
@@ -407,8 +409,8 @@ func TestSkipHeuristics(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			plan := buildPlan("repo", "", test.Markdown, []string{"tool"},
-				[]PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}}, nil)
+			plan := BuildPlan("repo", "", test.Markdown, []string{"tool"},
+				[]PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}}, nil, testRecognizer())
 			var last PlanLine
 			found := false
 			for _, s := range plan.Steps {
@@ -541,8 +543,8 @@ func TestPlatformScopedBlocks(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			plan := buildPlan("repo", "", test.Markdown, []string{"tool"},
-				[]PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}}, nil)
+			plan := BuildPlan("repo", "", test.Markdown, []string{"tool"},
+				[]PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}}, nil, testRecognizer())
 			var got PlanLine
 			found := false
 			for _, s := range plan.Steps {
@@ -562,5 +564,17 @@ func TestPlatformScopedBlocks(t *testing.T) {
 				t.Errorf("skip = %q, want it to contain %q", got.Skip, test.WantSkip)
 			}
 		})
+	}
+}
+
+// testRecognizer mirrors what the command line supplies in production: the
+// planner is told which documented lines install, rather than knowing.
+func testRecognizer() *Recognizer {
+	clone := regexp.MustCompile(`\bgit\s+clone\b`)
+	goInstall := regexp.MustCompile(`\bgo\s+install\s+(?:-\S+\s+)*(\S+@\S+)`)
+	brew := regexp.MustCompile(`\bbrew\s+install\s+((?:-[\w-]+\s+)*)(\S+)`)
+	return &Recognizer{
+		Clones:   func(flat string) bool { return clone.MatchString(flat) },
+		Installs: func(flat string) bool { return goInstall.MatchString(flat) || brew.MatchString(flat) },
 	}
 }

@@ -27,7 +27,7 @@ func githubOutput(w io.Writer, results []Result) {
 				fmt.Sprintf("kibble: documented %s failed: %s: %s", r.Step.Kind, r.Step.Raw, r.Detail))
 		case StatusDrift:
 			annotate(w, "warning", file, r.Step.Line,
-				fmt.Sprintf("kibble: docs drifted from the binary: %s", r.Detail))
+				fmt.Sprintf("kibble: docs drifted from the Binary: %s", r.Detail))
 		case StatusError:
 			annotate(w, "warning", file, 0, fmt.Sprintf("kibble: %s", r.Detail))
 		}

@@ -1,10 +1,11 @@
-package main
+package plan
 
 import (
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/dcadolph/kibble/internal/config"
 	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/shell"
 )
@@ -66,9 +67,9 @@ func (pl *planner) applyRules(line *PlanLine, step *PlanStep, flat string) {
 // argument or a path. Match compares whole words, so `tool run` no longer
 // selects `tool run-production`, which is the kind of accident a rule written
 // for one example used to have on every other example that shared a prefix.
-func (pl *planner) ruleSelects(rule StepRule, flat string) bool {
+func (pl *planner) ruleSelects(rule config.StepRule, flat string) bool {
 	if rule.Binary != "" {
-		bin, sub := invokedBinary(flat, map[string]bool{rule.Binary: true})
+		bin, sub := InvokedBinary(flat, map[string]bool{rule.Binary: true})
 		if bin != rule.Binary {
 			return false
 		}
@@ -136,7 +137,7 @@ func documentedBinary(markdown string, known map[string]bool) string {
 			if flat == "" || strings.HasPrefix(flat, "#") {
 				continue
 			}
-			first := shellFirstWord(flat)
+			first := shell.FirstWord(flat)
 			if known[first] {
 				knownSeen = true
 				continue
@@ -144,7 +145,7 @@ func documentedBinary(markdown string, known map[string]bool) string {
 			if knownCommands[first] || notDocumentedBinary[first] || englishStopwords[first] {
 				continue
 			}
-			if commandEcosystem[first] != "" || !reBinaryName.MatchString(first) {
+			if CommandEcosystem[first] != "" || !reBinaryName.MatchString(first) {
 				continue
 			}
 			counts[first]++
@@ -169,10 +170,10 @@ func documentedBinary(markdown string, known map[string]bool) string {
 	return best
 }
 
-// invokedBinary returns the documented binary a line invokes and its first
+// InvokedBinary returns the documented binary a line invokes and its first
 // subcommand, or empty strings when the line invokes none. Leading VAR=value
 // prefixes are stepped over, so `KEY=x tool sub` still names the tool.
-func invokedBinary(flat string, binaries map[string]bool) (string, string) {
+func InvokedBinary(flat string, binaries map[string]bool) (string, string) {
 	line, ok := shell.Parse(flat)
 	if !ok {
 		return "", ""
@@ -184,7 +185,7 @@ func invokedBinary(flat string, binaries map[string]bool) (string, string) {
 			continue
 		}
 		sub := ""
-		if a := c.Arg(0); reSubName.MatchString(a) {
+		if a := c.Arg(0); shell.IsSubcommandName(a) {
 			sub = a
 		}
 		return c.Name(), sub

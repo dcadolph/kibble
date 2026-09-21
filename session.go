@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dcadolph/kibble/internal/docblock"
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"github.com/dcadolph/kibble/internal/shell"
 )
 
@@ -23,7 +24,7 @@ import (
 // expansions beyond a leading ~ are left alone, since their value is unknown.
 func redirectDirs(flat string) []string {
 	var out []string
-	for _, m := range reCreatedToken.FindAllStringSubmatch(flat, -1) {
+	for _, m := range kplan.CreatesToken(flat) {
 		for _, tok := range m[1:] {
 			if tok == "" || !strings.Contains(tok, "/") {
 				continue
@@ -46,7 +47,7 @@ func redirectDirs(flat string) []string {
 // sessionScript renders the plan as one bash script with markers the parent
 // parses. It returns the script and the set of step:line keys that were
 // wrapped in a line timeout, so a 124 exit can be read as a hang.
-func sessionScript(plan *Plan, installSecs, lineSecs int) (string, map[string]bool) {
+func sessionScript(plan *kplan.Plan, installSecs, lineSecs int) (string, map[string]bool) {
 	wrapped := map[string]bool{}
 	var b strings.Builder
 	b.WriteString(`export GOBIN="$(go env GOPATH 2>/dev/null || echo /root/go)/bin"
@@ -79,8 +80,8 @@ printf '\nKIBBLE-PKGS CODE=%%d\n' "$?"
 `, strings.Join(plan.Packages, " "))
 	}
 	for _, in := range plan.Installs {
-		if in.bootstrap != "" {
-			fmt.Fprintf(&b, "%s >/dev/null 2>&1 || true\n", in.bootstrap)
+		if in.Bootstrap != "" {
+			fmt.Fprintf(&b, "%s >/dev/null 2>&1 || true\n", in.Bootstrap)
 		}
 		fmt.Fprintf(&b, `out=$(timeout %d bash -ec '%s' 2>&1); code=$?
 printf '\nKIBBLE-BUILD CODE=%%d\n' "$code"
@@ -165,7 +166,7 @@ printf '\nKIBBLE-DONE\n'
 // reported every line as fine. Only the line still running when readiness is
 // judged gets the readiness verdict now, and it is reported as readiness
 // rather than as an exit code, because it never produced one.
-func writeBackgroundStep(b *strings.Builder, s PlanStep) {
+func writeBackgroundStep(b *strings.Builder, s kplan.PlanStep) {
 	log := "/tmp/kibble-" + s.ID + ".log"
 	status := "/tmp/kibble-" + s.ID + ".status"
 	fmt.Fprintf(b, ": > %s\n(\n", status)
