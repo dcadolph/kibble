@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/dcadolph/kibble/internal/docblock"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -204,7 +205,7 @@ func hasShellBlock(path string) bool {
 	if err != nil {
 		return false
 	}
-	for _, b := range codeBlocks(string(body)) {
+	for _, b := range docblock.CodeBlocks(string(body)) {
 		if !b.Span && shellLangs[b.Lang] && len(b.Lines) > 0 {
 			return true
 		}

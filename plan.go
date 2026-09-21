@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/dcadolph/kibble/internal/docblock"
 	"sort"
 	"strings"
 )
@@ -155,7 +156,7 @@ func buildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 			break
 		}
 	}
-	for _, block := range codeBlocks(markdown) {
+	for _, block := range docblock.CodeBlocks(markdown) {
 		if block.Span || !shellLangs[block.Lang] {
 			continue
 		}
@@ -236,7 +237,7 @@ type planner struct {
 // git clone line is the install recipe the clone check already runs, so the
 // whole block is left to it; a lone go install or brew line is dropped and
 // the rest of its block still runs, since the session installs on its own.
-func (pl *planner) addBlock(block codeBlock) {
+func (pl *planner) addBlock(block docblock.Block) {
 	lines := logicalLines(prepareLines(block.Lines))
 	if len(lines) == 0 {
 		return
