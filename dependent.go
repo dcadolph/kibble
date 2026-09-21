@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/dcadolph/kibble/internal/docblock"
 	"regexp"
 	"strings"
 )
@@ -209,7 +210,7 @@ func earlierGapInFamily(prior []lineResult, cmd string, bins map[string]bool) st
 			continue
 		}
 		if pb, ps := invokedBinary(p.Cmd, bins); pb == bin && ps == sub {
-			return flatten(p.Cmd)
+			return docblock.Flatten(p.Cmd)
 		}
 	}
 	return ""

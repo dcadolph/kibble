@@ -212,7 +212,7 @@ var reTeardown = regexp.MustCompile(`\b(uninstall|clean)\b|^rm\s`)
 // separated exactly that way, and alternatives are not a sequence to run.
 func installRecipe(lines []string) []string {
 	var out []string
-	for _, l := range prepareLines(lines) {
+	for _, l := range docblock.PrepareLines(lines) {
 		l = strings.TrimSpace(stripComment(strings.TrimPrefix(strings.TrimSpace(l), "$ ")))
 		if l == "" || strings.HasPrefix(l, "#") {
 			if len(out) > 1 {

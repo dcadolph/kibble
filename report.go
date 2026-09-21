@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/util"
 )
 
@@ -258,7 +259,7 @@ func writeFailure(w io.Writer, c palette, r Result) {
 		for _, s := range r.example.Steps {
 			for _, l := range s.Lines {
 				if l.Status == StatusFail {
-					found = append(found, broken{l.Line, flatten(l.Cmd), l.Detail})
+					found = append(found, broken{l.Line, docblock.Flatten(l.Cmd), l.Detail})
 				}
 			}
 		}
