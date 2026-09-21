@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"testing"
 )
 
@@ -39,7 +40,7 @@ func TestNestedCommandNotFound(t *testing.T) {
 		t.Run(fmt.Sprintf("test %d %s", testNum, test.Name), func(t *testing.T) {
 			t.Parallel()
 			lr := classifyLineResult(lineResult{Cmd: "hyperfine 'hexdump file' 'xxd file'"},
-				PlanLine{}, lineOutcome{code: 1, output: test.Output}, false, nil, lineTimeout)
+				kplan.PlanLine{}, lineOutcome{code: 1, output: test.Output}, false, nil, lineTimeout)
 			if lr.Status != test.WantStatus {
 				t.Errorf("status = %s, want %s (detail %q)", lr.Status, test.WantStatus, lr.Detail)
 			}

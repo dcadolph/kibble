@@ -296,7 +296,7 @@ func Flatten(logical string) string {
 // CommandHead returns the command portion of a line, without a trailing
 // comment, so placeholder checks ignore prose in comments.
 func CommandHead(flat string) string {
-	return strings.TrimSpace(stripComment(flat))
+	return strings.TrimSpace(StripComment(flat))
 }
 
 // TrailingComment returns the trailing shell comment of a line, or empty.
@@ -442,8 +442,8 @@ func shownFailures(block Block) map[string]bool {
 	return out
 }
 
-// stripComment removes a trailing shell comment from a code line.
-func stripComment(line string) string {
+// StripComment removes a trailing shell comment from a code line.
+func StripComment(line string) string {
 	if i := strings.Index(line, " #"); i >= 0 {
 		return line[:i]
 	}

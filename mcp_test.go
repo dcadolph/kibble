@@ -19,7 +19,7 @@ func TestRegisterTools(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "kibble", Version: "test"}, nil)
-	registerTools(srv, config{})
+	registerTools(srv, runOptions{})
 
 	clientT, serverT := mcpsdk.NewInMemoryTransports()
 	serverSession, err := srv.Connect(ctx, serverT, nil)
@@ -96,7 +96,7 @@ func TestPlanTool(t *testing.T) {
 // than producing an empty result a caller would read as a clean repository.
 func TestToolInputValidation(t *testing.T) {
 	t.Parallel()
-	check := checkToolFor(config{})
+	check := checkToolFor(runOptions{})
 	tests := []struct {
 		Name string
 		Call func() error

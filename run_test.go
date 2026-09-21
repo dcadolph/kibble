@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"github.com/dcadolph/kibble/internal/sandbox"
 )
 
@@ -125,10 +126,10 @@ func TestDockerExampleSession(t *testing.T) {
 	if err := sandbox.Available(ctx); err != nil {
 		t.Skipf("docker is not reachable: %v", err)
 	}
-	plan := &Plan{
+	plan := &kplan.Plan{
 		Repo:     "repo",
-		Installs: []PlanInstall{{Cmd: "true"}},
-		Steps: []PlanStep{{ID: "b1", Lines: []PlanLine{
+		Installs: []kplan.PlanInstall{{Cmd: "true"}},
+		Steps: []kplan.PlanStep{{ID: "b1", Lines: []kplan.PlanLine{
 			{Cmd: "printf no-trailing-newline"},
 			{Cmd: "echo second"},
 			{Cmd: "sh -c 'printf glued; exit 3'"},
@@ -175,10 +176,10 @@ func TestDockerIsolatedLineTimeout(t *testing.T) {
 	if err := sandbox.Available(ctx); err != nil {
 		t.Skipf("docker is not reachable: %v", err)
 	}
-	plan := &Plan{
+	plan := &kplan.Plan{
 		Repo:     "repo",
-		Installs: []PlanInstall{{Cmd: "true"}},
-		Steps: []PlanStep{{ID: "b1", Lines: []PlanLine{
+		Installs: []kplan.PlanInstall{{Cmd: "true"}},
+		Steps: []kplan.PlanStep{{ID: "b1", Lines: []kplan.PlanLine{
 			{Cmd: "echo hello | tee /tmp/x.log"},
 			// The producer fails loudly on purpose. A silent exit 1 is
 			// blocked rather than failed, by the rule that silence is not
@@ -237,14 +238,14 @@ func TestDockerBackgroundPerLine(t *testing.T) {
 	if err := sandbox.Available(ctx); err != nil {
 		t.Skipf("docker is not reachable: %v", err)
 	}
-	plan := &Plan{
+	plan := &kplan.Plan{
 		Repo:     "repo",
-		Installs: []PlanInstall{{Cmd: "true"}},
-		Steps: []PlanStep{{
+		Installs: []kplan.PlanInstall{{Cmd: "true"}},
+		Steps: []kplan.PlanStep{{
 			ID:         "b1",
 			Background: true,
 			ReadyLog:   "listening on",
-			Lines: []PlanLine{
+			Lines: []kplan.PlanLine{
 				{Cmd: "sh -c 'echo setup failed >&2; exit 4'"},
 				{Cmd: "sh -c 'echo listening on 8080; sleep 600'"},
 			},

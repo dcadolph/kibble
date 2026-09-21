@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/dcadolph/kibble/internal/shell"
 	"strings"
 )
 
@@ -30,7 +31,7 @@ func helpProbe(step InstallStep) string {
 		}
 		safe := true
 		for _, tok := range strings.Fields(s) {
-			if !reSubName.MatchString(tok) {
+			if !shell.IsSubcommandName(tok) {
 				safe = false
 				break
 			}
@@ -92,7 +93,7 @@ func probeFlags(u *Usage) []probedFlag {
 		if len(out) >= 16 {
 			break
 		}
-		if !reSubName.MatchString(strings.ToLower(f)) {
+		if !shell.IsSubcommandName(strings.ToLower(f)) {
 			continue
 		}
 		owner := u.FlagSub[f]
@@ -100,7 +101,7 @@ func probeFlags(u *Usage) []probedFlag {
 		if owner != "" {
 			safe = true
 			for _, tok := range strings.Fields(owner) {
-				if !reSubName.MatchString(tok) {
+				if !shell.IsSubcommandName(tok) {
 					safe = false
 					break
 				}

@@ -25,10 +25,12 @@ import (
 	"github.com/dcadolph/kibble/internal/sandbox"
 
 	"github.com/dcadolph/kibble/internal/advisor"
+	"github.com/dcadolph/kibble/internal/config"
+	kplan "github.com/dcadolph/kibble/internal/plan"
 )
 
-// config holds the resolved run options.
-type config struct {
+// runOptions holds the resolved run options.
+type runOptions struct {
 	// Image is the container image used for clean-room installs.
 	Image string
 	// Timeout is the per-step build timeout.
@@ -43,7 +45,7 @@ type config struct {
 	Strict bool
 	// Examples reports whether to replay README example blocks.
 	Examples bool
-	// Plan reports whether to print the example plans and exit.
+	// kplan.Plan reports whether to print the example plans and exit.
 	Plan bool
 	// Suggest reports whether to propose a .kibble.yml and exit.
 	Suggest bool
@@ -56,7 +58,7 @@ type config struct {
 
 // main parses flags, collects install steps, runs them, and reports.
 func main() {
-	var cfg config
+	var cfg runOptions
 	flag.StringVar(&cfg.Image, "image", "golang:1.26", "container image for clean-room installs")
 	flag.DurationVar(&cfg.Timeout, "timeout", 240*time.Second, "per-step build timeout")
 	flag.IntVar(&cfg.Workers, "workers", 3, "max concurrent installs")
@@ -170,7 +172,7 @@ func main() {
 // its answer is written for a human to read and commit, never applied to a
 // run. A repository the engine already understands produces no file, which is
 // the good outcome.
-func suggestConfigs(ctx context.Context, w io.Writer, plans []*Plan) int {
+func suggestConfigs(ctx context.Context, w io.Writer, plans []*kplan.Plan) int {
 	model, ok := advisor.NewAdvisor()
 	if !ok {
 		fmt.Fprintln(os.Stderr, advisor.Help)
@@ -217,10 +219,10 @@ func kibbleVersion() string {
 // and, when examples are on, builds an example plan per repo. It also returns
 // a result per repository kibble could not read, so a path with no README and
 // a malformed config both reach the report instead of passing as silence.
-func collect(paths []string, examples bool) ([]InstallStep, []*Plan, []Result) {
+func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Result) {
 	ex := DefaultExtractor()
 	var out []InstallStep
-	var plans []*Plan
+	var plans []*kplan.Plan
 	var problems []Result
 	for _, p := range paths {
 		repo := repoName(p)
@@ -280,7 +282,7 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan, []Result) {
 		if !examples {
 			continue
 		}
-		cfg, err := loadExamplesConfig(p)
+		cfg, err := config.LoadExamplesConfig(p)
 		if err != nil {
 			problems = append(problems, Result{
 				Step:   InstallStep{Repo: repo, Kind: "config", dir: p, readme: name},
@@ -298,7 +300,7 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan, []Result) {
 		// and every document's session inherits them. Reading only the
 		// document being replayed would report a key as undocumented because
 		// the page citing it is a different page.
-		repoSettings := documentedSettingNames(readDocSet(p, name).All)
+		repoSettings := kplan.DocumentedSettingNames(readDocSet(p, name).All)
 		docs := replayDocs(p, name, cfg)
 		// A documentation tree can be enormous. mise carries 421 markdown files,
 		// and replaying every one of them spends the whole run before reaching a
@@ -346,19 +348,19 @@ func collect(paths []string, examples bool) ([]InstallStep, []*Plan, []Result) {
 // sessionInstalls returns the documented binaries and the installs that put
 // them on PATH. Every install kind counts, not only Go, so a Rust or Node
 // project's examples run against the tool its own README installs.
-func sessionInstalls(dir string, steps []InstallStep) ([]string, []PlanInstall) {
+func sessionInstalls(dir string, steps []InstallStep) ([]string, []kplan.PlanInstall) {
 	var bins []string
-	var all []PlanInstall
+	var all []kplan.PlanInstall
 	for _, s := range steps {
-		var in PlanInstall
+		var in kplan.PlanInstall
 		switch {
 		case s.Kind == "go-install":
-			in = PlanInstall{Cmd: "go install " + s.Module, Ecosystem: "go", binary: s.Binary}
+			in = kplan.PlanInstall{Cmd: "go install " + s.Module, Ecosystem: "go", Binary: s.Binary}
 		case pkgKinds[s.Kind].Ecosystem != "":
 			pk := pkgKinds[s.Kind]
-			in = PlanInstall{
+			in = kplan.PlanInstall{
 				Cmd: shellCommand(s.Raw), Ecosystem: pk.Ecosystem,
-				binary: s.Binary, bootstrap: pk.Bootstrap,
+				Binary: s.Binary, Bootstrap: pk.Bootstrap,
 			}
 		default:
 			continue
@@ -375,8 +377,8 @@ func sessionInstalls(dir string, steps []InstallStep) ([]string, []PlanInstall) 
 // for the example session, because a package rarely names its binary, as
 // fd-find provides fd. The padded name is a PATH candidate only; usage
 // extraction keeps the unpadded list so a flag table attributes correctly.
-func sessionBinaries(repo string, bins []string, installs []PlanInstall) []string {
-	if len(installs) > 0 && reSimpleWord.MatchString(repo) && !slices.Contains(bins, repo) {
+func sessionBinaries(repo string, bins []string, installs []kplan.PlanInstall) []string {
+	if len(installs) > 0 && kplan.IsSimpleWord(repo) && !slices.Contains(bins, repo) {
 		return append(append([]string{}, bins...), repo)
 	}
 	return bins
@@ -385,14 +387,14 @@ func sessionBinaries(repo string, bins []string, installs []PlanInstall) []strin
 // oncePerBinary drops installs that provide a tool an earlier install already
 // provides. A project documenting uv, pip, and pipx installs of the same tool
 // is listing three routes to one binary, and the session needs one.
-func oncePerBinary(installs []PlanInstall) []PlanInstall {
+func oncePerBinary(installs []kplan.PlanInstall) []kplan.PlanInstall {
 	seen := map[string]bool{}
-	var out []PlanInstall
+	var out []kplan.PlanInstall
 	for _, in := range installs {
-		if in.binary != "" && seen[in.binary] {
+		if in.Binary != "" && seen[in.Binary] {
 			continue
 		}
-		seen[in.binary] = true
+		seen[in.Binary] = true
 		out = append(out, in)
 	}
 	return out
@@ -404,7 +406,7 @@ func oncePerBinary(installs []PlanInstall) []PlanInstall {
 // is installed the way the project is built; otherwise the first install wins.
 // Several installs of the chosen toolchain are all kept, since a project that
 // documents two binaries needs both.
-func sameEcosystem(installs []PlanInstall, dir string) []PlanInstall {
+func sameEcosystem(installs []kplan.PlanInstall, dir string) []kplan.PlanInstall {
 	if len(installs) == 0 {
 		return nil
 	}
@@ -417,7 +419,7 @@ func sameEcosystem(installs []PlanInstall, dir string) []PlanInstall {
 			}
 		}
 	}
-	var out []PlanInstall
+	var out []kplan.PlanInstall
 	for _, in := range installs {
 		if in.Ecosystem == want {
 			out = append(out, in)
@@ -429,12 +431,12 @@ func sameEcosystem(installs []PlanInstall, dir string) []PlanInstall {
 // exampleStepFor builds a repo's example plan and, when it has steps, the
 // install step that runs it. A bad .kibble.yml is returned as an error rather
 // than dropped, so a config typo cannot pass as a green check.
-func exampleStepFor(repo, dir, doc, md string, bins []string, installs []PlanInstall,
-	cfg *ExamplesConfig) (*InstallStep, *Plan, error) {
+func exampleStepFor(repo, dir, doc, md string, bins []string, installs []kplan.PlanInstall,
+	cfg *config.ExamplesConfig) (*InstallStep, *kplan.Plan, error) {
 	if cfg != nil && cfg.Disable {
 		return nil, nil, nil
 	}
-	plan := buildPlan(repo, dir, md, bins, installs, cfg)
+	plan := kplan.BuildPlan(repo, dir, md, bins, installs, cfg, installRecognizer())
 	if len(plan.Steps) == 0 {
 		return nil, plan, nil
 	}
@@ -626,4 +628,16 @@ func repoName(path string) string {
 		return clean
 	}
 	return filepath.Base(abs)
+}
+
+// installRecognizer tells the planner which documented lines are installs, so
+// it can leave them to the installer instead of replaying them as examples.
+// The patterns live here, beside the extractor that already owns them, rather
+// than inside the planner: deciding what to run should not require knowing
+// what every ecosystem's install looks like.
+func installRecognizer() *kplan.Recognizer {
+	return &kplan.Recognizer{
+		Clones:   func(flat string) bool { return reGitClone.MatchString(flat) },
+		Installs: func(flat string) bool { return reGoInstall.MatchString(flat) || reBrew.MatchString(flat) },
+	}
 }

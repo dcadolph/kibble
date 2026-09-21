@@ -1,9 +1,10 @@
-package main
+package plan
 
 import (
 	"fmt"
 	"testing"
 
+	"github.com/dcadolph/kibble/internal/shell"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -106,9 +107,9 @@ func TestShellFirstWord(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			got := shellFirstWord(test.Line)
+			got := shell.FirstWord(test.Line)
 			if diff := cmp.Diff(test.Want, got); diff != "" {
-				t.Errorf("shellFirstWord mismatch (-want +got):\n%s", diff)
+				t.Errorf("shell.FirstWord mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/dcadolph/kibble/internal/config"
 	"github.com/dcadolph/kibble/internal/docblock"
 	"io/fs"
 	"os"
@@ -54,7 +55,7 @@ var skipDirs = map[string]bool{
 // relative to dir, with the README first. Selection is conservative on
 // purpose: a document kibble runs by mistake spends a container and reports a
 // failure about instructions nobody was following.
-func replayDocs(dir, readme string, cfg *ExamplesConfig) []string {
+func replayDocs(dir, readme string, cfg *config.ExamplesConfig) []string {
 	if dir == "" {
 		return []string{readme}
 	}
@@ -169,7 +170,7 @@ func installDocs(dir, readme string) []string {
 // applyDocRules lets a repository settle what the convention cannot: docs adds
 // a document the rules skip, skipDocs drops one they pick up. The README is
 // never dropped, since a repository with no runnable README has nothing to say.
-func applyDocRules(docs []string, readme string, cfg *ExamplesConfig) []string {
+func applyDocRules(docs []string, readme string, cfg *config.ExamplesConfig) []string {
 	if cfg == nil {
 		return docs
 	}

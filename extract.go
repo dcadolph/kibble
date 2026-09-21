@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dcadolph/kibble/internal/docblock"
+	kplan "github.com/dcadolph/kibble/internal/plan"
 )
 
 // InstallStep is one documented install command found in a repo README.
@@ -35,7 +36,7 @@ type InstallStep struct {
 	// missing name from being convicted.
 	Taps []string
 	// plan is the example plan attached to an example step.
-	plan *Plan
+	plan *kplan.Plan
 	// dir is the local repo path an example step streams into its session.
 	dir string
 	// readme is the README file name the step was extracted from, so an

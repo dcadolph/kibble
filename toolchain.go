@@ -1,6 +1,7 @@
 package main
 
 import (
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -70,27 +71,6 @@ var pkgKinds = map[string]pkgKind{
 	},
 }
 
-// commandEcosystem maps a build command to the ecosystem that provides it.
-// Commands present in every image, such as make and cc, are deliberately
-// absent: they say nothing about which toolchain a recipe needs.
-var commandEcosystem = map[string]string{
-	"cargo":  "rust",
-	"rustc":  "rust",
-	"rustup": "rust",
-	"npm":    "node",
-	"npx":    "node",
-	"pnpm":   "node",
-	"yarn":   "node",
-	"node":   "node",
-	"pip":    "python",
-	"pip3":   "python",
-	"poetry": "python",
-	"uv":     "python",
-	"python": "python",
-	"go":     "go",
-	"gofmt":  "go",
-}
-
 // manifestEcosystem maps a repository manifest to the ecosystem it declares.
 // It is the fallback signal when a recipe's own commands are inconclusive,
 // such as a bare `make install`.
@@ -126,7 +106,7 @@ func ecosystemFromCommands(lines []string) (string, bool) {
 	seen := 0
 	for _, line := range lines {
 		for _, cmd := range commandWords(line) {
-			name, ok := commandEcosystem[cmd]
+			name, ok := kplan.CommandEcosystem[cmd]
 			if !ok {
 				continue
 			}

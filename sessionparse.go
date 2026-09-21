@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/dcadolph/kibble/internal/docblock"
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"strconv"
 	"strings"
 	"time"
@@ -47,7 +48,7 @@ func markerTail(line, marker string) (before, after string, ok bool) {
 
 // classifyExample parses session output into a Result: per-line outcomes
 // feed step results, and the worst outcome names the repo's example status.
-func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[string]bool,
+func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map[string]bool,
 	dur, lineBudget time.Duration) Result {
 	res := Result{Step: step, Duration: dur}
 	outcomes := map[string]lineOutcome{}
@@ -120,7 +121,7 @@ func classifyExample(step InstallStep, plan *Plan, out string, wrapped map[strin
 // buildOutcomes walks the plan against the recorded markers, resolves
 // failures that only depend on skipped lines, and returns the per-step
 // outcomes with the aggregate status and its summary detail.
-func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[string]bool,
+func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped map[string]bool,
 	done bool, have map[string]bool, lineBudget time.Duration) (*exampleRun, Status, string) {
 	run := &exampleRun{}
 	documented := documentedSettings(plan)

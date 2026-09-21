@@ -9,6 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/dcadolph/kibble/internal/advisor"
+	kplan "github.com/dcadolph/kibble/internal/plan"
 )
 
 // TestFirstJSONObject checks that a reply is parsed whatever prose or fencing
@@ -113,8 +114,8 @@ func TestYAMLScalar(t *testing.T) {
 func TestSuggestFlow(t *testing.T) {
 	t.Parallel()
 	md := "## Usage\n\n```sh\ntool sync\ntool serve\n```\n"
-	plan := buildPlan("repo", "", md, []string{"tool"},
-		[]PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}}, nil)
+	plan := kplan.BuildPlan("repo", "", md, []string{"tool"},
+		[]kplan.PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}}, nil, nil)
 
 	cands := suggestCandidates(plan)
 	if len(cands) == 0 {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"testing"
 )
 
@@ -14,7 +15,7 @@ import (
 func TestSuppressionNeedsMoreThanAMention(t *testing.T) {
 	t.Parallel()
 
-	plan := &Plan{Binaries: []string{"tool"}}
+	plan := &kplan.Plan{Binaries: []string{"tool"}}
 
 	tests := []struct {
 		Name    string
@@ -81,7 +82,7 @@ func TestRepeatedSubcommandIsIndependent(t *testing.T) {
 			{Cmd: "tool build --release", Status: StatusFail, output: "error: bad flag --release"},
 		},
 	}}}
-	resolveDependentFailures(run, &Plan{Binaries: []string{"tool"}})
+	resolveDependentFailures(run, &kplan.Plan{Binaries: []string{"tool"}})
 	if got := run.Steps[0].Lines[1].Status; got != StatusFail {
 		t.Errorf("status = %s, want FAIL (detail %q)", got, run.Steps[0].Lines[1].Detail)
 	}

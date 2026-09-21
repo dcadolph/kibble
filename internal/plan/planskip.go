@@ -1,4 +1,4 @@
-package main
+package plan
 
 import (
 	"fmt"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/shell"
+	"github.com/dcadolph/kibble/internal/verdict"
 )
 
 // Why a documented line does not run. Every rule here is a decision kibble
@@ -18,9 +19,9 @@ import (
 // when it can. The checks run in order of how specific their reason is.
 // Substitutions have already been applied, so a placeholder that survives
 // here is one the reader was meant to fill in.
-func (pl *planner) skipReason(cmd, flat string) (string, Reason, bool) {
+func (pl *planner) skipReason(cmd, flat string) (string, verdict.Reason, bool) {
 	if rePlaceholder.MatchString(docblock.CommandHead(flat)) {
-		return "docs use a placeholder the reader must fill in", ReasonPlaceholder, false
+		return "docs use a placeholder the reader must fill in", verdict.ReasonPlaceholder, false
 	}
 	// Asked before the rules that read the line as shell, and after the
 	// placeholder rule, since `--key <YOUR-KEY>` is an unparseable line whose
@@ -32,92 +33,92 @@ func (pl *planner) skipReason(cmd, flat string) (string, Reason, bool) {
 	// established.
 	if !shell.Parses(cmd) {
 		return "is not something a shell parser accepts, so kibble did not guess at it",
-			ReasonUnparseable, false
+			verdict.ReasonUnparseable, false
 	}
 	if reLocalhost.MatchString(flat) {
-		return "needs a local service the docs assume is running", ReasonMissingDependency, false
+		return "needs a local service the docs assume is running", verdict.ReasonMissingDependency, false
 	}
 	if pl.getsOwnModule(flat) {
-		return "adds this module to the reader's own project, not to itself", ReasonMissingFixture, false
+		return "adds this module to the reader's own project, not to itself", verdict.ReasonMissingFixture, false
 	}
-	bin, sub := invokedBinary(flat, pl.binaries)
+	bin, sub := InvokedBinary(flat, pl.binaries)
 	if bin != "" && reLogin.MatchString(flat) {
-		return "needs an interactive sign-in", ReasonInteractive, false
+		return "needs an interactive sign-in", verdict.ReasonInteractive, false
 	}
 	if bin != "" && sub == "audio" {
-		return "records audio, which the container cannot", ReasonInteractive, false
+		return "records audio, which the container cannot", verdict.ReasonInteractive, false
 	}
 	if bin != "" && interactiveSubs[sub] {
 		return "starts an interactive or long-running session the container cannot judge",
-			ReasonLongRunning, false
+			verdict.ReasonLongRunning, false
 	}
 	// A documented binary invoked bare is "run the tool", which the smoke test
 	// already settled. For a watcher or a server it never returns, and waiting
 	// out the timeout buys nothing the install step did not already prove.
-	if bin != "" && len(shellWordsOf(stripComment(flat))) == 1 {
+	if bin != "" && len(shell.WordsOrFields(docblock.StripComment(flat))) == 1 {
 		return "runs the tool with no arguments, which the install already proved",
-			ReasonAlreadyProven, false
+			verdict.ReasonAlreadyProven, false
 	}
 	// A tool the document introduces as watching or serving does not return,
 	// but only an invocation that actually reaches for the watching or serving
 	// mode is skipped, so a one-shot subcommand of the same tool still runs.
 	if bin != "" && pl.watcher && watcherInvocation(sub, flat) {
 		return "the docs describe a tool that watches or serves, and this invocation does not return",
-			ReasonLongRunning, false
+			verdict.ReasonLongRunning, false
 	}
 	if bin != "" && interactiveFlag(flat) {
-		return "asks for an interactive session the container cannot hold", ReasonInteractive, false
+		return "asks for an interactive session the container cannot hold", verdict.ReasonInteractive, false
 	}
 	if hasBareStdinDash(flat) {
-		return "reads stdin, which the session does not provide", ReasonInteractive, false
+		return "reads stdin, which the session does not provide", verdict.ReasonInteractive, false
 	}
 	if reGitState.MatchString(flat) {
 		return "needs git history or a remote, which the fresh session repo lacks",
-			ReasonMissingFixture, false
+			verdict.ReasonMissingFixture, false
 	}
 	if dir := systemCd(flat); dir != "" {
 		return fmt.Sprintf("changes into %s, which only the reader's system has", dir),
-			ReasonMissingFixture, false
+			verdict.ReasonMissingFixture, false
 	}
 	if reFishSource.MatchString(flat) {
-		return "written for the fish shell, and the session runs bash", ReasonOtherPlatform, false
+		return "written for the fish shell, and the session runs bash", verdict.ReasonOtherPlatform, false
 	}
 	if reForeignShellFile.MatchString(flat) {
-		return "written for another shell, and the session runs bash", ReasonOtherPlatform, false
+		return "written for another shell, and the session runs bash", verdict.ReasonOtherPlatform, false
 	}
 	if reForeignShellGen.MatchString(flat) {
 		return "sources another shell's completions, and the session runs bash",
-			ReasonOtherPlatform, false
+			verdict.ReasonOtherPlatform, false
 	}
 	if sh := foreignShellFlag(flat); sh != "" {
 		return fmt.Sprintf("asks for the %s shell, which the container does not have", sh),
-			ReasonOtherPlatform, false
+			verdict.ReasonOtherPlatform, false
 	}
 	if reKernelPath.MatchString(flat) {
-		return "touches kernel interfaces the container does not expose", ReasonOtherPlatform, false
+		return "touches kernel interfaces the container does not expose", verdict.ReasonOtherPlatform, false
 	}
 	if miss := pl.missingGlob(flat); miss != "" {
-		return fmt.Sprintf("globs %s, which the docs never create", miss), ReasonMissingFixture, true
+		return fmt.Sprintf("globs %s, which the docs never create", miss), verdict.ReasonMissingFixture, true
 	}
 	if bin != "" && bareWordPlaceholder(flat) != "" {
 		return fmt.Sprintf("docs use %q as a placeholder the reader must fill in",
-			bareWordPlaceholder(flat)), ReasonPlaceholder, false
+			bareWordPlaceholder(flat)), verdict.ReasonPlaceholder, false
 	}
 	expandable := withoutSingleQuoted(flat)
 	for v := range pl.badVars {
 		if strings.Contains(expandable, "$"+v) || strings.Contains(expandable, "${"+v+"}") {
 			return fmt.Sprintf("expands $%s, which a skipped line was to set", v),
-				ReasonDependsOnSkipped, false
+				verdict.ReasonDependsOnSkipped, false
 		}
 	}
 	if v := pl.unsetVar(flat); v != "" {
-		return fmt.Sprintf("expands $%s, which the docs never set", v), ReasonMissingFixture, false
+		return fmt.Sprintf("expands $%s, which the docs never set", v), verdict.ReasonMissingFixture, false
 	}
 	if path := pl.missingFile(flat); path != "" {
-		return fmt.Sprintf("references %s, which the docs never create", path), ReasonMissingFixture, true
+		return fmt.Sprintf("references %s, which the docs never create", path), verdict.ReasonMissingFixture, true
 	}
 	if p := pl.missingHomePath(flat); p != "" {
-		return fmt.Sprintf("reads %s, which only the reader's machine has", p), ReasonMissingFixture, false
+		return fmt.Sprintf("reads %s, which only the reader's machine has", p), verdict.ReasonMissingFixture, false
 	}
 	return "", "", false
 }
@@ -321,7 +322,7 @@ var findingSubs = map[string]bool{
 // lines and breaks the ones that follow them. A repo whose -i does mean
 // interactive says so in .kibble.yml.
 func interactiveFlag(flat string) bool {
-	for _, f := range shellWordsOf(stripComment(flat)) {
+	for _, f := range shell.WordsOrFields(docblock.StripComment(flat)) {
 		if f == "--interactive" {
 			return true
 		}
@@ -424,7 +425,7 @@ func describedAsWatcher(markdown, bin string) bool {
 // isInfoInvocation reports whether a line only asks a binary about itself,
 // which returns even when running the tool would not.
 func isInfoInvocation(flat string) bool {
-	f := stripComment(flat)
+	f := docblock.StripComment(flat)
 	return strings.Contains(f, "--help") || strings.Contains(f, "--version") ||
 		strings.Contains(f, " version") || strings.Contains(f, " help")
 }

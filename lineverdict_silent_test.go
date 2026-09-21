@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"strings"
 	"testing"
 )
@@ -45,7 +46,7 @@ func TestSilentNonzeroIsBlocked(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d %s", testNum, test.Name), func(t *testing.T) {
 			t.Parallel()
-			lr := classifyLineResult(lineResult{Cmd: "tool check"}, PlanLine{},
+			lr := classifyLineResult(lineResult{Cmd: "tool check"}, kplan.PlanLine{},
 				lineOutcome{code: test.Code, output: "", logged: test.Logged},
 				test.Wrapped, nil, lineTimeout)
 			if lr.Status != test.WantStatus {
@@ -80,7 +81,7 @@ func TestShellTimingIsNotOutput(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d %s", testNum, test.Name), func(t *testing.T) {
 			t.Parallel()
-			lr := classifyLineResult(lineResult{Cmd: "time rg pattern"}, PlanLine{},
+			lr := classifyLineResult(lineResult{Cmd: "time rg pattern"}, kplan.PlanLine{},
 				lineOutcome{code: test.Code, output: test.Output}, false, nil, lineTimeout)
 			if lr.Status != test.WantStatus {
 				t.Errorf("status = %s, want %s (detail %q)", lr.Status, test.WantStatus, lr.Detail)
@@ -120,7 +121,7 @@ func TestHelperProgramNotStarted(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d %s", testNum, test.Name), func(t *testing.T) {
 			t.Parallel()
-			lr := classifyLineResult(lineResult{Cmd: test.Cmd}, PlanLine{},
+			lr := classifyLineResult(lineResult{Cmd: test.Cmd}, kplan.PlanLine{},
 				lineOutcome{code: 2, output: test.Output}, false, nil, lineTimeout)
 			if lr.Status != test.WantStatus {
 				t.Errorf("status = %s, want %s (detail %q)", lr.Status, test.WantStatus, lr.Detail)
@@ -158,7 +159,7 @@ func TestNothingSearchedIsUnsettled(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d %s", testNum, test.Name), func(t *testing.T) {
 			t.Parallel()
-			lr := classifyLineResult(lineResult{Cmd: "rg 'int main' -tc"}, PlanLine{},
+			lr := classifyLineResult(lineResult{Cmd: "rg 'int main' -tc"}, kplan.PlanLine{},
 				lineOutcome{code: test.Code, output: test.Output}, false, nil, lineTimeout)
 			if lr.Status != test.WantStatus {
 				t.Errorf("status = %s, want %s (detail %q)", lr.Status, test.WantStatus, lr.Detail)

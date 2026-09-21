@@ -10,19 +10,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dcadolph/kibble/internal/config"
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 // examplePlan builds a small plan for executor tests: one step of runnable
 // lines around one planned skip.
-func examplePlan() *Plan {
-	return &Plan{
+func examplePlan() *kplan.Plan {
+	return &kplan.Plan{
 		Repo: "repo", Binaries: []string{"tool"},
-		Installs: []PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}},
-		Steps: []PlanStep{{
+		Installs: []kplan.PlanInstall{{Cmd: "go install example.com/tool@latest", Ecosystem: "go"}},
+		Steps: []kplan.PlanStep{{
 			ID: "b1",
-			Lines: []PlanLine{
+			Lines: []kplan.PlanLine{
 				{Cmd: "tool init"},
 				{Cmd: "tool ask"},
 				{Cmd: "tool check", NonzeroOK: true},
@@ -42,7 +44,7 @@ func TestClassifyExample(t *testing.T) {
 	tests := []struct {
 		Out        string
 		Wrapped    map[string]bool
-		Plan       *Plan
+		Plan       *kplan.Plan
 		WantStatus Status
 		WantLines  []Status
 	}{{ // Test 0: all lines pass.
@@ -101,9 +103,9 @@ func TestClassifyExample(t *testing.T) {
 		WantLines:  []Status{StatusVerified, StatusFail, StatusVerified},
 	}, { // Test 2c: when the document names the setting, supplying it is the
 		// reader's job, so the same failure is a skip and not a gap.
-		Plan: &Plan{
+		Plan: &kplan.Plan{
 			Repo: "repo", Binaries: []string{"tool"},
-			Steps: []PlanStep{{ID: "b1", Lines: []PlanLine{
+			Steps: []kplan.PlanStep{{ID: "b1", Lines: []kplan.PlanLine{
 				{Cmd: "export MYTOOL_CLIENT_ID=<application-client-id>", Skip: "placeholder"},
 				{Cmd: "tool ask"},
 				{Cmd: "tool check", NonzeroOK: true},
@@ -372,7 +374,7 @@ func TestClassifyExampleMarkerRecovery(t *testing.T) {
 
 func TestResolveDependentFailures(t *testing.T) {
 	t.Parallel()
-	plan := &Plan{Binaries: []string{"tool"}}
+	plan := &kplan.Plan{Binaries: []string{"tool"}}
 	tests := []struct {
 		Steps []exampleStep
 		Want  []Status
@@ -458,7 +460,7 @@ func TestSessionScript(t *testing.T) {
 	plan := examplePlan()
 	plan.Packages = []string{"age"}
 	plan.Env = map[string]string{"B": "2", "A": "1"}
-	plan.Fixtures = []Fixture{{Path: "docs/notes.md", Contents: "hello\n"}}
+	plan.Fixtures = []config.Fixture{{Path: "docs/notes.md", Contents: "hello\n"}}
 	plan.Steps[0].Lines[1].Skip = "needs an interactive sign-in"
 	script, wrapped := sessionScript(plan, 240, 90)
 
@@ -558,7 +560,7 @@ func TestRedirectDirs(t *testing.T) {
 // binary the session lacks becomes a skip, while other failures stay real.
 func TestResolveMissingBinaries(t *testing.T) {
 	t.Parallel()
-	plan := &Plan{Binaries: []string{"tool", "conda"}}
+	plan := &kplan.Plan{Binaries: []string{"tool", "conda"}}
 	tests := []struct {
 		Have map[string]bool
 		In   []lineResult
@@ -644,7 +646,7 @@ func TestRepoTar(t *testing.T) {
 func TestEmptyPipelineSkips(t *testing.T) {
 	t.Parallel()
 	lr := classifyLineResult(lineResult{Cmd: "rg foo -0 | xargs -0 sed -i 's/foo/bar/g'"},
-		PlanLine{}, lineOutcome{code: 123, output: "sed: no input files"}, false, nil, lineTimeout)
+		kplan.PlanLine{}, lineOutcome{code: 123, output: "sed: no input files"}, false, nil, lineTimeout)
 	if lr.Status != StatusSkipped {
 		t.Errorf("status = %s, want %s", lr.Status, StatusSkipped)
 	}
@@ -653,7 +655,7 @@ func TestEmptyPipelineSkips(t *testing.T) {
 	}
 	// A sed that failed for a real reason keeps its failure.
 	lr = classifyLineResult(lineResult{Cmd: "rg foo | xargs sed -i 's/foo/'"},
-		PlanLine{}, lineOutcome{code: 123, output: "sed: -e expression #1, char 7: unterminated `s' command"}, false, nil, lineTimeout)
+		kplan.PlanLine{}, lineOutcome{code: 123, output: "sed: -e expression #1, char 7: unterminated `s' command"}, false, nil, lineTimeout)
 	if lr.Status != StatusFail {
 		t.Errorf("status = %s, want %s", lr.Status, StatusFail)
 	}
@@ -682,7 +684,7 @@ func TestNonzeroOKCap(t *testing.T) {
 		t.Run(fmt.Sprintf("test %d %s", testNum, test.Name), func(t *testing.T) {
 			t.Parallel()
 			lr := classifyLineResult(lineResult{Cmd: "tool check"},
-				PlanLine{NonzeroOK: true}, lineOutcome{code: test.Code, output: test.Output}, false, nil, lineTimeout)
+				kplan.PlanLine{NonzeroOK: true}, lineOutcome{code: test.Code, output: test.Output}, false, nil, lineTimeout)
 			if lr.Status != test.WantStatus {
 				t.Errorf("status = %s, want %s (detail %q)", lr.Status, test.WantStatus, lr.Detail)
 			}
