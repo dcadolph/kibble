@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/dcadolph/kibble/internal/sandbox"
+
+	"github.com/dcadolph/kibble/internal/advisor"
 )
 
 // config holds the resolved run options.
@@ -169,9 +171,9 @@ func main() {
 // run. A repository the engine already understands produces no file, which is
 // the good outcome.
 func suggestConfigs(ctx context.Context, w io.Writer, plans []*Plan) int {
-	advisor, ok := NewAdvisor()
+	model, ok := advisor.NewAdvisor()
 	if !ok {
-		fmt.Fprintln(os.Stderr, advisorHelp)
+		fmt.Fprintln(os.Stderr, advisor.Help)
 		return 2
 	}
 	wrote := false
@@ -181,7 +183,7 @@ func suggestConfigs(ctx context.Context, w io.Writer, plans []*Plan) int {
 			fmt.Fprintf(os.Stderr, "%s: nothing to ask about\n", plan.Repo)
 			continue
 		}
-		got, err := askAdvisor(ctx, advisor, plan.Repo, cands)
+		got, err := askAdvisor(ctx, model, plan.Repo, cands)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", plan.Repo, err)
 			return 1

@@ -1,4 +1,4 @@
-package main
+package advisor
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/dcadolph/kibble/internal/util"
 )
 
 // Provider defaults. Each client is deliberately small: kibble asks one
@@ -67,7 +69,7 @@ func postJSON(ctx context.Context, c *http.Client, url string, headers map[strin
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%w: status %d: %s", ErrAdvisor, resp.StatusCode,
-			truncate(strings.TrimSpace(string(raw)), 200))
+			util.Truncate(strings.TrimSpace(string(raw)), 200))
 	}
 	return raw, nil
 }

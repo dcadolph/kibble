@@ -1,4 +1,4 @@
-package main
+package advisor
 
 import (
 	"context"
@@ -97,18 +97,18 @@ func TestNewAdvisorSelection(t *testing.T) {
 		WantOK   bool
 	}{{ // Test 0: a Claude key selects Claude.
 		Env:      map[string]string{"ANTHROPIC_API_KEY": "k"},
-		WantType: "*main.anthropic", WantOK: true,
+		WantType: "*advisor.anthropic", WantOK: true,
 	}, { // Test 1: with both keys, Claude wins by fixed order.
 		Env:      map[string]string{"ANTHROPIC_API_KEY": "k", "OPENAI_API_KEY": "k"},
-		WantType: "*main.anthropic", WantOK: true,
+		WantType: "*advisor.anthropic", WantOK: true,
 	}, { // Test 2: an OpenAI key alone selects OpenAI.
 		Env:      map[string]string{"OPENAI_API_KEY": "k"},
-		WantType: "*main.openAI", WantOK: true,
+		WantType: "*advisor.openAI", WantOK: true,
 	}, { // Test 3: an explicit choice overrides the keys present.
 		Env:      map[string]string{"KIBBLE_ADVISOR": "ollama", "ANTHROPIC_API_KEY": "k"},
-		WantType: "*main.ollama", WantOK: true,
+		WantType: "*advisor.ollama", WantOK: true,
 	}, { // Test 4: no keys falls through to a local Ollama.
-		Env: map[string]string{}, WantType: "*main.ollama", WantOK: true,
+		Env: map[string]string{}, WantType: "*advisor.ollama", WantOK: true,
 	}, { // Test 5: an unknown explicit choice reports nothing rather than guessing.
 		Env: map[string]string{"KIBBLE_ADVISOR": "nope"}, WantOK: false,
 	}}

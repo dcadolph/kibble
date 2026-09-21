@@ -7,6 +7,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/dcadolph/kibble/internal/advisor"
 )
 
 // suggestSystem is the advisor's brief. It is deliberately narrow: the model
@@ -107,7 +109,7 @@ func certainSkip(reason string) bool {
 // askAdvisor sends the candidates and returns the advisor's classifications,
 // keyed by the command line. A reply that does not parse is an error, never a
 // silent empty result.
-func askAdvisor(ctx context.Context, a Advisor, repo string, cands []candidate) (
+func askAdvisor(ctx context.Context, a advisor.Advisor, repo string, cands []candidate) (
 	map[string]suggestion, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Repository: %s\n\nLines:\n", repo)
@@ -124,13 +126,13 @@ func askAdvisor(ctx context.Context, a Advisor, repo string, cands []candidate) 
 	if err != nil {
 		return nil, err
 	}
-	obj, err := firstJSONObject(reply)
+	obj, err := advisor.FirstJSONObject(reply)
 	if err != nil {
 		return nil, err
 	}
 	var parsed suggestReply
 	if err := json.Unmarshal([]byte(obj), &parsed); err != nil {
-		return nil, fmt.Errorf("%w: reply was not the requested JSON: %w", ErrAdvisor, err)
+		return nil, fmt.Errorf("%w: reply was not the requested JSON: %w", advisor.ErrAdvisor, err)
 	}
 	out := map[string]suggestion{}
 	for _, s := range parsed.Lines {

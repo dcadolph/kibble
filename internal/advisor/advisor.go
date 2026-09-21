@@ -1,4 +1,4 @@
-package main
+package advisor
 
 import (
 	"context"
@@ -63,19 +63,19 @@ func NewAdvisor() (Advisor, bool) {
 	return newOllama(client)
 }
 
-// advisorHelp explains how to turn the optional layer on, for the message
+// Help explains how to turn the optional layer on, for the message
 // printed when a suggestion is asked for and nothing is configured.
-const advisorHelp = `no model configured, so there is nothing to suggest with.
+const Help = `no model configured, so there is nothing to suggest with.
 Set one of these and run again:
   ANTHROPIC_API_KEY=...    use Claude
   OPENAI_API_KEY=...       use ChatGPT
   KIBBLE_ADVISOR=ollama    use a local Ollama at http://localhost:11434
 Everything else kibble does works without any of them.`
 
-// firstJSONObject returns the first balanced top-level JSON object or array in
+// FirstJSONObject returns the first balanced top-level JSON object or array in
 // a reply, so a model that wraps its answer in prose or a fenced block still
 // parses. Braces inside strings are ignored.
-func firstJSONObject(s string) (string, error) {
+func FirstJSONObject(s string) (string, error) {
 	start := strings.IndexAny(s, "{[")
 	if start < 0 {
 		return "", fmt.Errorf("%w: reply contained no JSON", ErrAdvisor)
