@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/dcadolph/kibble/internal/docblock"
 	"strconv"
 	"strings"
 	"time"
@@ -128,7 +129,7 @@ func buildOutcomes(plan *Plan, outcomes map[string]lineOutcome, wrapped map[stri
 		es := exampleStep{ID: s.ID, Heading: s.Heading}
 		for i, l := range s.Lines {
 			key := fmt.Sprintf("%s:%d", s.ID, i)
-			lr := lineResult{Cmd: flatten(l.Cmd), Code: -1, Line: l.Line, Synthetic: l.Synthetic}
+			lr := lineResult{Cmd: docblock.Flatten(l.Cmd), Code: -1, Line: l.Line, Synthetic: l.Synthetic}
 			o, seen := outcomes[key]
 			switch {
 			case l.Skip != "":

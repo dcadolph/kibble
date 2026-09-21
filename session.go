@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/shell"
 )
 
@@ -120,11 +121,11 @@ if [ "$have" -eq 0 ]; then printf '\nKIBBLE-NOBIN\n'; exit 0; fi
 				continue
 			}
 			cmd := l.Cmd
-			for _, dir := range redirectDirs(flatten(cmd)) {
+			for _, dir := range redirectDirs(docblock.Flatten(cmd)) {
 				fmt.Fprintf(&b, "mkdir -p %s >/dev/null 2>&1 || true\n", dir)
 			}
 			switch {
-			case isSimpleCommand(flatten(cmd)):
+			case isSimpleCommand(docblock.Flatten(cmd)):
 				cmd = fmt.Sprintf("timeout %d %s", lineSecs, cmd)
 				wrapped[fmt.Sprintf("%s:%d", s.ID, i)] = true
 			case isolatable(cmd):

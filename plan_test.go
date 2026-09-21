@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
@@ -26,7 +27,7 @@ func projectPlan(p *Plan) [][]planLine {
 		var step []planLine
 		for _, l := range s.Lines {
 			step = append(step, planLine{
-				Cmd: flatten(l.Cmd), Skip: l.Skip != "", Gap: l.Gap,
+				Cmd: docblock.Flatten(l.Cmd), Skip: l.Skip != "", Gap: l.Gap,
 				NonzeroOK: l.NonzeroOK,
 			})
 		}
@@ -313,7 +314,7 @@ func TestLogicalLines(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			if diff := cmp.Diff(test.Want, logicalLines(test.In)); diff != "" {
+			if diff := cmp.Diff(test.Want, docblock.LogicalLines(test.In)); diff != "" {
 				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
 		})
@@ -412,7 +413,7 @@ func TestSkipHeuristics(t *testing.T) {
 			found := false
 			for _, s := range plan.Steps {
 				for _, l := range s.Lines {
-					if strings.HasPrefix(flatten(l.Cmd), "tool") || strings.HasPrefix(flatten(l.Cmd), "git") || strings.HasPrefix(flatten(l.Cmd), "cd /") {
+					if strings.HasPrefix(docblock.Flatten(l.Cmd), "tool") || strings.HasPrefix(docblock.Flatten(l.Cmd), "git") || strings.HasPrefix(docblock.Flatten(l.Cmd), "cd /") {
 						last, found = l, true
 					}
 				}
@@ -546,7 +547,7 @@ func TestPlatformScopedBlocks(t *testing.T) {
 			found := false
 			for _, s := range plan.Steps {
 				for _, l := range s.Lines {
-					if strings.HasPrefix(flatten(l.Cmd), "tool") {
+					if strings.HasPrefix(docblock.Flatten(l.Cmd), "tool") {
 						got, found = l, true
 					}
 				}

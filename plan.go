@@ -157,7 +157,7 @@ func buildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 		}
 	}
 	for _, block := range docblock.CodeBlocks(markdown) {
-		if block.Span || !shellLangs[block.Lang] {
+		if block.Span || !docblock.ShellLangs[block.Lang] {
 			continue
 		}
 		pl.addBlock(block)
@@ -178,7 +178,7 @@ func (pl *planner) spreadNonzeroOK() {
 	for _, s := range pl.plan.Steps {
 		for _, l := range s.Lines {
 			if l.NonzeroOK {
-				if bin, sub := invokedBinary(flatten(l.Cmd), pl.binaries); bin != "" {
+				if bin, sub := invokedBinary(docblock.Flatten(l.Cmd), pl.binaries); bin != "" {
 					ok[bin+"|"+sub] = true
 				}
 			}
@@ -190,7 +190,7 @@ func (pl *planner) spreadNonzeroOK() {
 	for si := range pl.plan.Steps {
 		for li := range pl.plan.Steps[si].Lines {
 			l := &pl.plan.Steps[si].Lines[li]
-			if bin, sub := invokedBinary(flatten(l.Cmd), pl.binaries); ok[bin+"|"+sub] {
+			if bin, sub := invokedBinary(docblock.Flatten(l.Cmd), pl.binaries); ok[bin+"|"+sub] {
 				l.NonzeroOK = true
 			}
 		}
@@ -238,13 +238,13 @@ type planner struct {
 // whole block is left to it; a lone go install or brew line is dropped and
 // the rest of its block still runs, since the session installs on its own.
 func (pl *planner) addBlock(block docblock.Block) {
-	lines := logicalLines(prepareLines(block.Lines))
+	lines := docblock.LogicalLines(docblock.PrepareLines(block.Lines))
 	if len(lines) == 0 {
 		return
 	}
 	kept := lines[:0]
 	for _, ln := range lines {
-		flat := flatten(ln)
+		flat := docblock.Flatten(ln)
 		if reGitClone.MatchString(flat) {
 			return
 		}
@@ -266,13 +266,13 @@ func (pl *planner) addBlock(block docblock.Block) {
 		Heading: block.Heading,
 	}
 	scopedTo := otherPlatform(block.Intro)
-	lineIn := sourceLineIndex(block)
-	shownErr := shownFailures(block)
+	lineIn := docblock.SourceLineIndex(block)
+	shownErr := docblock.ShownFailures(block)
 	nonzero := false
 	lostDir := false
 	for _, ln := range lines {
 		ln = pl.substituted(ln)
-		flat := flatten(ln)
+		flat := docblock.Flatten(ln)
 		if trimmed := strings.TrimSpace(flat); trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			if reNonzeroNote.MatchString(trimmed) {
 				nonzero = true
@@ -282,7 +282,7 @@ func (pl *planner) addBlock(block docblock.Block) {
 			continue
 		}
 		line := PlanLine{Cmd: ln, Line: lineIn(ln)}
-		if reNonzeroNote.MatchString(trailingComment(flat)) {
+		if reNonzeroNote.MatchString(docblock.TrailingComment(flat)) {
 			line.NonzeroOK = true
 		} else if nonzero {
 			line.NonzeroOK = true
@@ -332,7 +332,7 @@ func (pl *planner) addBlock(block docblock.Block) {
 func (pl *planner) qualifies(lines []string) bool {
 	commands := 0
 	for _, ln := range lines {
-		flat := strings.TrimSpace(flatten(ln))
+		flat := strings.TrimSpace(docblock.Flatten(ln))
 		if flat == "" || strings.HasPrefix(flat, "#") {
 			continue
 		}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dcadolph/kibble/internal/advisor"
+	"github.com/dcadolph/kibble/internal/docblock"
 )
 
 // suggestSystem is the advisor's brief. It is deliberately narrow: the model
@@ -70,7 +71,7 @@ func suggestCandidates(plan *Plan) []candidate {
 	seen := map[string]bool{}
 	for _, step := range plan.Steps {
 		for _, line := range step.Lines {
-			cmd := flatten(line.Cmd)
+			cmd := docblock.Flatten(line.Cmd)
 			if cmd == "" || seen[cmd] {
 				continue
 			}

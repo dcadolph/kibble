@@ -7,6 +7,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/sandbox"
 )
 
@@ -135,7 +136,7 @@ func planTool(_ context.Context, _ *mcpsdk.CallToolRequest, in planInput) (
 		for _, step := range p.Steps {
 			for _, l := range step.Lines {
 				doc.Lines = append(doc.Lines, planRow{
-					Cmd: flatten(l.Cmd), Skip: l.Skip, Gap: l.Gap,
+					Cmd: docblock.Flatten(l.Cmd), Skip: l.Skip, Gap: l.Gap,
 				})
 				if l.Skip == "" {
 					out.Runnable++

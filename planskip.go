@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/shell"
 )
 
@@ -18,7 +19,7 @@ import (
 // Substitutions have already been applied, so a placeholder that survives
 // here is one the reader was meant to fill in.
 func (pl *planner) skipReason(cmd, flat string) (string, Reason, bool) {
-	if rePlaceholder.MatchString(commandHead(flat)) {
+	if rePlaceholder.MatchString(docblock.CommandHead(flat)) {
 		return "docs use a placeholder the reader must fill in", ReasonPlaceholder, false
 	}
 	// Asked before the rules that read the line as shell, and after the
@@ -402,7 +403,7 @@ func describedAsWatcher(markdown, bin string) bool {
 	// Only prose describes what a tool is. A code block containing `tool serve`
 	// says the tool has a serve subcommand, which is a different fact and one
 	// the interactive-subcommand rule already covers.
-	head := proseOnly(markdown)
+	head := docblock.ProseOnly(markdown)
 	if len(head) > 1500 {
 		head = head[:1500]
 	}

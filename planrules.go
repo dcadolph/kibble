@@ -128,11 +128,11 @@ func documentedBinary(markdown string, known map[string]bool) string {
 	counts := map[string]int{}
 	knownSeen := false
 	for _, block := range docblock.CodeBlocks(markdown) {
-		if block.Span || !shellLangs[block.Lang] {
+		if block.Span || !docblock.ShellLangs[block.Lang] {
 			continue
 		}
-		for _, ln := range logicalLines(prepareLines(block.Lines)) {
-			flat := strings.TrimSpace(flatten(ln))
+		for _, ln := range docblock.LogicalLines(docblock.PrepareLines(block.Lines)) {
+			flat := strings.TrimSpace(docblock.Flatten(ln))
 			if flat == "" || strings.HasPrefix(flat, "#") {
 				continue
 			}

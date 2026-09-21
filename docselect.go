@@ -206,7 +206,7 @@ func hasShellBlock(path string) bool {
 		return false
 	}
 	for _, b := range docblock.CodeBlocks(string(body)) {
-		if !b.Span && shellLangs[b.Lang] && len(b.Lines) > 0 {
+		if !b.Span && docblock.ShellLangs[b.Lang] && len(b.Lines) > 0 {
 			return true
 		}
 	}
