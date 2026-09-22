@@ -196,6 +196,17 @@ func SourceLineIndex(block Block) func(string) int {
 	}
 }
 
+// continues reports whether a line ends in a backslash that continues the
+// command onto the next line. A doubled backslash is an escaped backslash and
+// ends the command, so only an odd count continues it.
+func continues(s string) bool {
+	n := 0
+	for i := len(s) - 1; i >= 0 && s[i] == '\\'; i-- {
+		n++
+	}
+	return n%2 == 1
+}
+
 // PrepareLines normalizes a block's raw lines: prompt-style blocks keep only
 // the prompted lines, and two-column usage blocks drop the prose column.
 func PrepareLines(raw []string) []string {
@@ -208,10 +219,24 @@ func PrepareLines(raw []string) []string {
 	}
 	if prompted {
 		var out []string
+		cont := false
 		for _, l := range raw {
 			t := strings.TrimSpace(l)
-			if strings.HasPrefix(t, "$ ") {
-				out = append(out, strings.TrimPrefix(t, "$ "))
+			switch {
+			case strings.HasPrefix(t, "$ "):
+				c := strings.TrimPrefix(t, "$ ")
+				out = append(out, c)
+				cont = continues(c)
+			case cont:
+				// A command split across lines wears the prompt once, so
+				// its later lines look like output and were dropped. What
+				// survived was the first line still carrying its trailing
+				// backslash, which then joined the marker kibble prints
+				// after the command and made the script unparseable. The
+				// whole session died there, and every document after it
+				// went unchecked.
+				out = append(out, t)
+				cont = continues(t)
 			}
 		}
 		return out
