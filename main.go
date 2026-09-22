@@ -314,11 +314,18 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 			docs = docs[:maxReplayDocs]
 		}
 		if skippedDocs > 0 {
+			// Run is what sends a step to the runner, which is where the
+			// explanation lives. Without it the row reached the report as
+			// "not executed yet", which is the generic message for a step
+			// nobody asked to run and says nothing about the coverage the
+			// budget dropped.
 			out = append(out, InstallStep{
-				Repo: repo, Kind: "example", Raw: fmt.Sprintf("%d documents", skippedDocs),
+				Repo: repo, Kind: "example", Run: true,
+				Raw:         fmt.Sprintf("%d documents", skippedDocs),
 				skippedDocs: skippedDocs,
 			})
 		}
+		var merged *kplan.Plan
 		for _, doc := range docs {
 			text := md
 			if doc != name {
@@ -328,18 +335,29 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 				}
 				text = string(body)
 			}
-			step, plan, perr := exampleStepFor(repo, p, doc, text, sessionBins, installs, cfg)
-			if plan != nil {
-				plan.Settings = repoSettings
-			}
-			if perr != nil || plan == nil {
+			_, plan, perr := exampleStepFor(repo, p, doc, text, sessionBins, installs, cfg)
+			if perr != nil || plan == nil || len(plan.Steps) == 0 {
 				continue
 			}
-			plans = append(plans, plan)
-			if step != nil {
-				step.readme = name
-				out = append(out, *step)
+			if merged == nil {
+				merged = &kplan.Plan{Repo: repo, Settings: repoSettings}
 			}
+			merged.Merge(doc, plan)
+		}
+		// One session for the repository rather than one per document. The
+		// install is what a session spends its time on, and repeating it per
+		// page is what put a large documentation tree out of reach.
+		if merged != nil && len(merged.Steps) > 0 {
+			plans = append(plans, merged)
+			lines := 0
+			for _, st := range merged.Steps {
+				lines += len(st.Lines)
+			}
+			out = append(out, InstallStep{
+				Repo: repo, Kind: "example", Run: true,
+				Raw:  fmt.Sprintf("%d blocks, %d lines across %d documents", len(merged.Steps), lines, len(docs)),
+				plan: merged, dir: p, readme: name,
+			})
 		}
 	}
 	return out, plans, problems

@@ -127,7 +127,7 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 	documented := documentedSettings(plan)
 	ended := false
 	for _, s := range plan.Steps {
-		es := exampleStep{ID: s.ID, Heading: s.Heading}
+		es := exampleStep{ID: s.ID, Doc: s.Doc, Heading: s.Heading}
 		for i, l := range s.Lines {
 			key := fmt.Sprintf("%s:%d", s.ID, i)
 			lr := lineResult{Cmd: docblock.Flatten(l.Cmd), Code: -1, Line: l.Line, Synthetic: l.Synthetic}
@@ -194,20 +194,20 @@ func summarize(run *exampleRun) (Status, string) {
 			case StatusBlocked:
 				blocked++
 				if firstBlocked == "" {
-					firstBlocked = fmt.Sprintf("%s %q %s", s.ID, l.Cmd, l.Detail)
+					firstBlocked = fmt.Sprintf("%s %q %s", stepName(s), l.Cmd, l.Detail)
 				}
 			case StatusGap:
 				gaps++
 				if firstGap == "" {
-					firstGap = fmt.Sprintf("%s %q %s", s.ID, l.Cmd, l.Detail)
+					firstGap = fmt.Sprintf("%s %q %s", stepName(s), l.Cmd, l.Detail)
 				}
 			case StatusTimeout:
 				if firstTimeout == "" {
-					firstTimeout = fmt.Sprintf("%s %q %s", s.ID, l.Cmd, l.Detail)
+					firstTimeout = fmt.Sprintf("%s %q %s", stepName(s), l.Cmd, l.Detail)
 				}
 			case StatusFail:
 				if firstFail == "" {
-					firstFail = fmt.Sprintf("%s %q %s", s.ID, l.Cmd, l.Detail)
+					firstFail = fmt.Sprintf("%s %q %s", stepName(s), l.Cmd, l.Detail)
 				}
 			}
 		}
@@ -250,4 +250,15 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// stepName identifies a step to a reader. A session now replays every document
+// a repository has, so a bare block identifier no longer says where to look:
+// b41 is a different block in every document. The document leads when the step
+// carries one.
+func stepName(s exampleStep) string {
+	if s.Doc == "" {
+		return s.ID
+	}
+	return s.Doc + " " + s.ID
 }
