@@ -45,6 +45,7 @@ func reportJSON(w io.Writer, results []Result) {
 	}
 	type stepRow struct {
 		ID      string    `json:"id"`
+		Doc     string    `json:"doc,omitempty"`
 		Heading string    `json:"heading,omitempty"`
 		Lines   []lineRow `json:"lines"`
 	}
@@ -90,7 +91,7 @@ func reportJSON(w io.Writer, results []Result) {
 		var synthetic []string
 		if r.example != nil {
 			for _, s := range r.example.Steps {
-				sr := stepRow{ID: s.ID, Heading: s.Heading}
+				sr := stepRow{ID: s.ID, Doc: s.Doc, Heading: s.Heading}
 				for _, l := range s.Lines {
 					sr.Lines = append(sr.Lines, lineRow{
 						Cmd: l.Cmd, Status: string(l.Status), Reason: string(l.Reason),

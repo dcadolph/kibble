@@ -31,6 +31,10 @@ type exampleRun struct {
 type exampleStep struct {
 	// ID is the plan step ID.
 	ID string
+	// Doc is the document the block came from, carried so a result can say
+	// where to look. One session covers a repository's whole documentation
+	// tree, so a block identifier alone no longer locates anything.
+	Doc string
 	// Heading is the section heading the block appears under.
 	Heading string
 	// Lines are the line outcomes in documented order.

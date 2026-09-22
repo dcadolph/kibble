@@ -60,6 +60,13 @@ type PlanInstall struct {
 type PlanStep struct {
 	// ID names the step by its order in the plan, such as b3.
 	ID string `json:"id"`
+	// Doc is the document the block came from, relative to the repository
+	// root. One session now replays every document a repository has, because
+	// installing the tool once per document made a documentation tree of any
+	// size unverifiable: mise carries 421 of them and three could not finish.
+	// The step has to carry its own provenance, since the session no longer
+	// belongs to a single page.
+	Doc string `json:"doc,omitempty"`
 	// Heading is the section heading the block appears under.
 	Heading string `json:"heading,omitempty"`
 	// Lines are the logical shell lines of the block.
@@ -395,4 +402,72 @@ var CommandEcosystem = map[string]string{
 	"python": "python",
 	"go":     "go",
 	"gofmt":  "go",
+}
+
+// Merge folds another document's plan into this one, so a repository's whole
+// documentation tree is replayed in a single session.
+//
+// Installing the documented tool once per document is what made a large tree
+// unverifiable: the install dominates a session, and multiplying it by the
+// number of pages meant mise could not finish three of its 421. Everything a
+// session needs that is the same for every page, the installs, the binaries,
+// the packages and the environment, is therefore kept once, and only the steps
+// accumulate. Step identifiers are renumbered as they arrive, since each
+// document numbered its own blocks from one and merging them would otherwise
+// produce several b1s in the same session.
+func (p *Plan) Merge(doc string, other *Plan) {
+	if other == nil {
+		return
+	}
+	if len(p.Installs) == 0 {
+		p.Installs = other.Installs
+	}
+	p.Binaries = mergeUnique(p.Binaries, other.Binaries)
+	p.Packages = mergeUnique(p.Packages, other.Packages)
+	p.Settings = mergeUnique(p.Settings, other.Settings)
+	if p.Env == nil && len(other.Env) > 0 {
+		p.Env = map[string]string{}
+	}
+	for k, v := range other.Env {
+		if _, seen := p.Env[k]; !seen {
+			p.Env[k] = v
+		}
+	}
+	for _, f := range other.Fixtures {
+		if !hasFixture(p.Fixtures, f.Path) {
+			p.Fixtures = append(p.Fixtures, f)
+		}
+	}
+	for _, st := range other.Steps {
+		st.Doc = doc
+		st.ID = fmt.Sprintf("b%d", len(p.Steps)+1)
+		p.Steps = append(p.Steps, st)
+	}
+}
+
+// mergeUnique appends the values of b that a does not already hold, keeping
+// first-seen order so a session's binaries and packages read the way the
+// documents introduced them.
+func mergeUnique(a, b []string) []string {
+	seen := map[string]bool{}
+	for _, v := range a {
+		seen[v] = true
+	}
+	for _, v := range b {
+		if !seen[v] {
+			seen[v] = true
+			a = append(a, v)
+		}
+	}
+	return a
+}
+
+// hasFixture reports whether a path is already fabricated for this session.
+func hasFixture(fs []config.Fixture, path string) bool {
+	for _, f := range fs {
+		if f.Path == path {
+			return true
+		}
+	}
+	return false
 }
