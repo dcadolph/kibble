@@ -640,18 +640,27 @@ func TestRepoTar(t *testing.T) {
 	}
 }
 
-// TestEmptyPipelineSkips checks that xargs reporting a failed invocation
-// which itself reported empty input reads as the search matching nothing,
-// not as the document being wrong.
+// TestEmptyPipelineSkips checks that a consumer reporting empty input reads
+// as the search matching nothing, not as the document being wrong. The exit
+// code it arrives with depends only on which stage the pipeline reports, so
+// xargs answering 123 and the search itself answering 1 must read the same.
 func TestEmptyPipelineSkips(t *testing.T) {
 	t.Parallel()
-	lr := classifyLineResult(lineResult{Cmd: "rg foo -0 | xargs -0 sed -i 's/foo/bar/g'"},
-		kplan.PlanLine{}, lineOutcome{code: 123, output: "sed: no input files"}, false, nil, lineTimeout)
-	if lr.Status != StatusSkipped {
-		t.Errorf("status = %s, want %s", lr.Status, StatusSkipped)
+	for _, code := range []int{123, 1} {
+		lr := classifyLineResult(lineResult{Cmd: "rg foo -0 | xargs -0 sed -i 's/foo/bar/g'"},
+			kplan.PlanLine{}, lineOutcome{code: code, output: "sed: no input files"}, false, nil, lineTimeout)
+		if lr.Status != StatusBlocked {
+			t.Errorf("code %d: status = %s, want %s", code, lr.Status, StatusBlocked)
+		}
+		if !strings.Contains(lr.Detail, "matched nothing") {
+			t.Errorf("code %d: detail = %q, want it to mention matching nothing", code, lr.Detail)
+		}
 	}
-	if !strings.Contains(lr.Detail, "matched nothing") {
-		t.Errorf("detail = %q, want it to mention matching nothing", lr.Detail)
+	// A code that is evidence on its own is not excused by the wording.
+	lr := classifyLineResult(lineResult{Cmd: "rg foo | xargs sed -i 's/foo/bar/'"},
+		kplan.PlanLine{}, lineOutcome{code: 139, output: "sed: no input files"}, false, nil, lineTimeout)
+	if lr.Status != StatusFail {
+		t.Errorf("segfault: status = %s, want %s", lr.Status, StatusFail)
 	}
 	// A sed that failed for a real reason keeps its failure.
 	lr = classifyLineResult(lineResult{Cmd: "rg foo | xargs sed -i 's/foo/'"},
