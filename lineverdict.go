@@ -178,18 +178,24 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonInteractive
 		lr.Detail = "rejected the empty input of the session's stubbed editor"
-	case o.code == 123 && reNoInputFiles.MatchString(o.output):
-		// Exit 123 is xargs reporting that an invocation it ran failed, and
-		// "no input files" is that invocation saying it was handed nothing.
-		// Together they mean the pipeline's search matched nothing in this
-		// fresh session, which settles nothing about the document: the same
-		// recipe fed by a reader's tree works exactly as written. ripgrep's
-		// FAQ hit this when an earlier documented variant of the same
-		// replacement had already rewritten every match the later variant
-		// would have found.
-		lr.Status = StatusSkipped
+	case documentedNonzeroCode(o.code) && reNoInputFiles.MatchString(o.output):
+		// "no input files" is a consumer saying it was handed nothing, which
+		// means the search feeding it matched nothing in this fresh session.
+		// That settles nothing about the document: the same recipe fed by a
+		// reader's tree works exactly as written. The code this arrives with
+		// depends only on which stage the pipeline reports, xargs answering
+		// 123 for an invocation that failed or the search itself answering 1
+		// for no match, and the same evidence must not read two ways because
+		// of that. ripgrep's FAQ produces both, one where an earlier variant
+		// of the same replacement had already rewritten every match, and one
+		// where the FAQ searches for the placeholder foo in a repository that
+		// contains no foo. The line ran and kibble could not tell, which is
+		// blocked rather than skipped: skipping is a choice kibble makes
+		// before running, and it made no such choice here.
+		lr.Status = StatusBlocked
 		lr.Reason = ReasonNoDataExpected
-		lr.Detail = "the pipeline's search matched nothing in the fresh session: " + tail
+		lr.Detail = "the search feeding this pipeline matched nothing in the fresh session, " +
+			"so what ran after it had no input: " + tail
 	case missingFileArg(lr.Cmd, o.output) != "":
 		// The tool asked for a file the command names and the session does
 		// not have. That is the document assuming the reader brings a file,
