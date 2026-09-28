@@ -4,7 +4,12 @@
 
 <h1 align="center">kibble</h1>
 
-<p align="center">Dogfood your docs.</p>
+<p align="center"><strong>Dogfood your docs.</strong></p>
+
+<p align="center">
+  Verify your documentation in CI. Runs install instructions and examples in a clean
+  container, then checks documented commands and flags against the installed tool.
+</p>
 
 <p align="center">
   <a href="https://github.com/dcadolph/kibble/releases"><img
@@ -14,16 +19,43 @@
     src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
 </p>
 
+<p align="center"><code>VERIFIED · FAIL · GAP · DRIFT · BLOCKED · SKIP</code></p>
+
 <p align="center">
   <img src="assets/kibble-demo.gif" width="100%"
     alt="kibble reads a README's install steps and flags a documented brew install that names a formula that does not exist, with the line number and the reason">
 </p>
 
-Eating your own dog food means using what you ship the way a stranger would. Nobody does
-it for documentation. Your machine already has everything installed, and you stopped
-reading your own docs the day the workflow became muscle memory. kibble is the bowl: it
-runs your documented steps in a clean Linux container from zero, as a reader with
-nothing would, so a broken install fails in CI instead of in their terminal.
+```
+myrepo
+  ! brew             0s  GAP  no formula, cask, or alias named "acme/tap/nope" in the c…
+  – doc-coverage     0s  SKIP  no command list in the help output to check against
+  ✗ example         22s  FAIL  b1 "mytool --nosuchflag" exited 2: flag provided but not d…
+      myrepo/README.md:17
+      $ mytool --nosuchflag
+        exited 2: flag provided but not defined: -nosuchflag
+  ✓ flag-check       0s  2 cited flags ok, 0 subcommands cited
+  ✓ go-install      22s  v1.4.0
+
+FAILED  a documented line ran and did not work
+2 passed  1 failed  1 gap  1 other  5 checks in 45s
+```
+
+kibble does not check whether your documentation exists. It checks whether the interface
+your documentation promises still exists. It reads your README, everything in `docs/`, and
+the instructional documents beside them, runs what they tell a reader to run in a clean
+Linux container from zero, and puts the flags and subcommands they cite to the binary it
+just installed. A page still teaching a flag the tool dropped is caught as drift, even
+though nothing failed to run.
+
+What comes back is a verdict, not a pass. kibble separates documentation that is wrong from
+documentation it could not check, so a green run means something specific rather than
+nothing went visibly bang. That distinction is pinned in both directions: a corpus of real
+repositories proves correct documentation passes, and deliberate one-line corruptions of
+those same documents prove rot gets caught. A verifier that only ever agrees with you is
+worse than no verifier, so kibble is tested against its own willingness to say yes.
+
+## What rots, and who reads it
 
 The stranger is not always a person now. Coding agents install tools by doing what the
 README says, and they fail differently than people do. Someone who follows a broken
@@ -50,14 +82,6 @@ documents cite and puts them to the binary it just installed, so a page still te
 flag the tool dropped is caught as drift rather than passing because nobody happened to
 run that line. It also reads the binary's own help and reports the documented surface
 against the real one.
-
-What comes back is a verdict, not a pass. kibble separates documentation that is wrong
-from documentation it could not check, so a green run means something specific rather
-than nothing went visibly bang. That distinction is pinned in both directions: a corpus
-of real repositories proves correct documentation passes, and deliberate one-line
-corruptions of those same documents prove rot gets caught. A verifier that only ever
-agrees with you is worse than no verifier, so kibble is tested against its own
-willingness to say yes.
 
 That container is one environment, not every environment. kibble answers whether your
 documentation works from zero in a reproducible Linux container, which is a narrower
@@ -251,8 +275,10 @@ for you to review; `-mcp` serves the same engine to an agent. All of it is in
 
 ## Why "kibble"
 
-Dogfooding means using your own product before you ship it. kibble is the bowl: it feeds
-your docs back to a fresh machine and tells you whether they still go down.
+Eating your own dog food means using what you ship the way a stranger would. Nobody does
+it for documentation. Your machine already has everything installed, and you stopped
+reading your own docs the day the workflow became muscle memory. kibble is the bowl: it
+feeds your docs back to a fresh machine and tells you whether they still go down.
 
 ## License
 
