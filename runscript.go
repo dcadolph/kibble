@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	kplan "github.com/dcadolph/kibble/internal/plan"
 	"github.com/dcadolph/kibble/internal/sandbox"
 )
 
@@ -100,8 +101,25 @@ func cloneScriptFor(step InstallStep, timeoutSecs int) string {
 	}
 	body := strings.Join(recipe, "\n")
 	body = strings.ReplaceAll(body, "'", `'\''`)
-	return fmt.Sprintf(cloneScript, timeoutSecs, body, step.Repo)
+	// The repository name lands inside a single-quoted shell string, so the
+	// lookup is written only for a name that cannot break out of one.
+	lookup := ""
+	if kplan.IsSimpleWord(step.Repo) {
+		lookup = fmt.Sprintf(newShellLookup, step.Repo)
+	}
+	return fmt.Sprintf(cloneScript, timeoutSecs, body, step.Repo, lookup)
 }
+
+// newShellLookup asks a new interactive shell where the binary is, for a recipe
+// whose installer put it on PATH through the shell's startup file. fzf's does
+// exactly that, prints "Restart your shell", and leaves the binary in ~/.fzf/bin,
+// where neither GOBIN nor a search of /work finds it. Only an absolute path is
+// taken, since an rc file can define an alias or a function of the same name.
+const newShellLookup = `if [ -z "$bin" ]; then
+  bin=$(timeout 10 bash -ic 'command -v "%s"' 2>/dev/null </dev/null | tail -n1)
+  case "$bin" in /*) ;; *) bin='' ;; esac
+fi
+`
 
 // cloneScript runs a documented clone recipe and smoke-tests the result. It
 // prints the same markers as installScript, plus NOBIN when the recipe
@@ -125,7 +143,7 @@ else
   bin=$(find /work -maxdepth 5 -type f -perm -u+x -name "%[3]s" 2>/dev/null | head -n1)
   if [ -z "$bin" ]; then b=$(ls "$GOBIN" 2>/dev/null | head -n1); [ -n "$b" ] && bin="$GOBIN/$b"; fi
 fi
-if [ -z "$bin" ]; then
+%[4]sif [ -z "$bin" ]; then
   printf 'NOBIN=1\n'
   exit 0
 fi

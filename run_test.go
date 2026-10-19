@@ -111,6 +111,61 @@ func TestInstallScriptFindsBinary(t *testing.T) {
 	}
 }
 
+// TestCloneScriptAsksNewShell checks that a clone recipe's binary is looked up
+// in a new interactive shell only after every other search, and that a
+// repository name that could break out of the shell quoting gets no lookup.
+func TestCloneScriptAsksNewShell(t *testing.T) {
+	t.Parallel()
+	script := cloneScriptFor(InstallStep{Repo: "fzf", Block: []string{"true"}}, 60)
+	lookup := strings.Index(script, `bash -ic 'command -v "fzf"'`)
+	if lookup < 0 {
+		t.Fatal("script missing the new-shell lookup")
+	}
+	if find := strings.Index(script, "find /work"); find < 0 || find > lookup {
+		t.Error("new-shell lookup runs before the search of /work")
+	}
+	if nobin := strings.Index(script, "printf 'NOBIN=1\\n'"); nobin < lookup {
+		t.Error("new-shell lookup runs after NOBIN is decided")
+	}
+	evil := cloneScriptFor(InstallStep{Repo: "x'; rm -rf /; '", Block: []string{"true"}}, 60)
+	if strings.Contains(evil, "bash -ic") {
+		t.Error("a repository name with shell syntax reached the new-shell lookup")
+	}
+}
+
+// TestDockerCloneBinaryOnShellPath runs a clone recipe that installs the way
+// fzf's does: the binary lands outside GOBIN and /work, and only a line in
+// ~/.bashrc puts its directory on PATH. The recipe exits 0 and the binary
+// works, so the step must smoke-test it rather than report that it produced
+// nothing.
+func TestDockerCloneBinaryOnShellPath(t *testing.T) {
+	if testing.Short() {
+		t.Skip("container test skipped in short mode")
+	}
+	if os.Getenv("KIBBLE_INTEGRATION") == "" {
+		t.Skip("set KIBBLE_INTEGRATION=1 to run container tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := sandbox.Available(ctx); err != nil {
+		t.Skipf("docker is not reachable: %v", err)
+	}
+	step := InstallStep{Repo: "tool", Kind: "git-clone", Run: true, Block: []string{
+		"mkdir -p ~/.tool/bin",
+		`printf '#!/bin/sh\necho tool 1.2.3\n' > ~/.tool/bin/tool`,
+		"chmod +x ~/.tool/bin/tool",
+		`echo 'PATH="$PATH:$HOME/.tool/bin"' >> ~/.bashrc`,
+	}}
+	runner := &DockerRunner{Image: "golang:1.26", Timeout: 60 * time.Second}
+	res := runner.Run(ctx, step)
+	if res.Status != StatusVerified {
+		t.Fatalf("status = %s, want %s (detail %q)", res.Status, StatusVerified, res.Detail)
+	}
+	if res.SmokeLine != "tool 1.2.3" {
+		t.Errorf("smoke line = %q, want %q", res.SmokeLine, "tool 1.2.3")
+	}
+}
+
 // TestDockerExampleSession replays a plan in a real container and checks that
 // every documented line reports its own result, including one whose output
 // ends without a newline. It is the end-to-end guard on the marker protocol,
