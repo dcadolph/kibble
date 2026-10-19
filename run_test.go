@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -273,6 +274,51 @@ func TestDockerBackgroundPerLine(t *testing.T) {
 	}
 	if !strings.Contains(lines[1].Detail, "readiness") {
 		t.Errorf("server line detail = %q, want it to say readiness", lines[1].Detail)
+	}
+}
+
+// TestDockerCommitMessage checks that the session's editor reaches git. A
+// documented commit with no message aborted on the empty message the editor
+// true saved, and kibble failed a line that works for every reader.
+func TestDockerCommitMessage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("container test skipped in short mode")
+	}
+	if os.Getenv("KIBBLE_INTEGRATION") == "" {
+		t.Skip("set KIBBLE_INTEGRATION=1 to run container tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := sandbox.Available(ctx); err != nil {
+		t.Skipf("docker is not reachable: %v", err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := &kplan.Plan{
+		Repo:     "repo",
+		Installs: []kplan.PlanInstall{{Cmd: "true"}},
+		Steps: []kplan.PlanStep{{ID: "b1", Lines: []kplan.PlanLine{
+			{Cmd: "git add ."},
+			{Cmd: "git commit"},
+			{Cmd: "git log -1 --format=%s | grep -x kibble"},
+		}}},
+	}
+	// The image needs git, which debian:stable-slim lacks.
+	runner := &DockerRunner{Image: "golang:1.26", Timeout: 60 * time.Second}
+	step := InstallStep{Repo: "repo", Kind: "example", Run: true, plan: plan, dir: dir}
+	res := runner.runExample(ctx, step)
+	if res.example == nil {
+		t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+	}
+	var got []Status
+	for _, l := range res.example.Steps[0].Lines {
+		got = append(got, l.Status)
+	}
+	want := []Status{StatusVerified, StatusVerified, StatusVerified}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("line statuses mismatch (-want +got):\n%s\ndetail: %s", diff, res.Detail)
 	}
 }
 
