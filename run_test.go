@@ -322,6 +322,116 @@ func TestDockerCommitMessage(t *testing.T) {
 	}
 }
 
+// TestDockerDocumentsStartFresh checks that a document does not inherit what
+// an earlier document in the same session left behind. Every line here passes
+// in a session of its own document, and each one failed or misled when the
+// documents shared one shell and one repository.
+func TestDockerDocumentsStartFresh(t *testing.T) {
+	if testing.Short() {
+		t.Skip("container test skipped in short mode")
+	}
+	if os.Getenv("KIBBLE_INTEGRATION") == "" {
+		t.Skip("set KIBBLE_INTEGRATION=1 to run container tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := sandbox.Available(ctx); err != nil {
+		t.Skipf("docker is not reachable: %v", err)
+	}
+	remote := "git remote add origin https://example.com/x.git && git remote"
+	plan := &kplan.Plan{
+		Repo:     "repo",
+		Installs: []kplan.PlanInstall{{Cmd: "true"}},
+		Steps: []kplan.PlanStep{{ID: "b1", Doc: "README.md", Lines: []kplan.PlanLine{
+			{Cmd: remote},
+			{Cmd: "cd /tmp && pwd"},
+			{Cmd: "export KIBBLE_LEAK=1 && echo set"},
+			{Cmd: "set -u && echo strict"},
+		}}, {ID: "b2", Doc: "docs/guide.md", Lines: []kplan.PlanLine{
+			{Cmd: remote},
+			{Cmd: `[ "$(pwd)" = /work/repo ] && echo fresh-cwd`},
+			{Cmd: `[ -z "${KIBBLE_LEAK:-}" ] && echo fresh-env`},
+			{Cmd: `echo "$KIBBLE_NEVER_SET" fresh-options`},
+		}}, {ID: "b3", Doc: "docs/exit.md", Lines: []kplan.PlanLine{
+			{Cmd: "echo before"},
+			// A line that changes the shell runs in it unwrapped, so its
+			// exit ends the document's shell rather than a shell of its own.
+			{Cmd: "cd . && exit 3"},
+			{Cmd: "echo after"},
+		}}, {ID: "b4", Doc: "docs/last.md", Lines: []kplan.PlanLine{
+			{Cmd: "echo still-running"},
+		}}},
+	}
+	// The image needs git, which debian:stable-slim lacks.
+	runner := &DockerRunner{Image: "golang:1.26", Timeout: 60 * time.Second}
+	step := InstallStep{Repo: "repo", Kind: "example", Run: true, plan: plan, dir: t.TempDir()}
+	res := runner.runExample(ctx, step)
+	if res.example == nil {
+		t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+	}
+	var got [][]Status
+	for _, s := range res.example.Steps {
+		var row []Status
+		for _, l := range s.Lines {
+			row = append(row, l.Status)
+		}
+		got = append(got, row)
+	}
+	want := [][]Status{
+		{StatusVerified, StatusVerified, StatusVerified, StatusVerified},
+		{StatusVerified, StatusVerified, StatusVerified, StatusVerified},
+		{StatusVerified, StatusBlocked, StatusBlocked},
+		{StatusVerified},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("line statuses mismatch (-want +got):\n%s\ndetail: %s", diff, res.Detail)
+	}
+	if d := res.example.Steps[2].Lines[1].Detail; !strings.Contains(d, "document's shell exited") {
+		t.Errorf("exit line detail = %q, want it to say the document's shell exited", d)
+	}
+}
+
+// TestDockerDocumentServices checks that a document's background service is
+// stopped when the document ends. Killing the block's pid stopped only its
+// subshell, so a second document serving on the same port found it taken.
+func TestDockerDocumentServices(t *testing.T) {
+	if testing.Short() {
+		t.Skip("container test skipped in short mode")
+	}
+	if os.Getenv("KIBBLE_INTEGRATION") == "" {
+		t.Skip("set KIBBLE_INTEGRATION=1 to run container tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := sandbox.Available(ctx); err != nil {
+		t.Skipf("docker is not reachable: %v", err)
+	}
+	serve := kplan.PlanLine{Cmd: "python3 -u -m http.server 8765"}
+	plan := &kplan.Plan{
+		Repo:     "repo",
+		Installs: []kplan.PlanInstall{{Cmd: "true"}},
+		Steps: []kplan.PlanStep{
+			{ID: "b1", Doc: "README.md", Background: true, ReadyLog: "Serving HTTP", Lines: []kplan.PlanLine{serve}},
+			{ID: "b2", Doc: "docs/serve.md", Background: true, ReadyLog: "Serving HTTP", Lines: []kplan.PlanLine{serve}},
+		},
+	}
+	// The image needs python3, which debian:stable-slim lacks.
+	runner := &DockerRunner{Image: "golang:1.26", Timeout: 90 * time.Second}
+	step := InstallStep{Repo: "repo", Kind: "example", Run: true, plan: plan, dir: t.TempDir()}
+	res := runner.runExample(ctx, step)
+	if res.example == nil {
+		t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+	}
+	var got []Status
+	for _, s := range res.example.Steps {
+		got = append(got, s.Lines[0].Status)
+	}
+	want := []Status{StatusVerified, StatusVerified}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("server statuses mismatch (-want +got):\n%s\ndetail: %s", diff, res.Detail)
+	}
+}
+
 // TestRewriteSSH checks that GitHub SSH remotes become HTTPS for keyless clones.
 func TestRewriteSSH(t *testing.T) {
 	t.Parallel()

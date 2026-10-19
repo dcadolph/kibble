@@ -148,6 +148,12 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 				lr.Status = StatusBlocked
 				lr.Reason = ReasonDependsOnSkipped
 				lr.Detail = "not run: the session ended before reaching it"
+				if !ended {
+					// The session finished, so the shell that stopped short
+					// was this document's own, ended by this line or one
+					// before it, and later documents still ran.
+					lr.Detail = "not established: the document's shell exited at or before this line"
+				}
 			case !seen:
 				lr.Status = StatusTimeout
 				lr.Detail = "session ended while this line ran"
