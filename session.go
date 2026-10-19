@@ -131,10 +131,17 @@ printf '\nKIBBLE-PKGS CODE=%%d\n' "$?"
 		if in.Bootstrap != "" {
 			fmt.Fprintf(&b, "%s >/dev/null 2>&1 || true\n", in.Bootstrap)
 		}
+		cmd := in.Cmd
+		if in.Dir != "" {
+			cmd = "cd " + in.Dir + "\n" + cmd
+		}
 		fmt.Fprintf(&b, `out=$(timeout %d bash -ec '%s' 2>&1); code=$?
 printf '\nKIBBLE-BUILD CODE=%%d\n' "$code"
 if [ "$code" -ne 0 ]; then printf '%%s\n' "$out" | tail -n 12; printf '\nKIBBLE-ABORT\n'; exit 0; fi
-`, installSecs, shellSafe(in.Cmd))
+`, installSecs, shellSafe(cmd))
+	}
+	if len(plan.Installs) > 0 {
+		b.WriteString(newShellPath)
 	}
 	if len(plan.Binaries) > 0 {
 		var quoted []string
@@ -285,6 +292,22 @@ func sortedKeys(m map[string]string) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// newShellPath gives the session the PATH a new interactive shell would have
+// once the installs are done, which is what a reader gets on opening a terminal
+// afterward. An installer that adds its directory to PATH from ~/.bashrc, as
+// fzf's does, is otherwise invisible to the session, and its examples could
+// not run. The new shell inherits the session's PATH, so in an image whose rc
+// files nobody edited the result is unchanged. Any entry it dropped is put
+// back at the end, and an rc file that blocks is cut off by the timeout. Only
+// PATH is taken: functions and aliases an rc file defines stay out.
+const newShellPath = `if p=$(timeout 10 bash -ic 'printf "%s" "$PATH"' 2>/dev/null </dev/null) &&
+  [ -n "$p" ]; then
+  IFS=: read -ra cur <<<"$PATH"
+  for d in "${cur[@]}"; do case ":$p:" in *":$d:"*) ;; *) p="$p:$d" ;; esac; done
+  export PATH="$p"
+fi
+`
 
 // isSimpleCommand reports whether a line is one plain command with no shell
 // structure, so prefixing it with a timeout does not change what it means.

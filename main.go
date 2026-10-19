@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
@@ -365,13 +366,21 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 
 // sessionInstalls returns the documented binaries and the installs that put
 // them on PATH. Every install kind counts, not only Go, so a Rust or Node
-// project's examples run against the tool its own README installs.
+// project's examples run against the tool its own README installs. A clone
+// recipe counts only when nothing else does, as fzf documents only package
+// managers kibble does not run and its own clone-and-install script.
 func sessionInstalls(dir string, steps []InstallStep) ([]string, []kplan.PlanInstall) {
 	var bins []string
 	var all []kplan.PlanInstall
+	var clone *kplan.PlanInstall
 	for _, s := range steps {
 		var in kplan.PlanInstall
 		switch {
+		case s.Kind == "git-clone":
+			if clone == nil && len(s.Block) > 0 && clonesItself(s) {
+				clone = cloneInstall(s, dir)
+			}
+			continue
 		case s.Kind == "go-install":
 			in = kplan.PlanInstall{Cmd: "go install " + s.Module, Ecosystem: "go", Binary: s.Binary}
 		case pkgKinds[s.Kind].Ecosystem != "":
@@ -388,7 +397,39 @@ func sessionInstalls(dir string, steps []InstallStep) ([]string, []kplan.PlanIns
 			bins = append(bins, s.Binary)
 		}
 	}
+	if len(all) == 0 && clone != nil {
+		return bins, []kplan.PlanInstall{*clone}
+	}
 	return bins, oncePerBinary(sameEcosystem(all, dir))
+}
+
+// clonesItself reports whether a clone recipe clones the repository being
+// checked, judged by the last element of the clone URL. A README that clones a
+// plugin manager or a dependency is not installing its own tool, and running
+// that recipe would put nothing the examples call on PATH.
+func clonesItself(s InstallStep) bool {
+	name := strings.TrimSuffix(path.Base(strings.TrimRight(s.Module, "/")), ".git")
+	if i := strings.LastIndex(name, ":"); i >= 0 {
+		name = name[i+1:]
+	}
+	return name != "" && strings.EqualFold(name, s.Repo)
+}
+
+// cloneInstall turns a clone recipe into a session install. It runs from
+// /work, as the standalone clone step does, because a recipe that clones
+// without naming a destination would otherwise put a second copy of the
+// repository inside the one the examples run in. Its toolchain is the one the
+// standalone step picks its image by, so both run the recipe the same way.
+func cloneInstall(s InstallStep, dir string) *kplan.PlanInstall {
+	recipe := make([]string, 0, len(s.Block))
+	for _, l := range s.Block {
+		recipe = append(recipe, rewriteSSH(l))
+	}
+	in := &kplan.PlanInstall{Cmd: strings.Join(recipe, "\n"), Dir: "/work"}
+	if tc, ok := detectToolchain(s.Block, dir); ok {
+		in.Ecosystem = tc.Name
+	}
+	return in
 }
 
 // sessionBinaries pads the documented binaries with the repository's own name
