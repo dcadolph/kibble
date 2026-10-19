@@ -254,6 +254,10 @@ type planner struct {
 	packages map[string]bool
 	// fixed tracks fixture paths already fabricated, to avoid duplicates.
 	fixed map[string]bool
+	// staged marks a document that has run git add on a line that is not
+	// skipped. It is the only repository state the planner tracks, because a
+	// commit is the only allowed git form that needs any.
+	staged bool
 	// synthetic collects the fixtures fabricated while classifying the line
 	// currently being planned, and is drained onto that line. A line that
 	// reads a file kibble invented was not tested against the document's own
@@ -349,6 +353,9 @@ func (pl *planner) addBlock(block docblock.Block) {
 		}
 		if line.Skip == "" {
 			pl.recordCreated(flat)
+			if gitStages(flat) {
+				pl.staged = true
+			}
 		}
 		step.Lines = append(step.Lines, line)
 	}

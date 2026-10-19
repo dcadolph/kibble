@@ -340,7 +340,7 @@ func TestSkipHeuristics(t *testing.T) {
 		WantRun:  true,
 	}, { // Test 2: git needing a remote skips in the fresh session repo.
 		Markdown: "```sh\ngit fetch origin\n```\n",
-		WantSkip: "git history or a remote",
+		WantSkip: "one kibble made",
 	}, { // Test 3: git config is fine in a fresh repo.
 		Markdown: "```sh\ngit config user.name kibble\n```\n",
 		WantRun:  true,

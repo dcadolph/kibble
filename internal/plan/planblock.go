@@ -43,13 +43,6 @@ var (
 			`|(^|[^/])\.\.\.($|[\s'".])`)
 	// reLogin matches a command that starts an interactive sign-in.
 	reLogin = regexp.MustCompile(`\b(login|signin|sign-in|logout)\b`)
-	// reGitState matches a git invocation that needs history, tags, or a
-	// remote. The session replays examples in a freshly initialized repo with
-	// no commits and no remotes, so these commands fail there even when the
-	// docs are right.
-	reGitState = regexp.MustCompile(
-		`\bgit\s+(-\S+\s+)*(fetch|pull|push|show|describe|log|rebase|merge|cherry-pick|revert|blame|bisect|shortlog|submodule)\b|\bgit\b[^|;&]*\b(origin|upstream)\b` +
-			`|\b(origin|upstream)/[A-Za-z0-9._/-]+`)
 	// reLocalhost matches a reference to a service on the local machine,
 	// which a clean container does not have.
 	reLocalhost = regexp.MustCompile(`\blocalhost\b|127\.0\.0\.1`)
