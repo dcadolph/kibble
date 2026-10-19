@@ -242,3 +242,37 @@ func TestSessionScriptBackgroundGroup(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionScriptNewShellPath checks where the session takes a new shell's
+// PATH: after every install, so an installer's rc edit is seen, and before the
+// binaries are looked for, which is the point of taking it. A clone install
+// runs from /work and every other install from the repository copy.
+func TestSessionScriptNewShellPath(t *testing.T) {
+	t.Parallel()
+	plan := &kplan.Plan{
+		Repo: "repo", Binaries: []string{"tool"},
+		Installs: []kplan.PlanInstall{{Cmd: "pip install ."}, {Cmd: "~/.tool/install", Dir: "/work"}},
+		Steps:    []kplan.PlanStep{{ID: "b1", Lines: []kplan.PlanLine{{Cmd: "tool"}}}},
+	}
+	script, _ := sessionScript(plan, 240, 90)
+	at := strings.Index(script, newShellPath)
+	if at < 0 {
+		t.Fatalf("script missing the new-shell PATH step:\n%s", script)
+	}
+	if last := strings.LastIndex(script, "KIBBLE-BUILD CODE"); last > at {
+		t.Error("new-shell PATH step runs before an install")
+	}
+	if have := strings.Index(script, "KIBBLE-HAVE"); have < at {
+		t.Error("binaries are looked for before the new-shell PATH step")
+	}
+	if !strings.Contains(script, "bash -ec 'cd /work\n~/.tool/install'") {
+		t.Error("clone install does not run from /work")
+	}
+	if !strings.Contains(script, "bash -ec 'pip install .'") {
+		t.Error("package install no longer runs from the repository copy")
+	}
+	bare, _ := sessionScript(&kplan.Plan{Repo: "repo"}, 240, 90)
+	if strings.Contains(bare, newShellPath) {
+		t.Error("session without installs gained the new-shell PATH step")
+	}
+}
