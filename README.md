@@ -151,7 +151,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dcadolph/kibble@v0.0.5
+      - uses: dcadolph/kibble@v0.23.0
         with:
           repo: .
           # args: -strict   # fail on timeouts, smoke failures, drift, and gaps too
