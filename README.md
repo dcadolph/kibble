@@ -234,10 +234,17 @@ line of a pinned repository, a crate name typo, a brew formula that no longer re
 and requires kibble to reach a named verdict on the damage in a finding that quotes the
 mutated token. A count alone would not do, since a coincidence can produce a count.
 
+What the weekly job prints, with each repository's counts in VERIFIED, FAIL, GAP order:
+
 ```
-ripgrep   5,0,1  as expected      ripgrep mutation:  FAIL=1 naming ripgreppp
-fd        7,0,0  as expected      rich-cli mutation: GAP=2  naming richhh
-rich-cli  3,0,1  as expected
+ripgrep: 2,0,1 as expected
+nodemon: 2,0,0 as expected
+fd: 6,0,0 as expected
+glow: 4,0,1 as expected
+httpie: 0,0,0 as expected
+rich-cli: 2,0,1 as expected
+ripgrep: FAIL=1 naming ripgreppp as expected
+rich-cli: FAIL=1 naming richhh as expected
 ```
 
 Correct documentation passes and one edit of rot flips it. Both halves are the claim; a
