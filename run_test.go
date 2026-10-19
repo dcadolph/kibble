@@ -432,6 +432,49 @@ func TestDockerDocumentServices(t *testing.T) {
 	}
 }
 
+// TestDockerStderrOrder checks that a line's errors are read as that line's
+// output. Docker does not keep standard error in order with standard output,
+// so errors written just before a marker could arrive after it, leaving the
+// line looking silent and handing its errors to the next one.
+func TestDockerStderrOrder(t *testing.T) {
+	if testing.Short() {
+		t.Skip("container test skipped in short mode")
+	}
+	if os.Getenv("KIBBLE_INTEGRATION") == "" {
+		t.Skip("set KIBBLE_INTEGRATION=1 to run container tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := sandbox.Available(ctx); err != nil {
+		t.Skipf("docker is not reachable: %v", err)
+	}
+	const n = 40
+	// A burst on standard output first is what lets the other stream
+	// overtake it, as a large search result did on ripgrep.
+	lines := []kplan.PlanLine{{Cmd: "seq 1 400000"}}
+	for i := range n {
+		lines = append(lines, kplan.PlanLine{
+			Cmd: fmt.Sprintf(`sh -c 'head -c 3000 /dev/zero | tr "\0" e >&2; echo " line-%d" >&2; exit 3'`, i),
+		})
+	}
+	plan := &kplan.Plan{
+		Repo:     "repo",
+		Installs: []kplan.PlanInstall{{Cmd: "true"}},
+		Steps:    []kplan.PlanStep{{ID: "b1", Lines: lines}},
+	}
+	runner := &DockerRunner{Image: "debian:stable-slim", Timeout: 120 * time.Second}
+	step := InstallStep{Repo: "repo", Kind: "example", Run: true, plan: plan, dir: t.TempDir()}
+	res := runner.runExample(ctx, step)
+	if res.example == nil {
+		t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+	}
+	for i, l := range res.example.Steps[0].Lines[1:] {
+		if l.Status != StatusFail || !strings.Contains(l.Detail, fmt.Sprintf("line-%d", i)) {
+			t.Errorf("line %d: status %s, detail %q, want FAIL naming its own output", i, l.Status, l.Detail)
+		}
+	}
+}
+
 // TestRewriteSSH checks that GitHub SSH remotes become HTTPS for keyless clones.
 func TestRewriteSSH(t *testing.T) {
 	t.Parallel()
