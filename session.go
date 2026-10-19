@@ -17,6 +17,28 @@ import (
 // decisions about what may be wrapped in a timeout or moved into its own
 // shell live here, because both change what a documented line means.
 
+// sessionRepo creates the repository a document runs in, in the current
+// directory, with the identity a documented commit needs.
+const sessionRepo = `git init -q >/dev/null 2>&1
+git config user.email kibble@localhost >/dev/null 2>&1
+git config user.name kibble >/dev/null 2>&1
+`
+
+// documentEnd closes a document's shell. It first stops the background blocks
+// the document started, by process group, and waits up to five seconds for
+// each group to exit before killing what remains, so a later document that
+// serves on the same port finds it free rather than racing a server that is
+// still shutting down. A document that ran set -e cannot cut the wait short.
+const documentEnd = `for __p in ${KIBBLE_BG:-}; do kill -- -"$__p" >/dev/null 2>&1; done
+for __p in ${KIBBLE_BG:-}; do
+  wait "$__p" >/dev/null 2>&1 || true
+  __w=0
+  while kill -0 -- -"$__p" 2>/dev/null && [ "$__w" -lt 50 ]; do sleep 0.1; __w=$((__w+1)); done
+  kill -9 -- -"$__p" >/dev/null 2>&1 || true
+done
+)
+`
+
 // gitEditorPath is where the session writes the editor git opens.
 const gitEditorPath = "/tmp/kibble-git-editor"
 
@@ -81,10 +103,7 @@ mkdir -p "$GOBIN" /work/repo
 tar -xf - -C /work/repo >/dev/null 2>&1 || true
 exec </dev/null
 cd /work/repo
-git init -q >/dev/null 2>&1
-git config user.email kibble@localhost >/dev/null 2>&1
-git config user.name kibble >/dev/null 2>&1
-__pipecode() {
+` + sessionRepo + `__pipecode() {
   local last=${!#} i=1 c
   while [ "$i" -lt "$#" ]; do
     c=${!i}
@@ -132,7 +151,24 @@ if [ "$have" -eq 0 ]; then printf '\nKIBBLE-NOBIN\n'; exit 0; fi
 	for _, k := range sortedKeys(plan.Env) {
 		fmt.Fprintf(&b, "export %s='%s'\n", k, shellSafe(plan.Env[k]))
 	}
+	// Each document runs in a shell of its own, because the planner judges
+	// every document as if it started the session. A cd, a variable, a shell
+	// option or an exit in one document used to carry into the next, and a
+	// document after the first met the branches, remotes and services an
+	// earlier one left behind: a second `git remote add origin` exited 3 and a
+	// second server found its port taken. The parent shell never leaves the
+	// repository, and each document after the first starts with a repository
+	// as new as the one the first was given.
+	doc, opened := "", false
 	for _, s := range plan.Steps {
+		if !opened || s.Doc != doc {
+			if opened {
+				b.WriteString(documentEnd + "(\ncd /work/repo\nrm -rf .git\n" + sessionRepo)
+			} else {
+				b.WriteString("(\ncd /work/repo\n")
+			}
+			doc, opened = s.Doc, true
+		}
 		fmt.Fprintf(&b, "printf '"+markerLead+"KIBBLE-STEP %s START\\n'\n", s.ID)
 		if s.Background {
 			writeBackgroundStep(&b, s)
@@ -171,8 +207,10 @@ if [ "$have" -eq 0 ]; then printf '\nKIBBLE-NOBIN\n'; exit 0; fi
 				"printf '"+markerLead+"KIBBLE-LINE %s:%d CODE=%%d\\n' \"$(__pipecode \"${__ps[@]}\")\"\n", s.ID, i)
 		}
 	}
-	b.WriteString(`[ -n "${KIBBLE_BG:-}" ] && kill $KIBBLE_BG >/dev/null 2>&1
-printf '\nKIBBLE-DONE\n'
+	if opened {
+		b.WriteString(documentEnd)
+	}
+	b.WriteString(`printf '\nKIBBLE-DONE\n'
 `)
 	return b.String(), wrapped
 }
@@ -191,7 +229,11 @@ printf '\nKIBBLE-DONE\n'
 func writeBackgroundStep(b *strings.Builder, s kplan.PlanStep) {
 	log := "/tmp/kibble-" + s.ID + ".log"
 	status := "/tmp/kibble-" + s.ID + ".status"
-	fmt.Fprintf(b, ": > %s\n(\n", status)
+	// Monitor mode puts the block in a process group of its own, which is
+	// what lets the document's end stop the server inside it. Killing the
+	// block's own pid stopped only the subshell, and the server it was
+	// waiting on kept running and kept its port.
+	fmt.Fprintf(b, ": > %s\nset -m\n(\n", status)
 	for i, l := range s.Lines {
 		if l.Skip != "" {
 			continue
@@ -199,7 +241,7 @@ func writeBackgroundStep(b *strings.Builder, s kplan.PlanStep) {
 		b.WriteString(l.Cmd + "\n")
 		fmt.Fprintf(b, "printf 'KIBBLE-BG %s:%d CODE=%%d\\n' \"$?\" >> %s\n", s.ID, i, status)
 	}
-	fmt.Fprintf(b, ") >%s 2>&1 &\nKIBBLE_BG=\"${KIBBLE_BG:-} $!\"\n", log)
+	fmt.Fprintf(b, ") >%s 2>&1 &\nKIBBLE_BG=\"${KIBBLE_BG:-} $!\"\nset +m\n", log)
 	if s.ReadyLog != "" {
 		fmt.Fprintf(b, `ready=1
 for i in $(seq 1 30); do grep -q '%s' %s 2>/dev/null && ready=0 && break; sleep 1; done
