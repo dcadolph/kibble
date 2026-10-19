@@ -49,6 +49,9 @@ type PlanInstall struct {
 	// Ecosystem is the toolchain the command needs, empty when it is Go and
 	// the configured default image already provides it.
 	Ecosystem string `json:"ecosystem,omitempty"`
+	// Dir is the directory the install runs from, empty for the session's
+	// copy of the repository.
+	Dir string `json:"dir,omitempty"`
 	// binary is the tool this install is expected to provide. It exists to
 	// drop alternative installs of the same tool and is not part of output.
 	Binary string

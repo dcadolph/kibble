@@ -166,6 +166,54 @@ func TestDockerCloneBinaryOnShellPath(t *testing.T) {
 	}
 }
 
+// TestDockerSessionShellPath runs an example session whose install puts the
+// binary on PATH only through ~/.bashrc, as fzf's installer does, and runs it
+// from /work so a recipe's leftovers stay out of the repository copy. The
+// documented line runs the binary and the recipe's directory is absent from
+// the copy, so both lines pass only when both hold.
+func TestDockerSessionShellPath(t *testing.T) {
+	if testing.Short() {
+		t.Skip("container test skipped in short mode")
+	}
+	if os.Getenv("KIBBLE_INTEGRATION") == "" {
+		t.Skip("set KIBBLE_INTEGRATION=1 to run container tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := sandbox.Available(ctx); err != nil {
+		t.Skipf("docker is not reachable: %v", err)
+	}
+	recipe := strings.Join([]string{
+		"mkdir -p recipe-leftover ~/.tool/bin",
+		`printf '#!/bin/sh\necho tool ran\n' > ~/.tool/bin/tool`,
+		"chmod +x ~/.tool/bin/tool",
+		`echo 'PATH="$PATH:$HOME/.tool/bin"' >> ~/.bashrc`,
+	}, "\n")
+	plan := &kplan.Plan{
+		Repo:     "tool",
+		Binaries: []string{"tool"},
+		Installs: []kplan.PlanInstall{{Cmd: recipe, Dir: "/work"}},
+		Steps: []kplan.PlanStep{{ID: "b1", Lines: []kplan.PlanLine{
+			{Cmd: "tool | grep -x 'tool ran'"},
+			{Cmd: "test ! -e recipe-leftover"},
+		}}},
+	}
+	runner := &DockerRunner{Image: "golang:1.26", Timeout: 60 * time.Second}
+	step := InstallStep{Repo: "tool", Kind: "example", Run: true, plan: plan, dir: t.TempDir()}
+	res := runner.runExample(ctx, step)
+	if res.example == nil {
+		t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+	}
+	var got []Status
+	for _, l := range res.example.Steps[0].Lines {
+		got = append(got, l.Status)
+	}
+	want := []Status{StatusVerified, StatusVerified}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("line statuses mismatch (-want +got):\n%s\ndetail: %s", diff, res.Detail)
+	}
+}
+
 // TestDockerExampleSession replays a plan in a real container and checks that
 // every documented line reports its own result, including one whose output
 // ends without a newline. It is the end-to-end guard on the marker protocol,

@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+
+	kplan "github.com/dcadolph/kibble/internal/plan"
 )
 
 // TestAnyFail checks the exit-code logic, including strict mode.
@@ -218,4 +220,57 @@ func mustWD(t *testing.T) string {
 		t.Fatalf("getwd: %v", err)
 	}
 	return wd
+}
+
+// TestSessionInstallsClone checks when a clone recipe becomes the session's
+// install. fzf documents only package managers kibble does not run and its own
+// clone-and-install script, so without the recipe its examples never ran.
+func TestSessionInstallsClone(t *testing.T) {
+	t.Parallel()
+	clone := func(repo, url string, block ...string) InstallStep {
+		return InstallStep{Repo: repo, Kind: "git-clone", Module: url, Block: block}
+	}
+	const fzfURL = "https://github.com/junegunn/fzf.git"
+	fzf := clone("fzf", fzfURL, "git clone --depth 1 "+fzfURL+" ~/.fzf", "~/.fzf/install")
+	goFzf := InstallStep{Repo: "fzf", Kind: "go-install", Module: "github.com/junegunn/fzf@latest"}
+	ssh := clone("tool", "git@github.com:o/tool.git", "git clone git@github.com:o/tool.git")
+	tpm := clone("dotfiles", "https://github.com/tmux-plugins/tpm",
+		"git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm")
+	cargo := clone("tool", "https://github.com/o/tool",
+		"git clone https://github.com/o/tool", "cd tool && cargo build")
+	tests := []struct {
+		Steps        []InstallStep
+		WantInstalls []kplan.PlanInstall
+	}{{ // Test 0: The fzf README: a self clone and nothing kibble runs.
+		Steps: []InstallStep{{Repo: "fzf", Kind: "brew", Module: "fzf"}, fzf},
+		WantInstalls: []kplan.PlanInstall{{
+			Cmd: "git clone --depth 1 " + fzfURL + " ~/.fzf\n~/.fzf/install", Dir: "/work",
+		}},
+	}, { // Test 1: An SSH clone is rewritten as the standalone step rewrites it.
+		Steps:        []InstallStep{ssh},
+		WantInstalls: []kplan.PlanInstall{{Cmd: "git clone https://github.com/o/tool.git", Dir: "/work"}},
+	}, { // Test 2: A Go install is cheaper and already handled, so it wins.
+		Steps:        []InstallStep{fzf, goFzf},
+		WantInstalls: []kplan.PlanInstall{{Cmd: "go install " + goFzf.Module, Ecosystem: "go"}},
+	}, { // Test 3: Cloning another repository installs nothing the examples call.
+		Steps: []InstallStep{tpm},
+	}, { // Test 4: Two self clones are two routes to one tool, so the first is used.
+		Steps: []InstallStep{cargo, clone("tool", "https://github.com/o/tool.git", "git clone x")},
+		WantInstalls: []kplan.PlanInstall{{
+			Cmd: "git clone https://github.com/o/tool\ncd tool && cargo build", Ecosystem: "rust",
+			Dir: "/work",
+		}},
+	}, { // Test 5: A clone step without a recipe has nothing to run.
+		Steps: []InstallStep{clone("tool", "https://github.com/o/tool.git")},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			_, got := sessionInstalls(t.TempDir(), test.Steps)
+			opts := []cmp.Option{cmpopts.EquateEmpty(), cmpopts.IgnoreFields(kplan.PlanInstall{}, "Binary")}
+			if diff := cmp.Diff(test.WantInstalls, got, opts...); diff != "" {
+				t.Errorf("installs mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
 }
