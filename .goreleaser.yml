@@ -47,7 +47,7 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
     homepage: https://github.com/dcadolph/kibble
-    description: Run a README's documented install steps in a clean container so broken docs fail in CI
+    description: Replay documented installs and examples in a clean container to catch doc rot
     hooks:
       post:
         install: |

@@ -92,6 +92,12 @@ is the one worth making, because it is the one kibble can actually settle.
 ## Install
 
 ```sh
+brew install dcadolph/tap/kibble
+```
+
+Or, with a Go toolchain:
+
+```sh
 go install github.com/dcadolph/kibble@latest
 ```
 
