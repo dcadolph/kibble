@@ -172,13 +172,15 @@ func documentedBinary(markdown string, known map[string]bool) string {
 
 // InvokedBinary returns the documented binary a line invokes and its first
 // subcommand, or empty strings when the line invokes none. Leading VAR=value
-// prefixes are stepped over, so `KEY=x tool sub` still names the tool.
+// prefixes are stepped over, so `KEY=x tool sub` still names the tool, and so
+// are wrappers such as env and xargs, so `env KEY=x tool sub` does too.
 func InvokedBinary(flat string, binaries map[string]bool) (string, string) {
 	line, ok := shell.Parse(flat)
 	if !ok {
 		return "", ""
 	}
 	for _, c := range line.Cmds {
+		c = shell.Invoked(c)
 		// Assignment prefixes are not words, so the parser has already set
 		// them aside and `KEY=x tool sub` names the tool without stepping.
 		if !binaries[c.Name()] {

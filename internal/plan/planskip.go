@@ -72,8 +72,12 @@ func (pl *planner) skipReason(cmd, flat string) (string, verdict.Reason, bool) {
 	if hasBareStdinDash(flat) {
 		return "reads stdin, which the session does not provide", verdict.ReasonInteractive, false
 	}
-	if reGitState.MatchString(flat) {
-		return "needs git history or a remote, which the fresh session repo lacks",
+	if gitReadsRepo(flat, pl.staged) {
+		return "reads the git repository, which in the session is one kibble made rather than the reader's",
+			verdict.ReasonMissingFixture, false
+	}
+	if namesRemoteRef(flat) {
+		return "names a remote ref, and the session's repository is one kibble made with no remotes",
 			verdict.ReasonMissingFixture, false
 	}
 	if dir := systemCd(flat); dir != "" {
