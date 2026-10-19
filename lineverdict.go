@@ -216,11 +216,14 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 }
 
 var (
-	// reTTYErr matches errors that mean the command needed a terminal.
+	// reTTYErr matches errors that mean the command needed a terminal. The last
+	// is the text of ENOTTY, which a terminal call returns on anything that is
+	// not one. It is all fzf prints when it has no terminal to draw on, and
+	// before it was matched every interactive fzf line in the README failed.
 	reTTYErr = regexp.MustCompile(
 		`(?i)/dev/tty|not a (tty|terminal)|terminal is required|requires a terminal|no tty` +
 			`|needs an interactive terminal|interactive terminal|must be run interactively` +
-			`|not interactive|requires a controlling terminal`)
+			`|not interactive|requires a controlling terminal|inappropriate ioctl for device`)
 	// reCredErr matches errors that mean the command needed credentials a
 	// clean container cannot have.
 	reCredErr = regexp.MustCompile(
