@@ -17,6 +17,25 @@ import (
 // decisions about what may be wrapped in a timeout or moved into its own
 // shell live here, because both change what a documented line means.
 
+// gitEditorPath is where the session writes the editor git opens.
+const gitEditorPath = "/tmp/kibble-git-editor"
+
+// commitEditor is the editor git opens in the session. A reader asked for a
+// commit message types one, and an editor that saves nothing makes git abort
+// a documented `git commit` that works for every reader. When the message is
+// empty it writes kibble as the subject. Only the part above the scissors line
+// that commit -v adds is the message, since the diff below it is discarded.
+// Any other file git hands over, such as the patch add -e edits, is left as
+// it was, which is all the editor true ever did.
+const commitEditor = `#!/bin/sh
+case "$1" in
+COMMIT_EDITMSG|*/COMMIT_EDITMSG)
+  if ! sed '/^# -* >8 -*$/,$d' "$1" | grep -q '^[[:space:]]*[^#[:space:]]'; then
+    { printf 'kibble\n'; cat "$1"; } > "$1.kibble" && mv "$1.kibble" "$1"
+  fi ;;
+esac
+`
+
 // redirectDirs returns the parent directories of a line's redirect targets,
 // for targets nested under a directory. Docs redirect into standard user
 // directories such as ~/.local/share that exist on real systems, so the
@@ -52,7 +71,10 @@ func sessionScript(plan *kplan.Plan, installSecs, lineSecs int) (string, map[str
 	var b strings.Builder
 	b.WriteString(`export GOBIN="$(go env GOPATH 2>/dev/null || echo /root/go)/bin"
 export PATH="$GOBIN:$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
-export EDITOR=true VISUAL=true GIT_EDITOR=true
+export EDITOR=true VISUAL=true GIT_EDITOR=` + gitEditorPath + `
+cat > ` + gitEditorPath + ` <<'KIBBLE-EDITOR'
+` + commitEditor + `KIBBLE-EDITOR
+chmod +x ` + gitEditorPath + `
 export GIT_TERMINAL_PROMPT=0
 export DEBIAN_FRONTEND=noninteractive
 mkdir -p "$GOBIN" /work/repo
