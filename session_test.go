@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
+	kplan "github.com/dcadolph/kibble/internal/plan"
 )
 
 // TestCommitEditor runs git against the editor the session installs, one
@@ -168,4 +170,75 @@ func runGit(dir, editor string, args ...string) (string, error) {
 		return string(out), err
 	}
 	return string(out), nil
+}
+
+// TestSessionScriptDocuments checks that each document gets a shell of its
+// own and that every document after the first gets a new repository, while a
+// session of one document keeps the repository the preamble made.
+func TestSessionScriptDocuments(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Docs       []string
+		WantShells int
+		WantResets int
+	}{{ // Test 0: One document across two blocks.
+		Docs:       []string{"README.md", "README.md"},
+		WantShells: 1, WantResets: 0,
+	}, { // Test 1: Two documents.
+		Docs:       []string{"README.md", "docs/guide.md", "docs/guide.md"},
+		WantShells: 2, WantResets: 1,
+	}, { // Test 2: Three documents.
+		Docs:       []string{"README.md", "docs/a.md", "docs/b.md"},
+		WantShells: 3, WantResets: 2,
+	}, { // Test 3: No blocks.
+		WantShells: 0, WantResets: 0,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := &kplan.Plan{Repo: "repo", Installs: []kplan.PlanInstall{{Cmd: "true"}}}
+			for i, doc := range test.Docs {
+				plan.Steps = append(plan.Steps, kplan.PlanStep{
+					ID: fmt.Sprintf("b%d", i+1), Doc: doc,
+					Lines: []kplan.PlanLine{{Cmd: "echo hi"}},
+				})
+			}
+			script, _ := sessionScript(plan, 240, 90)
+			got := []int{
+				strings.Count(script, "(\ncd /work/repo\n"),
+				strings.Count(script, documentEnd),
+				strings.Count(script, "rm -rf .git\n"+sessionRepo),
+			}
+			want := []int{test.WantShells, test.WantShells, test.WantResets}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("shells, ends, resets mismatch (-want +got):\n%s\n%s", diff, script)
+			}
+			// The repository is replaced between documents, never inside one.
+			for i := 1; i < len(test.Docs); i++ {
+				prev := strings.Index(script, fmt.Sprintf("KIBBLE-STEP b%d START", i))
+				next := strings.Index(script, fmt.Sprintf("KIBBLE-STEP b%d START", i+1))
+				reset := strings.Contains(script[prev:next], "rm -rf .git")
+				if diff := cmp.Diff(test.Docs[i] != test.Docs[i-1], reset); diff != "" {
+					t.Errorf("reset before b%d mismatch (-want +got):\n%s", i+1, diff)
+				}
+			}
+		})
+	}
+}
+
+// TestSessionScriptBackgroundGroup checks that a background block starts in a
+// process group of its own, which is what the document's end kills.
+func TestSessionScriptBackgroundGroup(t *testing.T) {
+	t.Parallel()
+	plan := &kplan.Plan{
+		Repo:     "repo",
+		Installs: []kplan.PlanInstall{{Cmd: "true"}},
+		Steps:    []kplan.PlanStep{{ID: "b1", Background: true, Lines: []kplan.PlanLine{{Cmd: "tool serve"}}}},
+	}
+	script, _ := sessionScript(plan, 240, 90)
+	for _, want := range []string{"set -m\n(\n", "KIBBLE_BG=\"${KIBBLE_BG:-} $!\"\nset +m\n", `kill -- -"$__p"`} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %q", want)
+		}
+	}
 }
