@@ -91,7 +91,14 @@ func redirectDirs(flat string) []string {
 func sessionScript(plan *kplan.Plan, installSecs, lineSecs int) (string, map[string]bool) {
 	wrapped := map[string]bool{}
 	var b strings.Builder
-	b.WriteString(`export GOBIN="$(go env GOPATH 2>/dev/null || echo /root/go)/bin"
+	// Standard error joins standard output before anything runs. Docker
+	// carries the two as separate streams and does not keep their order, so a
+	// line's errors could arrive after the marker that closes it. The line
+	// then read as silent and settled nothing, and its errors were charged to
+	// the line after it: ripgrep's pre-rg line came back GAP on one run and
+	// BLOCKED on the next from the same code.
+	b.WriteString(`exec 2>&1
+export GOBIN="$(go env GOPATH 2>/dev/null || echo /root/go)/bin"
 export PATH="$GOBIN:$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 export EDITOR=true VISUAL=true GIT_EDITOR=` + gitEditorPath + `
 cat > ` + gitEditorPath + ` <<'KIBBLE-EDITOR'
