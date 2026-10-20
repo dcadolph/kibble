@@ -53,6 +53,29 @@ func TestReplayDocs(t *testing.T) {
 		Files: map[string]string{"README.md": shell, "docs/wip.md": shell},
 		Cfg:   &config.ExamplesConfig{SkipDocs: []string{"docs/wip.md", "README.md"}},
 		Want:  []string{"README.md"},
+	}, { // Test 7: a versioned directory beside unversioned docs is old.
+		Files: map[string]string{"README.md": shell, "docs/@v1/a.md": shell, "docs/b.md": shell},
+		Want:  []string{"README.md", "docs/b.md"},
+	}, { // Test 8: with only versioned siblings the highest is current.
+		Files: map[string]string{"README.md": shell, "docs/v1/a.md": shell, "docs/v2/a.md": shell},
+		Want:  []string{"README.md", "docs/v2/a.md"},
+	}, { // Test 9: a 1.x directory beside a named guide directory is old.
+		Files: map[string]string{"README.md": shell, "docs/1.x/a.md": shell,
+			"docs/guide/a.md": shell},
+		Want: []string{"README.md", "docs/guide/a.md"},
+	}, { // Test 10: a versioned_docs tree is never selected.
+		Files: map[string]string{"README.md": shell, "versioned_docs/version-1.2/a.md": shell,
+			"docs/versioned_docs/version-1.2/a.md": shell},
+		Want: []string{"README.md"},
+	}, { // Test 11: a snippets directory with no markdown is not the current
+		// docs, so the highest version still wins.
+		Files: map[string]string{"README.md": shell, "docs/@v1/a.md": shell,
+			"docs/@v2/a.md": shell, "docs/_code-snippets/rules.yaml": "a: 1\n"},
+		Want: []string{"README.md", "docs/@v2/a.md"},
+	}, { // Test 12: directories named for years are not versions.
+		Files: map[string]string{"README.md": shell, "docs/2023/a.md": shell,
+			"docs/2024/a.md": shell},
+		Want: []string{"README.md", "docs/2023/a.md", "docs/2024/a.md"},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
