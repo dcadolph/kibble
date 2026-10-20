@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -274,5 +275,47 @@ func TestSessionScriptNewShellPath(t *testing.T) {
 	bare, _ := sessionScript(&kplan.Plan{Repo: "repo"}, 240, 90)
 	if strings.Contains(bare, newShellPath) {
 		t.Error("session without installs gained the new-shell PATH step")
+	}
+}
+
+// TestPipecode runs the session's __pipecode function under bash for each
+// list of pipeline exit codes. A 127 or 126 anywhere is the result, because a
+// missing or unrunnable command must not hide behind an earlier failure.
+func TestPipecode(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is not installed")
+	}
+	script, _ := sessionScript(&kplan.Plan{Repo: "repo"}, 240, 90)
+	fn := regexp.MustCompile(`(?s)__pipecode\(\) \{\n.*?\n\}\n`).FindString(script)
+	if fn == "" {
+		t.Fatalf("script missing the __pipecode function:\n%s", script)
+	}
+	tests := []struct {
+		In         string
+		WantResult string
+	}{
+		{In: "0 0", WantResult: "0"},       // Test 0: All zero.
+		{In: "1 0", WantResult: "1"},       // Test 1: First failure wins.
+		{In: "141 0", WantResult: "0"},     // Test 2: SIGPIPE is ignored.
+		{In: "120 127", WantResult: "127"}, // Test 3: A 127 after another failure wins.
+		{In: "23 127", WantResult: "127"},  // Test 4: A 127 last wins.
+		{In: "0 1 127", WantResult: "127"}, // Test 5: A 127 after a failure wins.
+		{In: "126 1", WantResult: "126"},   // Test 6: A leading 126 wins.
+		{In: "1 126", WantResult: "126"},   // Test 7: A trailing 126 wins.
+		{In: "127 1", WantResult: "127"},   // Test 8: A leading 127 wins.
+		{In: "0 141 2", WantResult: "2"},   // Test 9: SIGPIPE skipped, then the last.
+	}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			out, err := exec.Command("bash", "-c", fn+"__pipecode "+test.In).Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(test.WantResult, string(out)); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
