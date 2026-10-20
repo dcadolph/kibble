@@ -112,6 +112,9 @@ exec </dev/null
 cd /work/repo
 ` + sessionRepo + `__pipecode() {
   local last=${!#} i=1 c
+  for c in "$@"; do
+    if [ "$c" -eq 127 ] || [ "$c" -eq 126 ]; then printf '%s' "$c"; return; fi
+  done
   while [ "$i" -lt "$#" ]; do
     c=${!i}
     if [ "$c" -ne 0 ] && [ "$c" -ne 141 ]; then printf '%s' "$c"; return; fi
