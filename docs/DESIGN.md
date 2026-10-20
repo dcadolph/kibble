@@ -70,6 +70,11 @@ that happened to sit on the image's path already, so a package that installs not
 cannot borrow a stock tool's success. A local build such as `cargo install --path .` is
 left to the clone recipe, which already covers it.
 
+A `VERIFIED` install row also carries `version` and `latest` when the version the binary
+reported is one of the repository's release tags. The table marks the row `behind` when
+that version is older than the newest tag. This changes no verdict, since registries lag
+tags by design.
+
 ## The brew doctrine
 
 A brew step is looked up in its tap by default: the formula API, the cask index, and the

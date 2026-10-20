@@ -72,6 +72,8 @@ func reportJSON(w io.Writer, results []Result) {
 		Module   string      `json:"module,omitempty"`
 		Image    string      `json:"image,omitempty"`
 		Smoke    string      `json:"smoke,omitempty"`
+		Version  string      `json:"version,omitempty"`
+		Latest   string      `json:"latest,omitempty"`
 		Detail   string      `json:"detail,omitempty"`
 		Evidence evidenceRow `json:"evidence"`
 		Steps    []stepRow   `json:"steps,omitempty"`
@@ -87,6 +89,7 @@ func reportJSON(w io.Writer, results []Result) {
 			Seconds: int(r.Duration.Round(time.Second).Seconds()),
 			Module:  r.Step.Module, Image: r.Image,
 			Smoke: r.SmokeLine, Detail: r.Detail,
+			Version: r.Version, Latest: r.Latest,
 		}
 		var synthetic []string
 		if r.example != nil {
@@ -153,6 +156,9 @@ func reportTable(w io.Writer, results []Result) {
 		// one finding instead of many, so it must not be the part cut off.
 		if n := shared[sharedCauseKey(r)]; n > 1 {
 			detail = fmt.Sprintf("%s %s", detail, c.dim(fmt.Sprintf("[%d documents]", n)))
+		}
+		if note := versionNote(r); note != "" {
+			detail = fmt.Sprintf("%s %s", detail, c.dim(note))
 		}
 		if r.Image != "" {
 			detail += c.dim(fmt.Sprintf("  (%s)", r.Image))
@@ -368,6 +374,18 @@ func sharedCauseKey(r Result) string {
 		detail = strings.TrimPrefix(detail, r.Step.doc+": ")
 	}
 	return strings.Join([]string{r.Step.Repo, r.Step.Kind, string(r.Status), string(r.Reason), detail}, "\x00")
+}
+
+// versionNote returns "behind <Latest>" when the installed version is older than the
+// repository's newest release tag, and the empty string otherwise.
+func versionNote(r Result) string {
+	if r.Latest == "" {
+		return ""
+	}
+	if compareParts(parts(r.Version), parts(strings.TrimPrefix(r.Latest, "v"))) < 0 {
+		return "behind " + r.Latest
+	}
+	return ""
 }
 
 // sharedCauseCounts counts how many results share each cause.
