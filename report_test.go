@@ -140,3 +140,88 @@ func TestWrapDetail(t *testing.T) {
 		})
 	}
 }
+
+// TestVersionNote checks the table and JSON mark an install that is older than the newest
+// release tag, and say nothing when the versions match or nothing was compared.
+func TestVersionNote(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Version string
+		Latest  string
+		Want    string
+	}{{ // Test 0: the rich-cli pair, older than the newest tag.
+		Version: "1.8.0", Latest: "v1.8.1", Want: "behind v1.8.1",
+	}, { // Test 1: a match renders nothing.
+		Version: "1.8.1", Latest: "v1.8.1",
+	}, { // Test 2: a tag without a v prefix.
+		Version: "15.1.0", Latest: "15.2.0", Want: "behind 15.2.0",
+	}, { // Test 3: nothing was compared.
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			r := Result{
+				Step:   InstallStep{Repo: "demo", Kind: "go-install"},
+				Status: StatusVerified, Version: test.Version, Latest: test.Latest,
+			}
+			if diff := cmp.Diff(test.Want, versionNote(r)); diff != "" {
+				t.Errorf("note mismatch (-want +got):\n%s", diff)
+			}
+			var buf bytes.Buffer
+			reportTable(&buf, []Result{r})
+			if got := strings.Contains(buf.String(), "behind"); got != (test.Want != "") {
+				t.Errorf("table behind = %v, want note %q:\n%s", got, test.Want, buf.String())
+			}
+		})
+	}
+}
+
+// TestReportJSONVersionFields checks the version fields appear only when both were set.
+func TestReportJSONVersionFields(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Result      Result
+		WantVersion bool
+	}{{ // Test 0: both fields set print both.
+		Result: Result{
+			Step:   InstallStep{Repo: "demo", Kind: "go-install"},
+			Status: StatusVerified, Version: "1.8.0", Latest: "v1.8.1",
+		},
+		WantVersion: true,
+	}, { // Test 1: neither set prints neither.
+		Result: Result{
+			Step:   InstallStep{Repo: "demo", Kind: "go-install"},
+			Status: StatusVerified,
+		},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			reportJSON(&buf, []Result{test.Result})
+			out := buf.String()
+			has := strings.Contains(out, `"version": "1.8.0"`) &&
+				strings.Contains(out, `"latest": "v1.8.1"`)
+			if has != test.WantVersion {
+				t.Errorf("version fields present = %v, want %v:\n%s", has, test.WantVersion, out)
+			}
+			if !test.WantVersion && (strings.Contains(out, `"version"`) || strings.Contains(out, `"latest"`)) {
+				t.Errorf("empty fields should be omitted:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestSharedCauseKeyIgnoresVersion checks the version fields do not split a shared cause.
+func TestSharedCauseKeyIgnoresVersion(t *testing.T) {
+	t.Parallel()
+	base := Result{
+		Step:   InstallStep{Repo: "demo", Kind: "go-install"},
+		Status: StatusVerified, Detail: "ok",
+	}
+	withVersion := base
+	withVersion.Version, withVersion.Latest = "1.8.0", "v1.8.1"
+	if diff := cmp.Diff(sharedCauseKey(base), sharedCauseKey(withVersion)); diff != "" {
+		t.Errorf("key mismatch (-base +versioned):\n%s", diff)
+	}
+}

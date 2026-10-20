@@ -103,9 +103,13 @@ func writeStepSummary(results []Result) {
 		if detail == "" {
 			detail = r.SmokeLine
 		}
+		detail = truncate(detail, 80)
+		if note := versionNote(r); note != "" {
+			detail += " " + note
+		}
 		_, _ = fmt.Fprintf(f, "| %s | %s | %s | %s | %s |\n",
 			r.Step.Repo, r.Step.Kind, statusBadge(r.Status),
-			r.Duration.Round(time.Second), strings.ReplaceAll(truncate(detail, 80), "|", "\\|"))
+			r.Duration.Round(time.Second), strings.ReplaceAll(detail, "|", "\\|"))
 	}
 	_, _ = fmt.Fprintln(f)
 }
