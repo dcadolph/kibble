@@ -42,6 +42,11 @@ type checkRow struct {
 	Detail string `json:"detail,omitempty"`
 	// Document is the file an example step replayed, when it is not the README.
 	Document string `json:"document,omitempty"`
+	// Version is the release the installed binary reported, when it is one of the
+	// repository's release tags.
+	Version string `json:"version,omitempty"`
+	// Latest is the repository's newest release tag as spelled, set alongside Version.
+	Latest string `json:"latest,omitempty"`
 }
 
 // planInput asks what a run would do, without doing it.
@@ -161,16 +166,19 @@ func checkToolFor(cfg runOptions) func(context.Context, *mcpsdk.CallToolRequest,
 		if strings.TrimSpace(in.Path) == "" {
 			return nil, checkOutput{}, fmt.Errorf("path is required")
 		}
-		steps, _, problems := collect([]string{in.Path}, true)
+		paths := []string{in.Path}
+		steps, _, problems := collect(paths, true)
 		if hasRunnable(steps) {
 			if err := sandbox.Available(ctx); err != nil {
 				return nil, checkOutput{}, fmt.Errorf("kibble needs Docker to run install steps: %w", err)
 			}
 		}
+		tags := startTagLookup(ctx, paths, steps)
 		runner := &DockerRunner{Image: cfg.Image, Timeout: cfg.Timeout, BrewInstall: cfg.BrewInstall}
 		results := runAll(ctx, runner, steps, cfg.Workers)
 		results = append(results, flagChecks(results)...)
 		results = append(results, docCoverageChecks(results)...)
+		annotateVersions(results, <-tags)
 		results = append(results, problems...)
 
 		out := checkOutput{Pass: !anyFail(results, in.Strict)}
@@ -181,6 +189,7 @@ func checkToolFor(cfg runOptions) func(context.Context, *mcpsdk.CallToolRequest,
 			out.Checks = append(out.Checks, checkRow{
 				Kind: r.Step.Kind, Status: string(r.Status),
 				Detail: r.Detail, Document: r.Step.doc,
+				Version: r.Version, Latest: r.Latest,
 			})
 		}
 		out.Summary = fmt.Sprintf("%d pass, %d fail, %d gap, of %d checks",

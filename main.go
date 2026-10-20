@@ -140,6 +140,7 @@ func main() {
 		}
 	}
 
+	tags := startTagLookup(ctx, paths, steps)
 	runner := &DockerRunner{Image: cfg.Image, Timeout: cfg.Timeout, BrewInstall: cfg.BrewInstall}
 	results := runAll(ctx, runner, steps, cfg.Workers)
 	if ctx.Err() != nil {
@@ -148,6 +149,7 @@ func main() {
 	}
 	results = append(results, flagChecks(results)...)
 	results = append(results, docCoverageChecks(results)...)
+	annotateVersions(results, <-tags)
 	results = append(results, problems...)
 
 	report(os.Stdout, results, cfg.JSON)

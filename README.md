@@ -219,6 +219,11 @@ unverified step, a drift, or a gap all count when you demand proof. The full rea
 including why a check that cries wolf is worse than no check, is in
 [docs/DESIGN.md](docs/DESIGN.md).
 
+A `VERIFIED` install row also carries `version` and `latest` in the JSON when the
+version the binary reported is one of the repository's release tags. The table marks
+the row `behind` when that version is older than the newest tag. This changes no
+verdict, since registries lag tags by design.
+
 ## Why believe any of it
 
 A verifier is worth exactly what its false positives and false negatives are worth, so

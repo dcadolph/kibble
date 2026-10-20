@@ -29,6 +29,12 @@ type Result struct {
 	Duration time.Duration
 	// SmokeLine is the first line the installed binary printed.
 	SmokeLine string
+	// Version is the release the installed binary reported, set only when it
+	// is one of the repository's release tags.
+	Version string
+	// Latest is the repository's newest release tag as spelled, set only
+	// alongside Version.
+	Latest string
 	// Detail carries the error tail on failure or a note otherwise.
 	Detail string
 	// Image is the container image kibble selected for the step's toolchain,
