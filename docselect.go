@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -49,6 +50,73 @@ var skipDirs = map[string]bool{
 	"dist": true, "build": true, "public": true, "site": true, "target": true,
 	"adr": true, "decisions": true, "rfcs": true, "internal": true,
 	"dev": true, "development": true, "contributing": true, "maintainers": true,
+	"versioned_docs": true,
+}
+
+// versionDirPattern matches a directory name that is only a version, such as
+// @v1, v1, v1.x, 1.x, or 1.0. A bare integer needs a v prefix, since a
+// directory named for a year or an issue number is not a version.
+var versionDirPattern = regexp.MustCompile(`^(@?v\d+(\.\d+)*(\.x)?|\d+(\.\d+)*\.x|\d+(\.\d+)+)$`)
+
+// versionParts returns the numeric parts of a version-named directory, with
+// the prefix and a trailing .x removed.
+func versionParts(name string) []int {
+	return parts(strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(name, "@"), "v"), ".x"))
+}
+
+// staleVersionDir reports whether the directory name under parent is a
+// version-named directory that does not hold the current docs. A bare version
+// directory is stale when any sibling directory or markdown file is not
+// version-named, because the unversioned tree is the current docs. When every
+// sibling is version-named, only the highest version is current. Hidden
+// entries, entries that are neither directories nor markdown files, and
+// unversioned directories with no markdown beneath them are ignored, since a
+// snippets or assets directory is not a docs tree.
+func staleVersionDir(parent string, name string) bool {
+	if !versionDirPattern.MatchString(name) {
+		return false
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return false
+	}
+	self := versionParts(name)
+	stale := false
+	for _, e := range entries {
+		if e.Name() == name || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if !e.IsDir() && strings.ToLower(filepath.Ext(e.Name())) != ".md" {
+			continue
+		}
+		if e.IsDir() && !versionDirPattern.MatchString(e.Name()) &&
+			!holdsMarkdown(filepath.Join(parent, e.Name())) {
+			continue
+		}
+		if !e.IsDir() || !versionDirPattern.MatchString(e.Name()) {
+			return true
+		}
+		if compareParts(versionParts(e.Name()), self) > 0 {
+			stale = true
+		}
+	}
+	return stale
+}
+
+// holdsMarkdown reports whether any markdown file sits under dir.
+func holdsMarkdown(dir string) bool {
+	found := false
+	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() && strings.ToLower(filepath.Ext(d.Name())) == ".md" {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 // replayDocs returns the documents whose examples are replayed, as paths
@@ -72,6 +140,9 @@ func replayDocs(dir, readme string, cfg *config.ExamplesConfig) []string {
 		}
 		if d.IsDir() {
 			if path != dir && skipDirs[strings.ToLower(d.Name())] {
+				return filepath.SkipDir
+			}
+			if path != dir && staleVersionDir(filepath.Dir(path), d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
