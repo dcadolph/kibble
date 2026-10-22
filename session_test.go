@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/dcadolph/kibble/internal/config"
 	kplan "github.com/dcadolph/kibble/internal/plan"
 )
 
@@ -199,6 +200,8 @@ func TestSessionScriptDocuments(t *testing.T) {
 			t.Parallel()
 			plan := &kplan.Plan{
 				Repo: "repo", Installs: []kplan.PlanInstall{{Cmd: "true"}}, Binaries: []string{"tool"},
+				Env:      map[string]string{"KIBBLE_TEST": "1"},
+				Fixtures: []config.Fixture{{Path: "notes.txt", Contents: "x"}},
 			}
 			for i, doc := range test.Docs {
 				plan.Steps = append(plan.Steps, kplan.PlanStep{
@@ -211,7 +214,7 @@ func TestSessionScriptDocuments(t *testing.T) {
 				strings.Count(script, "(\ncd /work/repo\n"),
 				strings.Count(script, documentEnd),
 				strings.Count(script, "rm -rf .git\n"+sessionRepo),
-				strings.Count(script, binaryRestore+"rm -rf .git\n"+sessionRepo),
+				strings.Count(script, binaryRestore+treeRestore+"rm -rf .git\n"+sessionRepo),
 			}
 			want := []int{test.WantShells, test.WantShells, test.WantResets, test.WantResets}
 			if diff := cmp.Diff(want, got); diff != "" {
@@ -228,6 +231,24 @@ func TestSessionScriptDocuments(t *testing.T) {
 				first := strings.Index(script, "KIBBLE-STEP b1 START")
 				if stash < have || stash > first {
 					t.Errorf("stash at %d, want after the HAVE loop (%d) and before b1 (%d)", stash, have, first)
+				}
+			}
+			// The tree is archived after the fixtures and the exports and before
+			// any document opens, and only when there is a boundary to restore at.
+			save := strings.Index(script, treeSave)
+			if diff := cmp.Diff(test.WantResets > 0, save >= 0); diff != "" {
+				t.Errorf("tree archive present mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantResets, strings.Count(script, treeRestore)); diff != "" {
+				t.Errorf("tree restores mismatch (-want +got):\n%s", diff)
+			}
+			if save >= 0 {
+				fixture := strings.Index(script, "base64 -d > 'notes.txt'")
+				export := strings.Index(script, "export KIBBLE_TEST='1'")
+				first := strings.Index(script, "(\ncd /work/repo\n")
+				if save < fixture || save < export || save > first {
+					t.Errorf("archive at %d, want after the fixture (%d) and export (%d) and before "+
+						"the first document (%d)", save, fixture, export, first)
 				}
 			}
 			// The repository is replaced between documents, never inside one.
