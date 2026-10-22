@@ -20,7 +20,7 @@ import (
 // Substitutions have already been applied, so a placeholder that survives
 // here is one the reader was meant to fill in.
 func (pl *planner) skipReason(cmd, flat string) (string, verdict.Reason, bool) {
-	if rePlaceholder.MatchString(docblock.CommandHead(flat)) {
+	if docblock.HasPlaceholder(docblock.CommandHead(flat)) {
 		return "docs use a placeholder the reader must fill in", verdict.ReasonPlaceholder, false
 	}
 	// Asked before the rules that read the line as shell, and after the
