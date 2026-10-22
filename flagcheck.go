@@ -45,6 +45,17 @@ var (
 	// reSubName matches a plausible subcommand name.
 )
 
+// proseFences holds the fence languages whose content is prose or data rather
+// than shell, keyed by lowercase name. A sentence inside a markdown fence that
+// happens to start with a binary name is not an invocation, so extractUsage
+// skips these blocks.
+var proseFences = map[string]bool{
+	"markdown": true, "md": true, "mdx": true, "text": true, "txt": true,
+	"plain": true, "plaintext": true, "json": true, "jsonc": true, "json5": true,
+	"yaml": true, "yml": true, "toml": true, "ini": true, "html": true,
+	"xml": true, "csv": true, "diff": true, "patch": true,
+}
+
 // extractUsage scans a README's code lines and returns the flags and
 // subcommands cited for each named binary. Only lines that invoke the binary
 // by name are considered, so flags of other tools do not count.
@@ -53,7 +64,14 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 	flagSeen := map[string]bool{}
 	subSeen := map[string]bool{}
 	flagged := map[string]bool{}
-	for _, line := range docblock.CodeLines(markdown) {
+	var codeLines []string
+	for _, b := range docblock.CodeBlocks(markdown) {
+		if proseFences[strings.ToLower(b.Lang)] {
+			continue
+		}
+		codeLines = append(codeLines, b.Lines...)
+	}
+	for _, line := range codeLines {
 		line = stripComment(line)
 		for _, seg := range splitSegments(line) {
 			// A synopsis such as `tool schedule [add <workflow> --every <dur>]`
