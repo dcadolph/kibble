@@ -228,11 +228,11 @@ func mustWD(t *testing.T) string {
 func TestSessionInstallsClone(t *testing.T) {
 	t.Parallel()
 	clone := func(repo, url string, block ...string) InstallStep {
-		return InstallStep{Repo: repo, Kind: "git-clone", Module: url, Block: block}
+		return InstallStep{Repo: repo, Kind: "git-clone", Module: url, Block: block, Run: true}
 	}
 	const fzfURL = "https://github.com/junegunn/fzf.git"
 	fzf := clone("fzf", fzfURL, "git clone --depth 1 "+fzfURL+" ~/.fzf", "~/.fzf/install")
-	goFzf := InstallStep{Repo: "fzf", Kind: "go-install", Module: "github.com/junegunn/fzf@latest"}
+	goFzf := InstallStep{Repo: "fzf", Kind: "go-install", Module: "github.com/junegunn/fzf@latest", Run: true}
 	ssh := clone("tool", "git@github.com:o/tool.git", "git clone git@github.com:o/tool.git")
 	tpm := clone("dotfiles", "https://github.com/tmux-plugins/tpm",
 		"git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm")

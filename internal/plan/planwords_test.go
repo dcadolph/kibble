@@ -164,38 +164,6 @@ func TestMissingFileReaderInputs(t *testing.T) {
 	}
 }
 
-// TestRePlaceholderOrgPaths checks that a repository URL naming a stand-in
-// owner is a placeholder and one naming a real owner is not.
-func TestRePlaceholderOrgPaths(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		In   string
-		Want bool
-	}{{ // Test 0: the example owner is a stand-in.
-		In: `lla install --git https://github.com/example/my-lla-plugins`, Want: true,
-	}, { // Test 1: a your-org owner is a stand-in.
-		In: `git clone https://gitlab.com/your-org/repo`, Want: true,
-	}, { // Test 2: a real owner is not.
-		In: `git clone https://github.com/dcadolph/kibble`, Want: false,
-	}, { // Test 3: a synopsis slot with a space is a stand-in.
-		In: `aqua update <command name> [<command name> ...]`, Want: true,
-	}, { // Test 4: a redirect with spaces on both sides is not a slot.
-		In: `tool < in > out`, Want: false,
-	}, { // Test 5: a redirect with a space before the closing bracket is not a slot.
-		In: `tool <in > out`, Want: false,
-	}}
-
-	for testNum, test := range tests {
-		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
-			t.Parallel()
-			if got := rePlaceholder.MatchString(test.In); got != test.Want {
-				t.Errorf("rePlaceholder.MatchString(%q) = %v, want %v", test.In, got, test.Want)
-			}
-		})
-	}
-}
-
 // TestDownloadedNames checks which file names a curl or wget line creates.
 func TestDownloadedNames(t *testing.T) {
 	t.Parallel()

@@ -36,3 +36,37 @@ func TestPrepareLinesContinuation(t *testing.T) {
 		})
 	}
 }
+
+// TestHasPlaceholder checks that a repository URL naming a stand-in owner is a
+// placeholder and one naming a real owner is not.
+func TestHasPlaceholder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		In   string
+		Want bool
+	}{{ // Test 0: The example owner is a stand-in.
+		In: `lla install --git https://github.com/example/my-lla-plugins`, Want: true,
+	}, { // Test 1: A your-org owner is a stand-in.
+		In: `git clone https://gitlab.com/your-org/repo`, Want: true,
+	}, { // Test 2: A real owner is not.
+		In: `git clone https://github.com/dcadolph/kibble`, Want: false,
+	}, { // Test 3: A synopsis slot with a space is a stand-in.
+		In: `aqua update <command name> [<command name> ...]`, Want: true,
+	}, { // Test 4: A redirect with spaces on both sides is not a slot.
+		In: `tool < in > out`, Want: false,
+	}, { // Test 5: A redirect with a space before the closing bracket is not a slot.
+		In: `tool <in > out`, Want: false,
+	}, { // Test 6: A single-word slot still is.
+		In: `tool <in> out`, Want: true,
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if got := HasPlaceholder(test.In); got != test.Want {
+				t.Errorf("HasPlaceholder(%q) = %v, want %v", test.In, got, test.Want)
+			}
+		})
+	}
+}
