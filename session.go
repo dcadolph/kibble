@@ -39,6 +39,22 @@ done
 )
 `
 
+// binaryStash is where the session keeps a copy of each documented binary as
+// the install left it.
+const binaryStash = "/tmp/kibble-bin"
+
+// binaryRestore puts each documented binary back as the install left it,
+// when a document has replaced it. It runs at every document boundary after
+// the first, since lla's getting-started page runs `lla upgrade --version
+// v0.5.1` and every later document then tested 0.5.1 instead of the tool the
+// install produced. Home-directory state is not restored: no measured case
+// needs it, and restoring it would hide a document that depends on another.
+const binaryRestore = `for __kp in "${__kbin[@]}"; do
+  __ks="` + binaryStash + `/${__kp##*/}"
+  cmp -s "$__ks" "$__kp" || cp -p "$__ks" "$__kp" >/dev/null 2>&1 || true
+done
+`
+
 // gitEditorPath is where the session writes the editor git opens.
 const gitEditorPath = "/tmp/kibble-git-editor"
 
@@ -157,6 +173,22 @@ for kb in %s; do
 done
 if [ "$have" -eq 0 ]; then printf '\nKIBBLE-NOBIN\n'; exit 0; fi
 `, strings.Join(quoted, " "))
+		// The copy is only of use at a document boundary, so a session with
+		// one document is left exactly as it was. Only a regular file on an
+		// absolute path is kept. A function's name is not a path, and a link
+		// points into a package tree that an upgrade replaces whole, where
+		// putting one file back would leave a mix of two versions.
+		if documentCount(plan) > 1 {
+			fmt.Fprintf(&b, `__kbin=()
+mkdir -p %s
+for kb in %s; do
+  __kp=$(command -v "$kb" 2>/dev/null) || continue
+  case "$__kp" in /*) ;; *) continue ;; esac
+  [ -f "$__kp" ] && [ ! -L "$__kp" ] || continue
+  cp -p "$__kp" "%s/${__kp##*/}" >/dev/null 2>&1 && __kbin+=("$__kp")
+done
+`, binaryStash, strings.Join(quoted, " "), binaryStash)
+		}
 	}
 	for _, f := range plan.Fixtures {
 		if dir := filepath.Dir(f.Path); dir != "." {
@@ -180,7 +212,11 @@ if [ "$have" -eq 0 ]; then printf '\nKIBBLE-NOBIN\n'; exit 0; fi
 	for _, s := range plan.Steps {
 		if !opened || s.Doc != doc {
 			if opened {
-				b.WriteString(documentEnd + "(\ncd /work/repo\nrm -rf .git\n" + sessionRepo)
+				b.WriteString(documentEnd + "(\ncd /work/repo\n")
+				if len(plan.Binaries) > 0 {
+					b.WriteString(binaryRestore)
+				}
+				b.WriteString("rm -rf .git\n" + sessionRepo)
 			} else {
 				b.WriteString("(\ncd /work/repo\n")
 			}
@@ -230,6 +266,18 @@ if [ "$have" -eq 0 ]; then printf '\nKIBBLE-NOBIN\n'; exit 0; fi
 	b.WriteString(`printf '\nKIBBLE-DONE\n'
 `)
 	return b.String(), wrapped
+}
+
+// documentCount returns how many documents the plan's steps come from.
+func documentCount(plan *kplan.Plan) int {
+	n, doc := 0, ""
+	for i, s := range plan.Steps {
+		if i == 0 || s.Doc != doc {
+			n++
+			doc = s.Doc
+		}
+	}
+	return n
 }
 
 // writeBackgroundStep renders a background step: its lines run in a subshell
