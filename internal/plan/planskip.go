@@ -361,6 +361,24 @@ var findingSubs = map[string]bool{
 	"format": true, "fmt": true,
 }
 
+// findingFlags are flags that put a tool in check mode, where the documented
+// behavior is to exit nonzero when it finds something to change. A nonzero
+// exit from a line carrying one is the tool working, not the docs breaking.
+var findingFlags = map[string]bool{
+	"--fix=false": true, "--no-fix": true, "--check": true,
+	"--dry-run": true, "--diff": true,
+}
+
+// findingFlagged reports whether a line carries a check-mode flag.
+func findingFlagged(flat string) bool {
+	for _, f := range shell.WordsOrFields(docblock.StripComment(flat)) {
+		if findingFlags[f] {
+			return true
+		}
+	}
+	return false
+}
+
 // interactiveFlag reports whether a line asks a binary to run interactively.
 // Only the long form counts: bare -i means in-place to sed, ignore-case to
 // grep, and interactive to git rebase, so reading it as a prompt skips working

@@ -198,7 +198,24 @@ func BuildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 	}
 	sort.Strings(p.Packages)
 	pl.spreadNonzeroOK()
+	pl.flagNonzeroOK()
 	return p
+}
+
+// flagNonzeroOK marks every line that invokes a documented binary with a
+// check-mode flag. It runs after spreadNonzeroOK on purpose: a flag describes
+// its own invocation, so the mark must not spread to plain lines of the same
+// command.
+func (pl *planner) flagNonzeroOK() {
+	for si := range pl.plan.Steps {
+		for li := range pl.plan.Steps[si].Lines {
+			l := &pl.plan.Steps[si].Lines[li]
+			flat := docblock.Flatten(l.Cmd)
+			if bin, _ := InvokedBinary(flat, pl.binaries); bin != "" && findingFlagged(flat) {
+				l.NonzeroOK = true
+			}
+		}
+	}
 }
 
 // spreadNonzeroOK propagates a documented nonzero exit to every line that
