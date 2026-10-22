@@ -179,6 +179,48 @@ breaking. And a pipeline whose search fed it nothing in the fresh session settle
 nothing about the document, because the same recipe on a reader's tree finds its
 matches.
 
+A tool that names what was missing is evidence, and the verdict follows what it names.
+A missing file or directory the document itself mentioned is a `GAP`, the same as a
+file the planner sees no step creating. A missing path the document never mentions is
+`BLOCKED`, because the tool may have a bug or the document may have skipped a step, and
+the classifier cannot tell which. A program the tool tried to run, or one the shell
+could not find, is a `SKIP` for a missing dependency. Git's own report that the
+repository has no history is `BLOCKED`, since the session's repository is one kibble
+made with none. A preset, plugin, or other name the reader is meant to define first, and
+a configuration the tool could not load, are `BLOCKED` as well. Both are resemblances
+rather than names, so neither can ever be a `SKIP` or a pass. The list of nouns is fixed
+on purpose: an unknown flag, argument, option, or command is the tool's own complaint
+and still fails. The refusal counts when the tool names the kind and not the name, as in
+`unknown registry` with nothing after it, and that is `BLOCKED` too. The nouns are the
+same: preset, profile, alias, plugin, group, context, workspace, project, remote,
+registry, template, and theme. A traceback that ends in a missing-file error naming a
+thing is read this way, and one that ends any other way still fails.
+
+An operand written as a stand-in name is a placeholder the reader fills in, and the line
+is a `SKIP`. The class is a `my`-prefixed name such as `my-project` or `my_package`, and a
+noun followed by a number: `repo`, `file`, `dir`, `group`, `project`, `plugin`, `package`,
+or `app`, as in `repo1`. Both are a naming convention that says "yours goes here". Words
+such as `foo` are not in the class, because docs use them as real example values and the
+line runs and does what the document says. A token with an extension is left to the file
+rule. A name the repository or an earlier line provides is real, and so is a value given
+to an output flag, since the line writes it. A value written after a space cannot be told
+from an operand without the flag's arity, so it is read as an operand.
+
+Check mode is documented behavior. A subcommand such as `check`, `lint`, or `audit`
+exits nonzero when it finds something, and so does a documented tool given a flag that
+says report only: `--fix=false`, `--no-fix`, `--check`, `--dry-run`, or `--diff`. The
+subcommands are `check`, `lint`, `audit`, `vet`, `diff`, `format`, and `fmt`. A nonzero
+exit from either is the tool working. A crash stays a failure. A check-mode flag applies
+to its own line, while a documented note such as "exits non-zero if it finds any"
+describes the command, so the note reaches every line with the same binary and subcommand
+and the flag does not.
+
+Documents under a directory named for an older version, such as `@v1`, `v1.x`, or `1.0`,
+are not replayed. When a sibling at the same level is not versioned, the unversioned
+tree is the current docs. When every sibling is versioned, only the highest is kept. An
+unversioned directory with no `.md` beneath it does not count as a sibling, and a bare
+integer such as `2024` is not a version.
+
 ## Documents beyond the README
 
 Instructions outlive the README they started in. A docs tree is where install and usage
