@@ -687,6 +687,10 @@ func TestBareWordPlaceholderFiles(t *testing.T) {
 		Line: `refurb files`, WantResult: "files",
 	}, { // Test 1: a real subcommand is not.
 		Line: `refurb check`, WantResult: "",
+	}, { // Test 2: a DNS record type is a literal value.
+		Line: `wait4x dns AAAA example.com`, WantResult: "",
+	}, { // Test 3: an all-caps topic is still a stand-in.
+		Line: `tool TOPIC`, WantResult: "TOPIC",
 	}}
 
 	for testNum, test := range tests {

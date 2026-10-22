@@ -284,6 +284,17 @@ var upperPlaceholderWords = map[string]bool{
 	"PATTERN": true, "QUERY": true, "TARGET": true, "SOURCE": true, "ARG": true,
 }
 
+// literalUpperWords are all-caps tokens that are real values in the protocols
+// docs quote, such as a DNS record type or an HTTP method, so they are never
+// read as a stand-in the reader replaces.
+var literalUpperWords = map[string]bool{
+	"A": true, "AAAA": true, "CNAME": true, "MX": true, "NS": true, "TXT": true,
+	"SRV": true, "PTR": true, "SOA": true, "GET": true, "POST": true, "PUT": true,
+	"PATCH": true, "DELETE": true, "HEAD": true, "OPTIONS": true, "TCP": true,
+	"UDP": true, "HTTP": true, "HTTPS": true, "JSON": true, "YAML": true,
+	"CSV": true, "TOML": true, "XML": true, "UTF8": true, "UTF-8": true,
+}
+
 // reUpperPlaceholder matches an all-caps token ending in a placeholder noun,
 // the SOMEFILE, MYDIR, CONFIGPATH convention docs use for a reader-supplied
 // value. Acronyms such as GET or TCP do not end in these nouns, so they are
@@ -301,6 +312,9 @@ var reUpperArg = regexp.MustCompile(`^[A-Z][A-Z0-9_]+$`)
 func bareWordPlaceholder(flat string) string {
 	for _, tok := range shell.Operands(flat) {
 		if strings.HasPrefix(tok, "-") {
+			continue
+		}
+		if literalUpperWords[tok] {
 			continue
 		}
 		if placeholderWords[tok] || upperPlaceholderWords[tok] ||
