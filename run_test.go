@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/dcadolph/kibble/internal/config"
 	kplan "github.com/dcadolph/kibble/internal/plan"
 	"github.com/dcadolph/kibble/internal/sandbox"
 )
@@ -305,6 +306,56 @@ func TestBinaryRestore(t *testing.T) {
 		}
 	}
 	want := []Status{StatusVerified, StatusVerified}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("line statuses mismatch (-want +got):\n%s\ndetail: %s", diff, res.Detail)
+	}
+}
+
+// TestTreeRestore checks that a document leaving files in the working tree
+// does not decide what the next document finds there. cspell's first document
+// wrote a cache inside the repository, and the next document read it instead
+// of its configuration. The session puts the tree back as the install and the
+// fixtures left it at each document boundary, so a removed fixture returns.
+func TestTreeRestore(t *testing.T) {
+	if testing.Short() {
+		t.Skip("container test skipped in short mode")
+	}
+	if os.Getenv("KIBBLE_INTEGRATION") == "" {
+		t.Skip("set KIBBLE_INTEGRATION=1 to run container tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := sandbox.Available(ctx); err != nil {
+		t.Skipf("docker is not reachable: %v", err)
+	}
+	plan := &kplan.Plan{
+		Repo:     "repo",
+		Installs: []kplan.PlanInstall{{Cmd: "true"}},
+		Fixtures: []config.Fixture{{Path: "notes.txt", Contents: "notes\n"}},
+		Steps: []kplan.PlanStep{{
+			ID: "b1", Doc: "README.md",
+			Lines: []kplan.PlanLine{
+				{Cmd: "mkdir -p .cache && echo x > .cache/marker"},
+				{Cmd: "rm notes.txt"},
+			},
+		}, {
+			ID: "b2", Doc: "docs/next.md",
+			Lines: []kplan.PlanLine{{Cmd: "test ! -e .cache/marker"}, {Cmd: "test -f notes.txt"}},
+		}},
+	}
+	runner := &DockerRunner{Image: "golang:1.26", Timeout: 120 * time.Second}
+	step := InstallStep{Repo: "repo", Kind: "example", Run: true, plan: plan, dir: t.TempDir()}
+	res := runner.runExample(ctx, step)
+	if res.example == nil {
+		t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+	}
+	var got []Status
+	for _, s := range res.example.Steps {
+		for _, l := range s.Lines {
+			got = append(got, l.Status)
+		}
+	}
+	want := []Status{StatusVerified, StatusVerified, StatusVerified, StatusVerified}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("line statuses mismatch (-want +got):\n%s\ndetail: %s", diff, res.Detail)
 	}

@@ -197,7 +197,11 @@ the tool the install produced. A document can replace the tool under test: lla's
 getting-started page runs `lla upgrade --version v0.5.1`, and every document after it
 used to test 0.5.1 instead of the build the install made. So the session keeps a copy of
 each documented binary that is a plain file rather than a link into a package, and at
-every document boundary it puts back any binary a document changed. Nothing in the home
+every document boundary it puts back any binary a document changed. The working tree is
+restored the same way. cspell's configuration keeps a cache inside the repository, so its
+first document left a cache the next one read, and that document never loaded its
+configuration. The session archives the tree as the install and the fixtures left it, and
+at every document boundary it clears the tree and unpacks the archive. Nothing in the home
 directory is restored. A plugin one document installs, or a configuration it writes
 there, is still present for the next.
 
