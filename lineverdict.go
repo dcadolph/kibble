@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -72,6 +73,14 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 	case l.NonzeroOK && documentedNonzeroCode(o.code):
 		lr.Status = StatusVerified
 		lr.Detail = fmt.Sprintf("exit %d is documented behavior", o.code)
+	case reCrash.MatchString(o.output) && crashMissingName(o.output) != "":
+		// The one crash that is not unexplained. A traceback whose last line
+		// names the file or program that was missing is the tool saying what
+		// it lacked, so it is settled the way a plain exit naming it would be.
+		// Only the last line counts: a missing file earlier in a chained
+		// traceback did not end the process, and a crash ending any other way
+		// still convicts below.
+		lr = settleMissing(lr, crashMissingName(o.output), tail)
 	case reCrash.MatchString(o.output):
 		// Checked before every excuse: a process that died did not report a
 		// condition kibble can forgive, whatever else it printed first.
@@ -82,6 +91,15 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonMissingDependency
 		lr.Detail = "invokes a command the container lacks: " + tail
+	case reGitNoHistory.MatchString(o.output):
+		// git speaking from outside the tool, with the same standing as the
+		// shell's 127. The session's repository is one kibble initialized
+		// with no commits, so a tool that reads history finds none, and the
+		// reader's own repository would have it.
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonMissingFixture
+		lr.Detail = "needs git history, and the session's repository is one kibble made " +
+			"with none: " + tail
 	case reNotBuiltIn.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonMissingDependency
@@ -99,6 +117,10 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Reason = ReasonMissingDependency
 		lr.Detail = "reports something not installed, which may be the container or a missing step: " + tail
 	case reNestedNotFound.MatchString(o.output):
+		lr.Status = StatusSkipped
+		lr.Reason = ReasonMissingDependency
+		lr.Detail = "ran a command the container lacks, reported by the tool that invoked it: " + tail
+	case reToolCannotStart.MatchString(o.output):
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonMissingDependency
 		lr.Detail = "ran a command the container lacks, reported by the tool that invoked it: " + tail
@@ -207,6 +229,10 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Status = StatusGap
 		lr.Detail = fmt.Sprintf("references %s, which no documented step creates: %s",
 			missingFileArg(lr.Cmd, o.output), tail)
+	case reportedMissing(o.output) != "":
+		// The tool named what it lacked and the command never passed it, so
+		// the tool reached for it on its own. See settleMissing.
+		lr = settleMissing(lr, reportedMissing(o.output), tail)
 	default:
 		lr.Status = StatusFail
 		lr.Detail = fmt.Sprintf("exited %d: %s", o.code, tail)
@@ -328,6 +354,18 @@ var (
 		`(?im)^(panic|fatal error|traceback \(most recent call last\)):` +
 			`|\bsegmentation fault\b|\bassertion failed\b|\bstack overflow\b` +
 			`|\bunhandled exception\b|\bthread '.*' panicked at\b`)
+	// reGitNoHistory matches git reporting that the repository it was handed
+	// has no commits, in the three wordings git uses for an unborn HEAD.
+	reGitNoHistory = regexp.MustCompile(
+		`ambiguous argument 'HEAD': unknown revision|does not have any commits yet` +
+			`|bad default revision 'HEAD'`)
+	// reToolCannotStart matches a tool reporting that a program it runs does
+	// not exist, as lla says "Failed to run ripgrep" and Node says "spawn ava
+	// ENOENT". The tool launched the program itself, so the shell never saw the
+	// name and its own "not found" never appears.
+	reToolCannotStart = regexp.MustCompile(
+		`(?i)failed to (run|spawn|exec(ute)?|launch|start) ([^\s:]+): no such file or directory` +
+			`|spawn (\S+) ENOENT`)
 	// reLineMarker parses a KIBBLE-LINE marker into step ID, line index,
 	// and either an exit code or the SKIP token. The marker is matched
 	// anywhere in a line rather than only at its start, so a documented
@@ -377,26 +415,120 @@ func missingFileArg(cmd, output string) string {
 			}
 		}
 	}
-	m := reEnoent.FindStringSubmatch(output)
-	if m == nil {
-		return ""
-	}
-	name := strings.Trim(m[1], "'\"\x60")
-	if name == "" || strings.HasPrefix(name, "-") {
-		return ""
-	}
-	// Whole-word comparison against the words the shell would pass, so a
-	// quoted path containing a space is one argument here rather than two,
-	// and a name matches the argument the command really named.
-	for _, tok := range shell.ArgWordsOrFields(cmd) {
-		if tok == name {
+	for _, name := range reportedNames(output) {
+		if namedInCommand(cmd, name) {
 			return name
 		}
 	}
-	if strings.ContainsAny(name, "./") && strings.Contains(cmd, name) {
-		return name
+	return ""
+}
+
+// reNodeEnoent matches Node's ENOENT, which names the path after the system
+// call that failed: "ENOENT: no such file or directory, scandir '<path>'".
+var reNodeEnoent = regexp.MustCompile(`ENOENT: no such file or directory, \w+ '([^']+)'`)
+
+// reNotExist matches a tool's own sentence that a named path is absent, as
+// tach says "The path 'my_package' does not exist."
+var reNotExist = regexp.MustCompile(`(?i)\b(?:path|file|directory) '([^']+)' does not exist`)
+
+// rePyNoFile matches the line a Python traceback ends with when a file or a
+// program it tried to run was missing. Python names it after the message.
+var rePyNoFile = regexp.MustCompile(
+	`^FileNotFoundError: \[Errno 2\] No such file or directory: '([^']+)'`)
+
+// reErrnoName matches an errno constant such as ENOENT, which the generic
+// shape captures from "Error: ENOENT: no such file or directory" as though it
+// were the missing name.
+var reErrnoName = regexp.MustCompile(`^E[A-Z]+$`)
+
+// reportedNames returns every name the output reports missing, one per shape
+// that matched, the specific shapes first. Node's wording also matches the
+// generic shape, which would otherwise capture ENOENT itself.
+func reportedNames(output string) []string {
+	var out []string
+	for _, re := range []*regexp.Regexp{reNodeEnoent, reNotExist, reEnoent} {
+		m := re.FindStringSubmatch(output)
+		if m == nil {
+			continue
+		}
+		name := strings.Trim(m[1], "'\"\x60")
+		if name == "" || strings.HasPrefix(name, "-") || reErrnoName.MatchString(name) {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// reportedMissing returns the first name the output reports missing, or empty
+// when it reports none.
+func reportedMissing(output string) string {
+	if names := reportedNames(output); len(names) > 0 {
+		return names[0]
 	}
 	return ""
+}
+
+// crashMissingName returns the file or program a crash's last line names as
+// missing, or empty when the crash ended any other way. Only the last line
+// counts, since that is the error that ended the process.
+func crashMissingName(output string) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	for _, re := range []*regexp.Regexp{rePyNoFile, reNodeEnoent} {
+		if m := re.FindStringSubmatch(last); m != nil {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+// namedInCommand reports whether the command passed name. Words are compared
+// whole against the words the shell would pass, so a quoted path containing a
+// space is one argument here rather than two. The value of a --flag=name
+// counts as the word name, and a trailing slash is ignored on both sides, so
+// the my_package/ a command passes is the my_package a tool says is missing.
+// A file-shaped name, one carrying a dot or a slash, is matched even inside a
+// larger argument.
+func namedInCommand(cmd, name string) bool {
+	want := strings.TrimSuffix(name, "/")
+	if want == "" {
+		return false
+	}
+	for _, tok := range shell.ArgWordsOrFields(cmd) {
+		if strings.HasPrefix(tok, "-") {
+			if _, val, ok := strings.Cut(tok, "="); ok {
+				tok = val
+			}
+		}
+		if strings.TrimSuffix(tok, "/") == want {
+			return true
+		}
+	}
+	return strings.ContainsAny(name, "./") && strings.Contains(cmd, name)
+}
+
+// settleMissing gives the verdict for a name a tool reported missing. A name
+// the command passed is a hole in the document, as missingFileArg holds. A
+// path the command never named is something the tool reached for that no
+// documented step made, and the tool or the document may be at fault, which is
+// what blocked means. A bare word, with no slash and no extension, is a
+// program the tool tried to run, and the container lacks it.
+func settleMissing(lr lineResult, name, tail string) lineResult {
+	switch {
+	case namedInCommand(lr.Cmd, name):
+		lr.Status = StatusGap
+		lr.Detail = fmt.Sprintf("references %s, which no documented step creates: %s", name, tail)
+	case strings.Contains(name, "/") || path.Ext(name) != "":
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonMissingFixture
+		lr.Detail = fmt.Sprintf("reads %s, which no documented step creates: %s", name, tail)
+	default:
+		lr.Status = StatusSkipped
+		lr.Reason = ReasonMissingDependency
+		lr.Detail = "ran a command the container lacks, reported by the tool that invoked it: " + tail
+	}
+	return lr
 }
 
 // missingCommandName returns the program a shell reported missing, or empty
