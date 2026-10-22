@@ -40,6 +40,8 @@ var (
 			`|\{\{[^{}]*\}\}` +
 			`|\[[^\[\]]*--[^\[\]]*\]|\[[A-Za-z][^\[\]]*\]` +
 			`|\bxxxx\b|\*\*\*|\bpath/to/|/(home|Users)/(user|you|me|username|yourname)\b` +
+			`|<[A-Za-z][\w.-]*(?: [\w.-]+)+>` +
+			`|(github|gitlab)\.com/(example|your-?(org|user|name)|username|owner)/` +
 			`|(^|[^/])\.\.\.($|[\s'".])`)
 	// reLogin matches a command that starts an interactive sign-in.
 	reLogin = regexp.MustCompile(`\b(login|signin|sign-in|logout)\b`)
@@ -54,7 +56,7 @@ var (
 	// with a shell parser: `tool read "my notes.md"` arrives as one word, and
 	// a pattern that stopped at the space would report nothing missing.
 	reFileArg = regexp.MustCompile(
-		`^\.?/?[\w][\w ./+-]*\.(md|txt|yaml|yml|json|csv|ics|toml|ini|env|conf|cfg|xml|html|wav|png|jpg|gif|svg|pdf|ipynb|log|sql|proto|rb|py|js|go|rs|ts|tsx|jsx|c|h|cpp|hpp|java|kt|swift|sh|pl|lua|zig|pem|crt|key|der)$`)
+		`^\.?/?[\w][\w ./+-]*\.(md|txt|yaml|yml|json|csv|ics|toml|ini|env|conf|cfg|xml|html|wav|png|jpg|gif|svg|pdf|ipynb|log|sql|proto|rb|py|js|go|rs|ts|tsx|jsx|c|h|cpp|hpp|java|kt|swift|sh|pl|lua|zig|pem|crt|key|der|mmd|tar|gz|tgz|zip|bz2|xz|7z)$`)
 	// reDotSlashArg matches a whole ./-prefixed path token of any shape.
 	reDotSlashArg = regexp.MustCompile(`^\./[\w][\w ./+-]*$`)
 	// reHomeFileArg matches a ~/-prefixed file token with a known extension, so
