@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 
+	"mvdan.cc/sh/v3/syntax"
+
 	"github.com/dcadolph/kibble/internal/config"
 	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/shell"
@@ -95,7 +97,7 @@ func (pl *planner) missingFile(flat string) string {
 		if pl.tree[rel] || pl.created[rel] || createsToken(flat, tok) {
 			continue
 		}
-		if synthExtensions[filepath.Ext(rel)] {
+		if synthExtensions[filepath.Ext(rel)] && !reNeverFabricate.MatchString(rel) {
 			if !pl.fixed[rel] {
 				pl.fixed[rel] = true
 				pl.created[rel] = true
@@ -108,6 +110,38 @@ func (pl *planner) missingFile(flat string) string {
 	}
 	return ""
 }
+
+// missingRedirectIn returns the operand of a < redirect that is not in the
+// repo, not created by an earlier line, and not created by the line itself,
+// or empty when there is none. The redirects come from the shell parse, so a
+// < inside a quoted argument, a heredoc, or a process substitution is never
+// read as one.
+func (pl *planner) missingRedirectIn(flat string) string {
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(flat), "")
+	if err != nil {
+		return ""
+	}
+	missing := ""
+	syntax.Walk(file, func(node syntax.Node) bool {
+		r, ok := node.(*syntax.Redirect)
+		if !ok || missing != "" || r.Op != syntax.RdrIn || r.Word == nil {
+			return missing == ""
+		}
+		tok := r.Word.Lit()
+		rel := strings.TrimPrefix(tok, "./")
+		if tok == "" || strings.HasPrefix(tok, "/dev/") || pl.tree[rel] || pl.created[rel] ||
+			createsToken(flat, tok) {
+			return true
+		}
+		missing = tok
+		return false
+	})
+	return missing
+}
+
+// reNeverFabricate matches a file name that says it holds checksums or a
+// signature, which kibble must never invent.
+var reNeverFabricate = regexp.MustCompile(`(?i)checksum|sha\d*sum|SHA\d+SUMS|\.(sig|asc)$`)
 
 // recordCreated tracks the paths a running line will produce, so later
 // lines that read them are not flagged as missing their file.
@@ -133,8 +167,69 @@ func (pl *planner) recordCreated(flat string) {
 		}
 	case "cp", "mv":
 		pl.created[strings.TrimPrefix(fields[len(fields)-1], "./")] = true
+	case "curl", "wget":
+		for _, name := range downloadedNames(fields) {
+			pl.created[name] = true
+		}
 	}
 }
+
+// downloadedNames returns the file names a curl or wget line writes into the
+// working directory. A curl line with -O or --remote-name, alone or inside a
+// flag cluster such as -LO, saves each URL operand under the last segment of
+// its path, minus any query or fragment. A wget line does the same unless -O
+// names the output file. A URL starts with http://, https:// or ftp://, and
+// curl without -O writes to stdout and creates nothing.
+func downloadedNames(fields []string) []string {
+	if len(fields) < 2 {
+		return nil
+	}
+	curl := fields[0] == "curl"
+	if !curl && fields[0] != "wget" {
+		return nil
+	}
+	remoteName := false
+	outFile := ""
+	var urls []string
+	for i := 1; i < len(fields); i++ {
+		f := fields[i]
+		switch {
+		case reDownloadURL.MatchString(f):
+			urls = append(urls, f)
+		case f == "--remote-name":
+			remoteName = true
+		case curl && strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--"):
+			if strings.Contains(f, "O") {
+				remoteName = true
+			}
+		case !curl && f == "-O" && i+1 < len(fields):
+			outFile = fields[i+1]
+			i++
+		}
+	}
+	if !curl && outFile != "" {
+		if outFile == "-" {
+			return nil
+		}
+		return []string{strings.TrimPrefix(outFile, "./")}
+	}
+	if curl && !remoteName {
+		return nil
+	}
+	var names []string
+	for _, u := range urls {
+		if j := strings.IndexAny(u, "?#"); j >= 0 {
+			u = u[:j]
+		}
+		if name := u[strings.LastIndex(u, "/")+1:]; name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// reDownloadURL matches an operand that is a URL curl or wget can fetch.
+var reDownloadURL = regexp.MustCompile(`^(https?|ftp)://`)
 
 // createsToken reports whether the line itself creates the token, such as a
 // redirect target, so the target of `echo x > f.yaml` is not marked missing.

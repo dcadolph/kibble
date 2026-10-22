@@ -10,6 +10,7 @@ import (
 
 	"github.com/dcadolph/kibble/internal/config"
 	"github.com/dcadolph/kibble/internal/docblock"
+	"github.com/dcadolph/kibble/internal/verdict"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
@@ -576,5 +577,122 @@ func testRecognizer() *Recognizer {
 	return &Recognizer{
 		Clones:   func(flat string) bool { return clone.MatchString(flat) },
 		Installs: func(flat string) bool { return goInstall.MatchString(flat) || brew.MatchString(flat) },
+	}
+}
+
+// newReaderNameTestPlanner returns a planner that treats the given binaries as
+// documented and holds the given repo files.
+func newReaderNameTestPlanner(tree map[string]bool, bins ...string) *planner {
+	binaries := map[string]bool{}
+	for _, b := range bins {
+		binaries[b] = true
+	}
+	return &planner{
+		plan:     &Plan{},
+		binaries: binaries,
+		tree:     tree,
+		created:  map[string]bool{},
+		fixed:    map[string]bool{},
+	}
+}
+
+// TestMissingRedirectIn checks that a < redirect naming a file nothing
+// provides is reported, and that provided files and writes are not.
+func TestMissingRedirectIn(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		Line       string
+		WantResult string
+	}{{ // Test 0: the input of a redirect is the missing file.
+		Line: `repren --patterns=patfile < input > output`, WantResult: "input",
+	}, { // Test 1: a file in the tree is present.
+		Line: `tool < have.txt`, WantResult: "",
+	}, { // Test 2: a heredoc is not a file redirect.
+		Line: `tool <<EOF`, WantResult: "",
+	}, { // Test 3: a device is not a missing file.
+		Line: `tool < /dev/null`, WantResult: "",
+	}, { // Test 4: a line with no input redirect reports nothing.
+		Line: `tool a > b`, WantResult: "",
+	}, { // Test 5: a less-than sign inside double quotes is not a redirect.
+		Line: `jq ".a < 3" have.txt`, WantResult: "",
+	}, { // Test 6: a process substitution is not a file redirect.
+		Line: `diff <(tool a) <(tool b)`, WantResult: "",
+	}, { // Test 7: a redirect written without a space is still read.
+		Line: `sort <input >out`, WantResult: "input",
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			pl := newReaderNameTestPlanner(map[string]bool{"have.txt": true})
+			if diff := cmp.Diff(test.WantResult, pl.missingRedirectIn(test.Line)); diff != "" {
+				t.Errorf("missingRedirectIn mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestBareWordPlaceholderFiles checks that the word files is a stand-in.
+func TestBareWordPlaceholderFiles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		Line       string
+		WantResult string
+	}{{ // Test 0: files is a conventional placeholder.
+		Line: `refurb files`, WantResult: "files",
+	}, { // Test 1: a real subcommand is not.
+		Line: `refurb check`, WantResult: "",
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(test.WantResult, bareWordPlaceholder(test.Line)); diff != "" {
+				t.Errorf("bareWordPlaceholder mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestSkipReasonReaderNames checks the skip text, verdict reason, and gap flag
+// each reader-name rule produces through skipReason.
+func TestSkipReasonReaderNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		Line       string
+		WantSkip   string
+		WantReason verdict.Reason
+		WantGap    bool
+	}{{ // Test 0: files is a placeholder word.
+		Line:       `gita files`,
+		WantSkip:   `docs use "files" as a placeholder the reader must fill in`,
+		WantReason: verdict.ReasonPlaceholder,
+	}, { // Test 1: a missing redirect input is a gap.
+		Line:       `gita run < input`,
+		WantSkip:   "references input, which the docs never create",
+		WantReason: verdict.ReasonMissingFixture, WantGap: true,
+	}, { // Test 2: a stand-in repository owner is a placeholder.
+		Line:       `gita install --git https://github.com/example/my-plugins`,
+		WantSkip:   "docs use a placeholder the reader must fill in",
+		WantReason: verdict.ReasonPlaceholder,
+	}, { // Test 3: a checksum file is a gap rather than a fixture.
+		Line:       `gita verify aqua_checksums.txt`,
+		WantSkip:   "references aqua_checksums.txt, which the docs never create",
+		WantReason: verdict.ReasonMissingFixture, WantGap: true,
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			pl := newReaderNameTestPlanner(map[string]bool{}, "gita")
+			skip, reason, gap := pl.skipReason(test.Line, docblock.Flatten(test.Line))
+			if skip != test.WantSkip || reason != test.WantReason || gap != test.WantGap {
+				t.Errorf("skipReason = (%q, %q, %v), want (%q, %q, %v)",
+					skip, reason, gap, test.WantSkip, test.WantReason, test.WantGap)
+			}
+		})
 	}
 }
