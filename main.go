@@ -376,6 +376,11 @@ func sessionInstalls(dir string, steps []InstallStep) ([]string, []kplan.PlanIns
 	var all []kplan.PlanInstall
 	var clone *kplan.PlanInstall
 	for _, s := range steps {
+		// A step recorded but not run, such as a clone of a placeholder URL,
+		// must not become the session's install either.
+		if !s.Run {
+			continue
+		}
 		var in kplan.PlanInstall
 		switch {
 		case s.Kind == "git-clone":
@@ -624,19 +629,28 @@ func runAll(ctx context.Context, r Runner, steps []InstallStep, workers int) []R
 // unrunResult is the result for a step kibble records but does not run. A
 // piped shell installer and a system package are documented install methods
 // kibble sees and deliberately declines to execute, so they are skipped with a
-// reason a reader can act on rather than passing as if nothing were found.
+// reason a reader can act on rather than passing as if nothing were found. An
+// install line holding a placeholder is skipped with the placeholder reason.
 func unrunResult(step InstallStep) Result {
 	var res Result
-	switch step.Kind {
-	case "script-install":
+	switch {
+	case step.Kind == "script-install":
 		res = Result{
 			Step: step, Status: StatusSkipped, Reason: ReasonUnsupportedMethod,
 			Detail: "kibble does not run piped shell installers; verify this one by hand",
 		}
-	case "os-package":
+	case step.Kind == "os-package":
 		res = Result{
 			Step: step, Status: StatusSkipped, Reason: ReasonUnsupportedMethod,
 			Detail: "kibble does not run system package installs; verify this one by hand",
+		}
+	case step.Kind == "git-clone" || step.Kind == "go-install" || step.Kind == "brew" ||
+		pkgKinds[step.Kind].Ecosystem != "":
+		// These kinds run unless the line holds a placeholder, which is the
+		// only reason one is recorded unrun.
+		res = Result{
+			Step: step, Status: StatusSkipped, Reason: ReasonPlaceholder,
+			Detail: "docs use a placeholder the reader must fill in",
 		}
 	default:
 		res = Result{Step: step, Status: StatusSkipped, Reason: ReasonNotExecuted, Detail: "not executed yet"}

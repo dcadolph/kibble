@@ -379,58 +379,35 @@ var packageTools = map[string]string{
 }
 
 var (
-	// rePlaceholder matches tokens a reader must replace before running:
-	// angle-bracket slots, xxxx runs, path/to/ and /home/user stand-ins,
-	// double-brace templates such as a config example's {{.Field | quote}}, and
-	// values that trail off in an ellipsis. The ellipsis is ignored after a
-	// slash so a Go package pattern such as ./... is not mistaken for one.
-	rePlaceholder = regexp.MustCompile(
-		`<[^<>\s]+>|=<[^<>]+>|(^|[^${])\{[A-Za-z][A-Za-z0-9_]*\}|(^|\s)\[[^\[\]\s]+\](\s|$)` +
-			`|\{\{[^{}]*\}\}` +
-			`|\[[^\[\]]*--[^\[\]]*\]|\[[A-Za-z][^\[\]]*\]` +
-			`|\bxxxx\b|\*\*\*|\bpath/to/|/(home|Users)/(user|you|me|username|yourname)\b` +
-			`|(^|[^/])\.\.\.($|[\s'".])`)
-	// reLogin matches a command that starts an interactive sign-in.
-	reLogin = regexp.MustCompile(`\b(login|signin|sign-in|logout)\b`)
-	// reLocalhost matches a reference to a service on the local machine,
-	// which a clean container does not have.
-	reLocalhost = regexp.MustCompile(`\blocalhost\b|127\.0\.0\.1`)
 	// reTwoColumn matches a usage line whose command is followed by a prose
 	// description column: at least three spaces, then a capitalized sentence.
 	reTwoColumn = regexp.MustCompile(`^(.*\S)\s{3,}([A-Z].*)$`)
-	// reNonzeroNote matches a comment that documents a nonzero exit.
-	reNonzeroNote = regexp.MustCompile(`(?i)non-?zero|exits? [1-9]|fails? (if|when)`)
-	// reFileArg matches a whole token that names a relative file with a
-	// known extension, so missing example files are caught before they run.
-	// A space belongs in the character class because the planner reads a line
-	// with a shell parser: `tool read "my notes.md"` arrives as one word, and
-	// a pattern that stopped at the space would report nothing missing.
-	reFileArg = regexp.MustCompile(
-		`^\.?/?[\w][\w ./+-]*\.(md|txt|yaml|yml|json|csv|ics|toml|ini|env|conf|cfg|xml|html|wav|png|jpg|gif|svg|pdf|ipynb|log|sql|proto|rb|py|js|go|rs|ts|tsx|jsx|c|h|cpp|hpp|java|kt|swift|sh|pl|lua|zig|pem|crt|key|der)$`)
-	// reDotSlashArg matches a whole ./-prefixed path token of any shape.
-	reDotSlashArg = regexp.MustCompile(`^\./[\w][\w ./+-]*$`)
-	// reHomeFileArg matches a ~/-prefixed file token with a known extension, so
-	// a documented read of a home config the docs never create is skipped
-	// rather than failed. The home directory is outside the repo, so such a
-	// file is never faked, only reported as absent.
-	reHomeFileArg = regexp.MustCompile(
-		`^~/[\w.][\w ./+-]*\.(md|txt|yaml|yml|json|toml|ini|conf|cfg|env|sh|rc)$`)
-	// reHomePathArg matches any path under the reader's home directory, such
-	// as ~/src/project. The container's home holds none of it, and a document
-	// citing one is showing the reader where their own work lives.
-	reHomePathArg = regexp.MustCompile(`^(~|\$HOME|\$\{HOME\})/[\w.][\w./+-]*$`)
-	// reCreatedToken matches a token a line creates: a redirect target, an
-	// -o argument, or the arguments of mkdir, touch, cp, or mv.
-	reCreatedToken = regexp.MustCompile(
-		`>{1,2}\s*([^\s&|;]+)|\s-o\s+(\S+)|--?(?:output|outfile|dest|out|o)[= ]([^\s&|;]+)`)
-	// reAssignPrefix matches a leading VAR= or export VAR= assignment and
-	// captures the variable name.
-	reAssignPrefix = regexp.MustCompile(`^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=`)
 	// reHeredoc matches a heredoc start and captures its terminator.
 	reHeredoc = regexp.MustCompile(`<<-?\s*['"]?(\w+)['"]?`)
-	// reSimpleWord matches a bare command word.
-	reSimpleWord = regexp.MustCompile(`^[A-Za-z][\w.+-]*$`)
 )
+
+// rePlaceholder matches tokens a reader must replace before running:
+// angle-bracket slots, including a synopsis slot with spaces such as
+// <command name>, xxxx runs, path/to/ and /home/user stand-ins,
+// double-brace templates such as a config example's {{.Field | quote}}, a
+// repository under a stand-in owner such as github.com/example/, and values
+// that trail off in an ellipsis. The ellipsis is ignored after a slash so a Go
+// package pattern such as ./... is not mistaken for one.
+var rePlaceholder = regexp.MustCompile(
+	`<[^<>\s]+>|=<[^<>]+>|(^|[^${])\{[A-Za-z][A-Za-z0-9_]*\}|(^|\s)\[[^\[\]\s]+\](\s|$)` +
+		`|\{\{[^{}]*\}\}` +
+		`|\[[^\[\]]*--[^\[\]]*\]|\[[A-Za-z][^\[\]]*\]` +
+		`|\bxxxx\b|\*\*\*|\bpath/to/|/(home|Users)/(user|you|me|username|yourname)\b` +
+		`|<[A-Za-z][\w.-]*(?: [\w.-]+)+>` +
+		`|(github|gitlab)\.com/(example|your-?(org|user|name)|username|owner)/` +
+		`|(^|[^/])\.\.\.($|[\s'".])`)
+
+// HasPlaceholder reports whether s holds a token the reader must replace
+// before running it. The planner asks it of an example line and the extractor
+// asks it of an install line, so both read placeholders the same way.
+func HasPlaceholder(s string) bool {
+	return rePlaceholder.MatchString(s)
+}
 
 // reShownError matches output a doc displays under a command to demonstrate
 // it failing, such as a usage screen or an error message.

@@ -52,6 +52,25 @@ func TestClassifyLine(t *testing.T) {
 	}, { // Test 10: a package manager flag before the name is skipped.
 		In:       "sudo dnf install -y fd-find",
 		WantKind: "os-package", WantMod: "dnf:fd-find", WantRun: false, WantOK: true,
+	}, { // Test 11: A clone of a placeholder URL is recorded but not run.
+		In:       "git clone <some-url>/my-dotfiles",
+		WantKind: "git-clone", WantMod: "<some-url>/my-dotfiles", WantRun: false, WantOK: true,
+	}, { // Test 12: A clone of a real URL still runs.
+		In:       "git clone https://github.com/x/y.git",
+		WantKind: "git-clone", WantMod: "https://github.com/x/y.git", WantRun: true, WantOK: true,
+	}, { // Test 13: A clone under a stand-in owner is a placeholder.
+		In:       "git clone https://github.com/example/dotfiles",
+		WantKind: "git-clone", WantMod: "https://github.com/example/dotfiles",
+		WantRun: false, WantOK: true,
+	}, { // Test 14: A go install of a placeholder module is not run.
+		In:       "go install <module>@latest",
+		WantKind: "go-install", WantMod: "<module>@latest", WantRun: false, WantOK: true,
+	}, { // Test 15: A pip install of a placeholder package is not run.
+		In:       "pip install <package>",
+		WantKind: "pip-install", WantMod: "<package>", WantRun: false, WantOK: true,
+	}, { // Test 16: Python extras are not a placeholder, so the install runs.
+		In:       "pip install 'httpie[socks]'",
+		WantKind: "pip-install", WantMod: "httpie", WantRun: true, WantOK: true,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -320,6 +339,46 @@ func TestCloneTarget(t *testing.T) {
 			t.Parallel()
 			if got := cloneTarget(test.In); got != test.Want {
 				t.Errorf("cloneTarget = %q, want %q", got, test.Want)
+			}
+		})
+	}
+}
+
+// TestPlaceholderInstallNotRun checks that an install line holding a
+// placeholder is reported as one and never becomes the session's install.
+// dotdrop documents `git clone <some-url>/my-dotfiles`, which ran and failed.
+func TestPlaceholderInstallNotRun(t *testing.T) {
+	t.Parallel()
+
+	step, _, ok := classifyLine("my-dotfiles", "git clone <some-url>/my-dotfiles")
+	if !ok {
+		t.Fatal("placeholder clone not recognized")
+	}
+	res := unrunResult(step)
+	if res.Status != StatusSkipped || res.Reason != ReasonPlaceholder {
+		t.Errorf("verdict = %s %q, want %s %q", res.Status, res.Reason, StatusSkipped, ReasonPlaceholder)
+	}
+	if diff := cmp.Diff("docs use a placeholder the reader must fill in", res.Detail); diff != "" {
+		t.Errorf("detail mismatch (-want +got):\n%s", diff)
+	}
+
+	step.Block = []string{"git clone <some-url>/my-dotfiles", "cd my-dotfiles", "make install"}
+	tests := []struct {
+		WantCount int
+		Run       bool
+	}{{ // Test 0: The placeholder clone is not the session's install.
+		Run: false, WantCount: 0,
+	}, { // Test 1: The same recipe marked runnable is, which shows the check can fail.
+		Run: true, WantCount: 1,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			s := step
+			s.Run = test.Run
+			_, got := sessionInstalls(t.TempDir(), []InstallStep{s})
+			if len(got) != test.WantCount {
+				t.Errorf("installs = %d, want %d (%v)", len(got), test.WantCount, got)
 			}
 		})
 	}

@@ -229,14 +229,17 @@ func installRecipe(lines []string) []string {
 	return out
 }
 
-// classifyLine matches one code line against the known install patterns.
+// classifyLine matches one code line against the known install patterns. A
+// line holding a placeholder is recorded with Run false, since running it
+// would test the stand-in rather than the document.
 func classifyLine(repo, line string) (InstallStep, string, bool) {
+	run := !docblock.HasPlaceholder(docblock.CommandHead(line))
 	if m := reGoInstall.FindStringSubmatch(line); m != nil {
 		mod := m[1]
 		bin := binaryName(mod)
 		return InstallStep{
 			Repo: repo, Kind: "go-install", Raw: strings.TrimSpace(line),
-			Module: mod, Binary: bin, Run: true,
+			Module: mod, Binary: bin, Run: run,
 		}, repo + "|go|" + mod, true
 	}
 	if m := reBrew.FindStringSubmatch(line); m != nil {
@@ -245,19 +248,22 @@ func classifyLine(repo, line string) (InstallStep, string, bool) {
 			target = "cask:" + target
 		}
 		return InstallStep{
-			Repo: repo, Kind: "brew", Raw: strings.TrimSpace(line), Module: target, Run: true,
+			Repo: repo, Kind: "brew", Raw: strings.TrimSpace(line), Module: target, Run: run,
 		}, repo + "|brew|" + target, true
 	}
 	if kind, pkg, ok := classifyPackage(line); ok {
+		// The package name is asked rather than the line: Python extras such
+		// as httpie[socks] are shaped like a bracketed placeholder, and the
+		// name has already had them removed.
 		return InstallStep{
 			Repo: repo, Kind: kind, Raw: strings.TrimSpace(line),
-			Module: pkg, Binary: packageBinary(pkg), Run: true,
+			Module: pkg, Binary: packageBinary(pkg), Run: !docblock.HasPlaceholder(pkg),
 		}, repo + "|" + kind + "|" + pkg, true
 	}
 	if reGitClone.MatchString(line) {
 		if target := cloneTarget(line); target != "" {
 			return InstallStep{
-				Repo: repo, Kind: "git-clone", Raw: strings.TrimSpace(line), Module: target, Run: true,
+				Repo: repo, Kind: "git-clone", Raw: strings.TrimSpace(line), Module: target, Run: run,
 			}, repo + "|clone|" + target, true
 		}
 	}

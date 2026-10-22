@@ -30,19 +30,6 @@ var packageTools = map[string]string{
 }
 
 var (
-	// rePlaceholder matches tokens a reader must replace before running:
-	// angle-bracket slots, xxxx runs, path/to/ and /home/user stand-ins,
-	// double-brace templates such as a config example's {{.Field | quote}}, and
-	// values that trail off in an ellipsis. The ellipsis is ignored after a
-	// slash so a Go package pattern such as ./... is not mistaken for one.
-	rePlaceholder = regexp.MustCompile(
-		`<[^<>\s]+>|=<[^<>]+>|(^|[^${])\{[A-Za-z][A-Za-z0-9_]*\}|(^|\s)\[[^\[\]\s]+\](\s|$)` +
-			`|\{\{[^{}]*\}\}` +
-			`|\[[^\[\]]*--[^\[\]]*\]|\[[A-Za-z][^\[\]]*\]` +
-			`|\bxxxx\b|\*\*\*|\bpath/to/|/(home|Users)/(user|you|me|username|yourname)\b` +
-			`|<[A-Za-z][\w.-]*(?: [\w.-]+)+>` +
-			`|(github|gitlab)\.com/(example|your-?(org|user|name)|username|owner)/` +
-			`|(^|[^/])\.\.\.($|[\s'".])`)
 	// reLogin matches a command that starts an interactive sign-in.
 	reLogin = regexp.MustCompile(`\b(login|signin|sign-in|logout)\b`)
 	// reLocalhost matches a reference to a service on the local machine,
