@@ -55,6 +55,29 @@ const binaryRestore = `for __kp in "${__kbin[@]}"; do
 done
 `
 
+// treeStash is where the session keeps the working tree as the install and
+// the fixtures left it.
+const treeStash = "/tmp/kibble-tree.tar"
+
+// treeSave archives the working tree before the first document runs, leaving
+// .git to the repository reset. A failed archive is removed, so no document
+// boundary restores a partial one.
+const treeSave = `tar -cf ` + treeStash + ` --exclude=./.git -C /work/repo . >/dev/null 2>&1 ||
+  rm -f ` + treeStash + `
+`
+
+// treeRestore puts the working tree back as the install and the fixtures left
+// it, at every document boundary after the first, since cspell's first
+// document wrote a cache inside the repository that the next one read. The
+// tree is cleared in place and never removed, because the parent shell's
+// working directory is /work/repo and must stay the same directory.
+// Home-directory state is not restored.
+const treeRestore = `if [ -f ` + treeStash + ` ]; then
+  find /work/repo -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+  tar -xf ` + treeStash + ` -C /work/repo >/dev/null 2>&1
+fi
+`
+
 // gitEditorPath is where the session writes the editor git opens.
 const gitEditorPath = "/tmp/kibble-git-editor"
 
@@ -200,6 +223,11 @@ done
 	for _, k := range sortedKeys(plan.Env) {
 		fmt.Fprintf(&b, "export %s='%s'\n", k, shellSafe(plan.Env[k]))
 	}
+	// The archive is only of use at a document boundary, so a session with one
+	// document is left exactly as it was.
+	if documentCount(plan) > 1 {
+		b.WriteString(treeSave)
+	}
 	// Each document runs in a shell of its own, because the planner judges
 	// every document as if it started the session. A cd, a variable, a shell
 	// option or an exit in one document used to carry into the next, and a
@@ -207,7 +235,8 @@ done
 	// earlier one left behind: a second `git remote add origin` exited 3 and a
 	// second server found its port taken. The parent shell never leaves the
 	// repository, and each document after the first starts with a repository
-	// as new as the one the first was given.
+	// as new as the one the first was given, in a working tree as the install
+	// and the fixtures left it.
 	doc, opened := "", false
 	for _, s := range plan.Steps {
 		if !opened || s.Doc != doc {
@@ -216,7 +245,7 @@ done
 				if len(plan.Binaries) > 0 {
 					b.WriteString(binaryRestore)
 				}
-				b.WriteString("rm -rf .git\n" + sessionRepo)
+				b.WriteString(treeRestore + "rm -rf .git\n" + sessionRepo)
 			} else {
 				b.WriteString("(\ncd /work/repo\n")
 			}
