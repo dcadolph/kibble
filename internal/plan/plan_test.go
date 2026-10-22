@@ -682,6 +682,10 @@ func TestSkipReasonReaderNames(t *testing.T) {
 		Line:       `gita verify aqua_checksums.txt`,
 		WantSkip:   "references aqua_checksums.txt, which the docs never create",
 		WantReason: verdict.ReasonMissingFixture, WantGap: true,
+	}, { // Test 4: a numbered operand is a placeholder.
+		Line:       `gita group add repo1 repo2`,
+		WantSkip:   `docs use "repo1" as a placeholder the reader must fill in`,
+		WantReason: verdict.ReasonPlaceholder,
 	}}
 
 	for testNum, test := range tests {
@@ -692,6 +696,69 @@ func TestSkipReasonReaderNames(t *testing.T) {
 			if skip != test.WantSkip || reason != test.WantReason || gap != test.WantGap {
 				t.Errorf("skipReason = (%q, %q, %v), want (%q, %q, %v)",
 					skip, reason, gap, test.WantSkip, test.WantReason, test.WantGap)
+			}
+		})
+	}
+}
+
+// TestSkipReasonReaderFile checks that a my-prefixed file name the tree lacks
+// is given to the reader as a fixture, so the line runs rather than skips.
+func TestSkipReasonReaderFile(t *testing.T) {
+	t.Parallel()
+	pl := newReaderNameTestPlanner(map[string]bool{}, "tool")
+	line := `tool myfile.txt`
+	if skip, _, _ := pl.skipReason(line, docblock.Flatten(line)); skip != "" {
+		t.Errorf("skipReason = %q, want no skip", skip)
+	}
+	var fixtures []string
+	for _, f := range pl.plan.Fixtures {
+		fixtures = append(fixtures, f.Path)
+	}
+	if diff := cmp.Diff([]string{"myfile.txt"}, fixtures); diff != "" {
+		t.Errorf("fixtures mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestReaderNamedOperand checks the operands the reader is expected to
+// replace, and the ones that are real: example values such as foo, file
+// names, output paths, flags, and names the repo provides.
+func TestReaderNamedOperand(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		Tree       map[string]bool
+		Line       string
+		WantResult string
+	}{{ // Test 0: a numbered noun is a stand-in.
+		Line: `gita group add repo1 repo2 -n my-group`, WantResult: "repo1",
+	}, { // Test 1: a my-prefixed name with a trailing slash is a stand-in.
+		Line: `tach report my_package/`, WantResult: "my_package",
+	}, { // Test 2: a my-prefixed directory after a boolean flag is a stand-in.
+		Line: `repren --patterns=patfile --full mydir1`, WantResult: "mydir1",
+	}, { // Test 3: a value written after a space is read as an operand.
+		Line: `tool --name my-app`, WantResult: "my-app",
+	}, { // Test 4: foo is a real example value.
+		Line: `rg foo`, WantResult: "",
+	}, { // Test 5: a comma list of example values has no stand-in.
+		Line: `aqua rm foo,suzuki-shunsuke/foo`, WantResult: "",
+	}, { // Test 6: a my-prefixed file name is left to the file rule.
+		Line: `repren --from foo --to bar myfile.txt`, WantResult: "",
+	}, { // Test 7: a style file is left to the file rule.
+		Line: `glow -s mystyle.json`, WantResult: "",
+	}, { // Test 8: an output path is one the line writes.
+		Line: `tool -o my-out/`, WantResult: "",
+	}, { // Test 9: a name in the tree is real.
+		Tree: map[string]bool{"my-app": true}, Line: `tool my-app`, WantResult: "",
+	}, { // Test 10: an ordinary word is not a stand-in.
+		Line: `tool build`, WantResult: "",
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			pl := newReaderNameTestPlanner(test.Tree)
+			if diff := cmp.Diff(test.WantResult, pl.readerNamedOperand(test.Line)); diff != "" {
+				t.Errorf("readerNamedOperand mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

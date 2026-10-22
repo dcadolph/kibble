@@ -108,6 +108,12 @@ func (pl *planner) skipReason(cmd, flat string) (string, verdict.Reason, bool) {
 		return fmt.Sprintf("docs use %q as a placeholder the reader must fill in",
 			bareWordPlaceholder(flat)), verdict.ReasonPlaceholder, false
 	}
+	if bin != "" {
+		if op := pl.readerNamedOperand(flat); op != "" {
+			return fmt.Sprintf("docs use %q as a placeholder the reader must fill in", op),
+				verdict.ReasonPlaceholder, false
+		}
+	}
 	expandable := withoutSingleQuoted(flat)
 	for v := range pl.badVars {
 		if strings.Contains(expandable, "$"+v) || strings.Contains(expandable, "${"+v+"}") {
@@ -300,6 +306,38 @@ func bareWordPlaceholder(flat string) string {
 		if placeholderWords[tok] || upperPlaceholderWords[tok] ||
 			reUpperPlaceholder.MatchString(tok) || reUpperArg.MatchString(tok) {
 			return tok
+		}
+	}
+	return ""
+}
+
+// reReaderNamed matches an operand docs use as a stand-in name the reader
+// replaces: a my-prefixed name such as my-project, or a noun with a number
+// such as repo1. Both are a naming convention that says "yours goes here".
+// Words such as foo are not in the class, since docs use them as real example
+// values, and a token with an extension is not either.
+var reReaderNamed = regexp.MustCompile(
+	`^(my[-_]?[\w-]+|(repo|file|dir|group|project|plugin|package|app)\d+)$`)
+
+// readerNamedOperand returns the first operand of a line that reads as a
+// name the reader supplies, or empty when none does. A name the repo or an
+// earlier line provides is real, and a value given to an output flag is one
+// the line writes. A file-shaped token never matches, since reReaderNamed
+// allows no dot, so missingFile decides file names. A --flag=value value is
+// never an operand. A value written after a space cannot be told from an
+// operand without the flag's arity, so it is read as one.
+func (pl *planner) readerNamedOperand(flat string) string {
+	ops := shell.Operands(flat)
+	for i, tok := range ops {
+		if strings.HasPrefix(tok, "-") || (i > 0 && outputFlags[ops[i-1]]) {
+			continue
+		}
+		for _, part := range strings.Split(tok, ",") {
+			part = strings.TrimSuffix(part, "/")
+			if !reReaderNamed.MatchString(part) || pl.tree[part] || pl.created[part] {
+				continue
+			}
+			return part
 		}
 	}
 	return ""
