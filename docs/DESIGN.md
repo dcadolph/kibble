@@ -192,6 +192,15 @@ and anything written for an agent. A document with no runnable recipe is skipped
 a container is spent on it. Settle the rest in [.kibble.yml](CONFIG.md) with `docs` to
 add one and `skipDocs` to drop one.
 
+Each document after the first gets its own shell and a new repository, and it also gets
+the tool the install produced. A document can replace the tool under test: lla's
+getting-started page runs `lla upgrade --version v0.5.1`, and every document after it
+used to test 0.5.1 instead of the build the install made. So the session keeps a copy of
+each documented binary that is a plain file rather than a link into a package, and at
+every document boundary it puts back any binary a document changed. Nothing in the home
+directory is restored. A plugin one document installs, or a configuration it writes
+there, is still present for the next.
+
 Some documents name a file the reader is meant to supply, such as a calendar export or a
 profile they write themselves. That reads as a gap because kibble cannot tell it from a
 step somebody forgot. Settle it in `.kibble.yml`: give the session a fixture when a
