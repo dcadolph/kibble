@@ -128,6 +128,10 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonInteractive
 		lr.Detail = "needs a terminal, which the container lacks"
+	case reOtherArch.MatchString(o.output):
+		lr.Status = StatusSkipped
+		lr.Reason = ReasonOtherPlatform
+		lr.Detail = "needs an architecture the container does not have: " + tail
 	case undocumentedSetting(o.output, documented) != "":
 		// The tool named a setting the document never mentions, so the reader
 		// is not missing an account, they are missing a step nobody wrote down.
@@ -180,6 +184,22 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Reason = ReasonMissingFixture
 		lr.Detail = "names a git ref this repository does not have, which a document writes " +
 			"both as a placeholder the reader replaces and as a ref that moved: " + tail
+	case registeredNoun(lr.Cmd, o.output) != "" || namelessRegisteredNoun(o.output) != "":
+		// The tool named a preset, plugin, or similar that the command passed,
+		// or said it has none without naming one. The reader defines those
+		// first, and the tool says only that it has none.
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonMissingFixture
+		if noun := registeredNoun(lr.Cmd, o.output); noun != "" {
+			lr.Detail = fmt.Sprintf("names a %s the reader defines first: %s", noun, tail)
+		} else {
+			lr.Detail = fmt.Sprintf("reached for a %s the reader defines first: %s",
+				namelessRegisteredNoun(o.output), tail)
+		}
+	case reConfigLoad.MatchString(o.output):
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonMissingFixture
+		lr.Detail = "could not load a configuration, which the reader's project supplies: " + tail
 	case reNothingSearched.MatchString(o.output):
 		// Not a skip: the line ran. Not a failure either, since a search that
 		// was handed nothing to read has not tested what the document claims.
@@ -249,12 +269,17 @@ var (
 	reTTYErr = regexp.MustCompile(
 		`(?i)/dev/tty|not a (tty|terminal)|terminal is required|requires a terminal|no tty` +
 			`|needs an interactive terminal|interactive terminal|must be run interactively` +
-			`|not interactive|requires a controlling terminal|inappropriate ioctl for device`)
+			`|not interactive|requires a controlling terminal|inappropriate ioctl for device` +
+			`|no such device or address`)
+	// reOtherArch matches a binary built for an architecture the container
+	// cannot run, such as an emulator that lacks the target's loader.
+	reOtherArch = regexp.MustCompile(
+		`(?i)qemu-\w+: could not open|cannot execute binary file|exec format error`)
 	// reCredErr matches errors that mean the command needed credentials a
 	// clean container cannot have.
 	reCredErr = regexp.MustCompile(
 		`(?i)api[_ ]?key|credential|unauthorized|forbidden|\b401\b|\b403\b` +
-			`|not (logged|signed) in|\blog ?in\b|authenticat|missing (token|key)`)
+			`|not (logged|signed) in|\blog ?in\b|authenticat|missing (token|key)|rate limit`)
 	// reSettingName matches an environment setting a tool names in its own
 	// error, such as MYTOOL_CLIENT_ID or MYTOOL_BACKEND_*. Matching the shape
 	// rather than a list of suffixes keeps the rule from needing a new entry
@@ -294,6 +319,30 @@ var (
 		`(?i)pathspec '([^']+)' did not match any file\(s\) known to git` +
 			`|could not find remote (branch|ref) '?([^\s']+)'?` +
 			`|(?:remote )?ref '?([^\s']+)'? not found`)
+	// reUnknownRegistered matches a tool saying it has no preset, profile,
+	// plugin, or similar of the name given. The noun list is closed on purpose:
+	// argument, flag, option, command, and subcommand name a tool's own
+	// vocabulary, so a document using one wrongly is broken.
+	reUnknownRegistered = regexp.MustCompile(
+		`(?i)unknown (preset|profile|alias|plugin|group|context|workspace|project|remote` +
+			`|registry|template|theme) '?([^\s'"]+)'?`)
+	// reUnknownNameless matches the same refusal over the same closed noun list,
+	// with an optional group that captures a name written after the noun and a
+	// space or a colon. The nameless form applies only when that group is empty,
+	// i.e. the noun is at the end of the text or is followed by a closing quote
+	// or punctuation. When a name follows, only the named form decides, because
+	// it deliberately returns FAIL for a name the command never passed.
+	reUnknownNameless = regexp.MustCompile(
+		`(?i)\bunknown (preset|profile|alias|plugin|group|context|workspace|project|remote` +
+			`|registry|template|theme)\b( +'?[^\s'"]|\s*:\s*'?[^\s'"])?`)
+	// reRegisteredNotFound matches the same refusal worded as a name not found.
+	reRegisteredNotFound = regexp.MustCompile(
+		`(?i)\b(preset|profile|alias|plugin|group|context|workspace|project|remote|registry` +
+			`|template|theme) '([^']+)' not found`)
+	// reConfigLoad matches a tool that could not load a configuration, which
+	// the reader's project supplies and a fresh session does not have.
+	reConfigLoad = regexp.MustCompile(
+		`(?i)(failed|unable|could not) to (load|resolve|read) (the )?config(uration)?( file)?`)
 	// reNothingSearched matches a search reporting that its filters left it
 	// nothing to look at. The command ran and worked; what it says is that
 	// this repository holds no file of the kind the example targets, as
@@ -598,6 +647,39 @@ func undocumentedSetting(output string, documented map[string]bool) string {
 			}
 		}
 		return m
+	}
+	return ""
+}
+
+// registeredNoun returns the lowercase noun of a registered name the tool
+// reported missing when the command passed that name as a word, or empty. A
+// name the command never passed is the tool's own business, so it convicts
+// nothing here.
+func registeredNoun(cmd, output string) string {
+	words := shell.ArgWordsOrFields(cmd)
+	for _, re := range []*regexp.Regexp{reUnknownRegistered, reRegisteredNotFound} {
+		for _, m := range re.FindAllStringSubmatch(output, -1) {
+			for _, tok := range words {
+				if _, val, ok := strings.Cut(tok, "="); ok && val == m[2] {
+					return strings.ToLower(m[1])
+				}
+				if tok == m[2] {
+					return strings.ToLower(m[1])
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// namelessRegisteredNoun returns the lowercase noun of a registered name the
+// tool said it does not know without naming one, or empty. A noun followed by
+// a space and a name is left to registeredNoun.
+func namelessRegisteredNoun(output string) string {
+	for _, m := range reUnknownNameless.FindAllStringSubmatch(output, -1) {
+		if m[2] == "" {
+			return strings.ToLower(m[1])
+		}
 	}
 	return ""
 }
