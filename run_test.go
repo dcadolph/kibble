@@ -260,6 +260,56 @@ func TestDockerExampleSession(t *testing.T) {
 	}
 }
 
+// TestBinaryRestore checks that a document replacing the tool under test does
+// not decide what the next document tests. lla's getting-started page
+// upgrades lla to an older release, and every later document then ran the
+// older binary. The session puts back the binary the install produced at each
+// document boundary.
+func TestBinaryRestore(t *testing.T) {
+	if testing.Short() {
+		t.Skip("container test skipped in short mode")
+	}
+	if os.Getenv("KIBBLE_INTEGRATION") == "" {
+		t.Skip("set KIBBLE_INTEGRATION=1 to run container tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := sandbox.Available(ctx); err != nil {
+		t.Skipf("docker is not reachable: %v", err)
+	}
+	plan := &kplan.Plan{
+		Repo: "repo",
+		Installs: []kplan.PlanInstall{{
+			Cmd:    `printf '#!/bin/sh\necho one\n' > "$GOBIN/kb" && chmod +x "$GOBIN/kb"`,
+			Binary: "kb",
+		}},
+		Binaries: []string{"kb"},
+		Steps: []kplan.PlanStep{{
+			ID: "b1", Doc: "README.md",
+			Lines: []kplan.PlanLine{{Cmd: `printf '#!/bin/sh\necho two\n' > "$(command -v kb)"`}},
+		}, {
+			ID: "b2", Doc: "docs/next.md",
+			Lines: []kplan.PlanLine{{Cmd: "kb | grep -q one"}},
+		}},
+	}
+	runner := &DockerRunner{Image: "golang:1.26", Timeout: 120 * time.Second}
+	step := InstallStep{Repo: "repo", Kind: "example", Run: true, plan: plan, dir: t.TempDir()}
+	res := runner.runExample(ctx, step)
+	if res.example == nil {
+		t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+	}
+	var got []Status
+	for _, s := range res.example.Steps {
+		for _, l := range s.Lines {
+			got = append(got, l.Status)
+		}
+	}
+	want := []Status{StatusVerified, StatusVerified}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("line statuses mismatch (-want +got):\n%s\ndetail: %s", diff, res.Detail)
+	}
+}
+
 // TestDockerIsolatedLineTimeout checks the bound on a line with shell
 // structure, in a real container. A line holding a pipe used to receive no
 // per-line timeout at all, so a documented `tool serve | tee log` could spend

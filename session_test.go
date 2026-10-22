@@ -197,7 +197,9 @@ func TestSessionScriptDocuments(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			plan := &kplan.Plan{Repo: "repo", Installs: []kplan.PlanInstall{{Cmd: "true"}}}
+			plan := &kplan.Plan{
+				Repo: "repo", Installs: []kplan.PlanInstall{{Cmd: "true"}}, Binaries: []string{"tool"},
+			}
 			for i, doc := range test.Docs {
 				plan.Steps = append(plan.Steps, kplan.PlanStep{
 					ID: fmt.Sprintf("b%d", i+1), Doc: doc,
@@ -209,10 +211,24 @@ func TestSessionScriptDocuments(t *testing.T) {
 				strings.Count(script, "(\ncd /work/repo\n"),
 				strings.Count(script, documentEnd),
 				strings.Count(script, "rm -rf .git\n"+sessionRepo),
+				strings.Count(script, binaryRestore+"rm -rf .git\n"+sessionRepo),
 			}
-			want := []int{test.WantShells, test.WantShells, test.WantResets}
+			want := []int{test.WantShells, test.WantShells, test.WantResets, test.WantResets}
 			if diff := cmp.Diff(want, got); diff != "" {
-				t.Errorf("shells, ends, resets mismatch (-want +got):\n%s\n%s", diff, script)
+				t.Errorf("shells, ends, resets, restores mismatch (-want +got):\n%s\n%s", diff, script)
+			}
+			// The binaries are copied after the HAVE loop finds them and before
+			// any document runs, and only when there is a boundary to restore at.
+			stash := strings.Index(script, "__kbin=()")
+			if diff := cmp.Diff(test.WantResets > 0, stash >= 0); diff != "" {
+				t.Errorf("stash present mismatch (-want +got):\n%s", diff)
+			}
+			if stash >= 0 {
+				have := strings.Index(script, "KIBBLE-NOBIN")
+				first := strings.Index(script, "KIBBLE-STEP b1 START")
+				if stash < have || stash > first {
+					t.Errorf("stash at %d, want after the HAVE loop (%d) and before b1 (%d)", stash, have, first)
+				}
 			}
 			// The repository is replaced between documents, never inside one.
 			for i := 1; i < len(test.Docs); i++ {
