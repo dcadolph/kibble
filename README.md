@@ -211,6 +211,17 @@ verdict claims the documented step works:
 - `DRIFT` means the docs cite a flag or subcommand the binary no longer has.
 - `TIMEOUT` and `ERROR` keep slow networks and kibble's own trouble out of your verdict.
 
+When a tool reports a missing file, program, git history, preset, or configuration,
+kibble reads that as evidence. If the document named the file, the verdict is `GAP`.
+If the tool reached for something the document never mentions, the verdict is
+`BLOCKED`, since the document may be incomplete or the tool may have a bug and kibble
+cannot tell which. If the container lacks a program, the verdict is `SKIP`. An operand
+written as a stand-in name, such as `my-project` or `repo1`, is a placeholder the reader
+fills in, so that line is a `SKIP`. Documents under directories named for an older
+version are not replayed, so a project's current docs are tested and its archived ones
+are not. Each document after the first starts from the tree and the tool the install
+left. What a document writes in the home directory still carries over to the next.
+
 Every verdict also carries a coarse `bucket` (`works`, `unverified`, `broken`,
 `doc-drift`, `not-attempted`, `inconclusive`) so a consumer can condense the fine
 verdicts without hard-coding them. By default only `FAIL` and `ERROR` fail a run;
