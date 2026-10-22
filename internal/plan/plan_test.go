@@ -437,6 +437,49 @@ func TestSkipHeuristics(t *testing.T) {
 	}
 }
 
+// TestFindingFlagNonzeroOK checks that a check-mode flag marks only its own line, while a
+// documented note spreads to every line running the same command.
+func TestFindingFlagNonzeroOK(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Markdown string
+		Binary   string
+		Want     []bool
+	}{{ // Test 0: a check-mode flag on a documented binary is a documented exit.
+		Markdown: "```sh\npinact run --fix=false --no-api\n```\n", Binary: "pinact",
+		Want: []bool{true},
+	}, { // Test 1: the same binary without the flag is not.
+		Markdown: "```sh\npinact run\n```\n", Binary: "pinact", Want: []bool{false},
+	}, { // Test 2: a bare check flag on a documented binary counts.
+		Markdown: "```sh\ntool --check\n```\n", Binary: "tool", Want: []bool{true},
+	}, { // Test 3: an undocumented binary does not count, and the planner drops the line.
+		Markdown: "```sh\nother --check\n```\n", Binary: "tool", Want: nil,
+	}, { // Test 4: a note spreads to a plain line of the same command.
+		Markdown: "```sh\n# exits non-zero when it finds any\ntool run\n```\n" +
+			"text\n```sh\ntool run\n```\n",
+		Binary: "tool", Want: []bool{true, true},
+	}, { // Test 5: a flag marks its own line and does not spread.
+		Markdown: "```sh\ntool run --check\n```\ntext\n```sh\ntool run\n```\n",
+		Binary:   "tool", Want: []bool{true, false},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := BuildPlan("repo", "", test.Markdown, []string{test.Binary}, nil, nil,
+				testRecognizer())
+			var got []bool
+			for _, l := range projectPlan(plan) {
+				for _, pl := range l {
+					got = append(got, pl.NonzeroOK)
+				}
+			}
+			if diff := cmp.Diff(test.Want, got); diff != "" {
+				t.Errorf("NonzeroOK mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestWatcherInvocation checks that a tool described as a watcher skips only
 // the invocations that actually reach its watching or serving mode, so a
 // one-shot subcommand of the same tool still runs.
