@@ -52,6 +52,12 @@ func TestExtractUsage(t *testing.T) {
 		Binaries:  []string{"tool"},
 		WantFlags: []string{"older-than"},
 		WantSubs:  []string{"walk rotate"},
+	}, { // Test 7: a prose fence is skipped and a shell fence is read.
+		In: "```markdown\nmoffee automatically breaks pages\n```\n\n" +
+			"```sh\nmoffee live slides.md\n```\n",
+		Binaries:  []string{"moffee"},
+		WantFlags: nil,
+		WantSubs:  []string{"live"},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
