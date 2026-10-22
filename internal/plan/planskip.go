@@ -118,6 +118,9 @@ func (pl *planner) skipReason(cmd, flat string) (string, verdict.Reason, bool) {
 	if v := pl.unsetVar(flat); v != "" {
 		return fmt.Sprintf("expands $%s, which the docs never set", v), verdict.ReasonMissingFixture, false
 	}
+	if path := pl.missingRedirectIn(flat); path != "" {
+		return fmt.Sprintf("references %s, which the docs never create", path), verdict.ReasonMissingFixture, true
+	}
 	if path := pl.missingFile(flat); path != "" {
 		return fmt.Sprintf("references %s, which the docs never create", path), verdict.ReasonMissingFixture, true
 	}
@@ -265,7 +268,7 @@ var reKernelPath = regexp.MustCompile(`(^|[\s'"=])/(proc|sys)/`)
 // positional tokens count, so a real file named pattern.txt is unaffected.
 var placeholderWords = map[string]bool{
 	"pattern": true, "path": true, "file": true, "filename": true, "dirname": true,
-	"query": true, "regex": true, "searchterm": true, "yourfile": true,
+	"query": true, "regex": true, "searchterm": true, "yourfile": true, "files": true,
 }
 
 // upperPlaceholderWords are all-caps stand-ins docs use for a value the reader

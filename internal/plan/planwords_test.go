@@ -6,6 +6,7 @@ import (
 
 	"github.com/dcadolph/kibble/internal/shell"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 // TestPlannerReadsQuotedArguments checks that the planner reads a documented
@@ -110,6 +111,173 @@ func TestShellFirstWord(t *testing.T) {
 			got := shell.FirstWord(test.Line)
 			if diff := cmp.Diff(test.Want, got); diff != "" {
 				t.Errorf("shell.FirstWord mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestMissingFileReaderInputs checks the file rules for names the reader
+// supplies: archive and diagram extensions count as files, and a name that
+// says it holds checksums or a signature is reported rather than fabricated.
+func TestMissingFileReaderInputs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		Line         string
+		WantFile     string
+		WantFixtures []string
+	}{{ // Test 0: a diagram source is a file.
+		Line: `mmdr -i diagram.mmd -o out.svg`, WantFile: "diagram.mmd",
+	}, { // Test 1: a tarball is a file.
+		Line: `lla source.tar.gz -l`, WantFile: "source.tar.gz",
+	}, { // Test 2: a checksum list is missing and never fabricated.
+		Line:     `cat aqua_2.34.0_checksums.txt | sha256sum -c -`,
+		WantFile: "aqua_2.34.0_checksums.txt",
+	}, { // Test 3: a sums file is never fabricated.
+		Line: `cat sha256sums.txt`, WantFile: "sha256sums.txt",
+	}, { // Test 4: an ordinary prose file still becomes a fixture.
+		Line: `cat notes.txt`, WantFixtures: []string{"notes.txt"},
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			pl := &planner{
+				plan:     &Plan{},
+				binaries: map[string]bool{"mmdr": true, "lla": true},
+				tree:     map[string]bool{},
+				created:  map[string]bool{},
+				fixed:    map[string]bool{},
+			}
+			got := pl.missingFile(test.Line)
+			if diff := cmp.Diff(test.WantFile, got); diff != "" {
+				t.Errorf("missingFile mismatch (-want +got):\n%s", diff)
+			}
+			var fixtures []string
+			for _, f := range pl.plan.Fixtures {
+				fixtures = append(fixtures, f.Path)
+			}
+			if diff := cmp.Diff(test.WantFixtures, fixtures, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("fixtures mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestRePlaceholderOrgPaths checks that a repository URL naming a stand-in
+// owner is a placeholder and one naming a real owner is not.
+func TestRePlaceholderOrgPaths(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		In   string
+		Want bool
+	}{{ // Test 0: the example owner is a stand-in.
+		In: `lla install --git https://github.com/example/my-lla-plugins`, Want: true,
+	}, { // Test 1: a your-org owner is a stand-in.
+		In: `git clone https://gitlab.com/your-org/repo`, Want: true,
+	}, { // Test 2: a real owner is not.
+		In: `git clone https://github.com/dcadolph/kibble`, Want: false,
+	}, { // Test 3: a synopsis slot with a space is a stand-in.
+		In: `aqua update <command name> [<command name> ...]`, Want: true,
+	}, { // Test 4: a redirect with spaces on both sides is not a slot.
+		In: `tool < in > out`, Want: false,
+	}, { // Test 5: a redirect with a space before the closing bracket is not a slot.
+		In: `tool <in > out`, Want: false,
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if got := rePlaceholder.MatchString(test.In); got != test.Want {
+				t.Errorf("rePlaceholder.MatchString(%q) = %v, want %v", test.In, got, test.Want)
+			}
+		})
+	}
+}
+
+// TestDownloadedNames checks which file names a curl or wget line creates.
+func TestDownloadedNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		Fields     []string
+		WantResult []string
+	}{{ // Test 0: curl -LO saves under the URL's last segment.
+		Fields:     []string{"curl", "-LO", "https://h/archive/0.7.1.zip"},
+		WantResult: []string{"0.7.1.zip"},
+	}, { // Test 1: curl without -O writes to stdout.
+		Fields: []string{"curl", "https://h/0.7.1.zip"},
+	}, { // Test 2: curl -o is handled elsewhere and adds nothing here.
+		Fields: []string{"curl", "-o", "out.zip", "https://h/0.7.1.zip"},
+	}, { // Test 3: the query is dropped.
+		Fields:     []string{"curl", "-LO", "https://h/x.zip?v=1"},
+		WantResult: []string{"x.zip"},
+	}, { // Test 4: the fragment is dropped.
+		Fields:     []string{"curl", "-fsSLO", "https://h/x.zip#frag"},
+		WantResult: []string{"x.zip"},
+	}, { // Test 5: --remote-name counts.
+		Fields:     []string{"curl", "--remote-name", "ftp://h/y.tgz"},
+		WantResult: []string{"y.tgz"},
+	}, { // Test 6: every URL operand is saved.
+		Fields:     []string{"curl", "-O", "https://h/a.zip", "https://h/b.zip"},
+		WantResult: []string{"a.zip", "b.zip"},
+	}, { // Test 7: wget saves under the last segment.
+		Fields:     []string{"wget", "https://h/a.tar.gz"},
+		WantResult: []string{"a.tar.gz"},
+	}, { // Test 8: wget -O names the file.
+		Fields:     []string{"wget", "-O", "b.tgz", "https://h/a.tar.gz"},
+		WantResult: []string{"b.tgz"},
+	}, { // Test 9: another command downloads nothing.
+		Fields: []string{"git", "clone", "https://h/a.git"},
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			got := downloadedNames(test.Fields)
+			if diff := cmp.Diff(test.WantResult, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("downloadedNames mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestMissingFileAfterDownload checks that a download line makes the file it
+// saves available to a later line, and that a stdout fetch does not.
+func TestMissingFileAfterDownload(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		Download string
+		Line     string
+		WantFile string
+	}{{ // Test 0: curl -LO provides the archive.
+		Download: `curl -LO https://h/archive/0.7.1.zip`, Line: `unzip 0.7.1.zip`,
+	}, { // Test 1: curl without -O provides nothing.
+		Download: `curl https://h/0.7.1.zip`, Line: `unzip 0.7.1.zip`, WantFile: "0.7.1.zip",
+	}, { // Test 2: curl -o provides the named file.
+		Download: `curl -o out.zip https://h/0.7.1.zip`, Line: `unzip out.zip`,
+	}, { // Test 3: wget provides the URL's file.
+		Download: `wget https://h/a.tar.gz`, Line: `tar xzf a.tar.gz`,
+	}, { // Test 4: wget -O provides the named file.
+		Download: `wget -O b.tgz https://h/a.tar.gz`, Line: `tar xzf b.tgz`,
+	}, { // Test 5: a quoted URL with a query provides the bare name.
+		Download: `curl -LO 'https://h/x.zip?v=1'`, Line: `unzip x.zip`,
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			pl := &planner{
+				plan:    &Plan{},
+				tree:    map[string]bool{},
+				created: map[string]bool{},
+				fixed:   map[string]bool{},
+			}
+			pl.recordCreated(test.Download)
+			if diff := cmp.Diff(test.WantFile, pl.missingFile(test.Line)); diff != "" {
+				t.Errorf("missingFile mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
