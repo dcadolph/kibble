@@ -30,7 +30,8 @@ type Cmd struct {
 	// expansion's source text, since its real value is unknown until it runs.
 	Words []string
 	// Expanded marks a command holding a substitution or expansion whose
-	// value kibble cannot know without running it.
+	// value kibble cannot know without running it, in an argument or in an
+	// assignment prefixing the command.
 	Expanded bool
 }
 
@@ -140,6 +141,11 @@ func Parse(cmd string) (Line, bool) {
 			for _, a := range n.Assigns {
 				if a.Name != nil {
 					c.Assigns = append(c.Assigns, a.Name.Value)
+				}
+				if a.Value != nil {
+					if _, literal := wordText(a.Value); !literal {
+						c.Expanded = true
+					}
 				}
 			}
 			for _, w := range n.Args {

@@ -356,3 +356,43 @@ func TestPipecode(t *testing.T) {
 		})
 	}
 }
+
+// TestSessionScriptAssignPrefix checks how lines carrying an environment prefix are wrapped.
+func TestSessionScriptAssignPrefix(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Cmd         string
+		WantContain string
+		WantAbsent  string
+		WantWrapped bool
+	}{{ // Test 0: An assignment prefix runs under a shell inside the timeout.
+		Cmd: "UV_INDEX=x uv lock", WantContain: "timeout 90 bash -c 'UV_INDEX=x uv lock",
+		WantAbsent: "timeout 90 UV_INDEX=", WantWrapped: true,
+	}, { // Test 1: A plain command is wrapped directly.
+		Cmd: "uv lock", WantContain: "timeout 90 uv lock", WantWrapped: true,
+	}, { // Test 2: An expanded assignment stays unwrapped.
+		Cmd: "FOO=$BAR uv lock", WantContain: "\nFOO=$BAR uv lock\n",
+		WantAbsent: "timeout 90 ", WantWrapped: false,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := &kplan.Plan{
+				Repo: "repo",
+				Steps: []kplan.PlanStep{{
+					ID: "b1", Doc: "README.md", Lines: []kplan.PlanLine{{Cmd: test.Cmd}},
+				}},
+			}
+			script, wrapped := sessionScript(plan, 240, 90)
+			if !strings.Contains(script, test.WantContain) {
+				t.Errorf("script lacks %q:\n%s", test.WantContain, script)
+			}
+			if test.WantAbsent != "" && strings.Contains(script, test.WantAbsent) {
+				t.Errorf("script holds %q:\n%s", test.WantAbsent, script)
+			}
+			if diff := cmp.Diff(test.WantWrapped, wrapped["b1:0"]); diff != "" {
+				t.Errorf("wrapped mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
