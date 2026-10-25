@@ -126,6 +126,14 @@ func TestInstallDocs(t *testing.T) {
 	}, { // Test 5: generated and vendored trees are left alone.
 		Files: map[string]string{"README.md": body, "node_modules/pkg/INSTALL.md": body},
 		Want:  []string{"README.md"},
+	}, { // Test 6: an index under a guide or install-named directory is read.
+		Files: map[string]string{"README.md": body, "docs/guide/index.md": body,
+			"docs/getting-started/index.md": body},
+		Want: []string{"README.md", "docs/getting-started/index.md", "docs/guide/index.md"},
+	}, { // Test 7: an index under docs or another directory is a landing page.
+		Files: map[string]string{"README.md": body, "docs/index.md": body,
+			"docs/config/index.md": body, "index.md": body},
+		Want: []string{"README.md"},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
