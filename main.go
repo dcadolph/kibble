@@ -123,14 +123,10 @@ func main() {
 			fmt.Fprintf(os.Stderr, "kibble could not write the plan: %v\n", err)
 			os.Exit(1)
 		}
-		if len(problems) > 0 {
+		if anyFail(problems, false) {
 			os.Exit(1)
 		}
 		return
-	}
-	if len(steps) == 0 && len(problems) == 0 {
-		fmt.Fprintln(os.Stderr, "no install steps found")
-		os.Exit(0)
 	}
 
 	if hasRunnable(steps) {
@@ -165,8 +161,8 @@ func main() {
 		}
 		githubOutput(dst, results)
 	}
-	if anyFail(results, cfg.Strict) {
-		os.Exit(1)
+	if code := exitCode(results, cfg.Strict); code != 0 {
+		os.Exit(code)
 	}
 }
 
@@ -249,7 +245,8 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 		for i := range steps {
 			installSeen[steps[i].Kind+"|"+steps[i].Module] = true
 		}
-		for _, doc := range installDocs(p, name) {
+		idocs := installDocs(p, name)
+		for _, doc := range idocs {
 			if doc == name {
 				continue
 			}
@@ -272,7 +269,11 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 		// and uv's report described ruff. Package installs still run as example
 		// lines, since the planner only leaves owned installs to the installer.
 		owned := ownedNames(p, repo)
+		seen := installRoutes(steps)
 		steps = slices.DeleteFunc(steps, func(s InstallStep) bool { return !owned.owns(s) })
+		if len(steps) == 0 {
+			problems = append(problems, noInstallRoute(repo, p, name, len(idocs)-1, seen))
+		}
 		bins, installs := sessionInstalls(p, steps)
 		// Flags and subcommands are cited across the whole documentation set,
 		// not only the README, and a reference page drifts faster than a front
@@ -371,6 +372,44 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 		}
 	}
 	return out, plans, problems
+}
+
+// noInstallRoute is the row for a repository whose documents hold no install
+// of the tool itself. It names what was read and the routes seen there, so a
+// reader can tell a repository kibble could not install from one it passed.
+func noInstallRoute(repo, dir, readme string, docs int, routes []string) Result {
+	noun := "install documents"
+	if docs == 1 {
+		noun = "install document"
+	}
+	seen := "none"
+	if len(routes) > 0 {
+		seen = strings.Join(routes, ", ")
+	}
+	return Result{
+		Step:   InstallStep{Repo: repo, Kind: "install", dir: dir, readme: readme},
+		Status: StatusSkipped,
+		Reason: ReasonNoInstallRoute,
+		Detail: fmt.Sprintf("no install route kibble runs in %s and %d %s (routes seen: %s)",
+			readme, docs, noun, seen),
+	}
+}
+
+// installRoutes names the install routes the extractor found, in first-seen
+// order. A system package names its manager, since "os-package" tells a reader
+// less than apt or dnf does.
+func installRoutes(steps []InstallStep) []string {
+	var out []string
+	for _, s := range steps {
+		route := s.Kind
+		if mgr, _, ok := strings.Cut(s.Module, ":"); ok && s.Kind == "os-package" {
+			route = mgr
+		}
+		if !slices.Contains(out, route) {
+			out = append(out, route)
+		}
+	}
+	return out
 }
 
 // sessionInstalls returns the documented binaries and the installs that put
@@ -677,6 +716,27 @@ func hasRunnable(steps []InstallStep) bool {
 		}
 	}
 	return false
+}
+
+// exitCode is the process exit status for a finished run: 1 when anyFail says
+// the run failed, 3 when nothing was checked, else 0. Nothing was checked when
+// every row is a skip: no install ran or was looked up, so no example could
+// run either, whether the documents hold no install route at all or only
+// routes kibble does not run. A check that ran nothing must not read as a
+// pass, and it is not a failure of the documents either.
+func exitCode(results []Result, strict bool) int {
+	if anyFail(results, strict) {
+		return 1
+	}
+	for _, r := range results {
+		if r.Status != StatusSkipped {
+			return 0
+		}
+	}
+	if len(results) == 0 {
+		return 0
+	}
+	return 3
 }
 
 // anyFail reports whether the run should exit non-zero. A build failure always
