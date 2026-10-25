@@ -417,16 +417,20 @@ var (
 // angle-bracket slots, including a synopsis slot with spaces such as
 // <command name>, xxxx runs, path/to/ and /home/user stand-ins,
 // double-brace templates such as a config example's {{.Field | quote}}, a
-// repository under a stand-in owner such as github.com/example/, and values
-// that trail off in an ellipsis. The ellipsis is ignored after a slash so a Go
-// package pattern such as ./... is not mistaken for one.
+// repository under a stand-in owner such as github.com/example/, a stand-in ref
+// such as @fix-something, and values that trail off in an ellipsis. The
+// ellipsis is ignored after a slash so a Go package pattern such as ./... is
+// not mistaken for one.
 var rePlaceholder = regexp.MustCompile(
 	`<[^<>\s]+>|=<[^<>]+>|(^|[^${])\{[A-Za-z][A-Za-z0-9_]*\}|(^|\s)\[[^\[\]\s]+\](\s|$)` +
 		`|\{\{[^{}]*\}\}` +
 		`|\[[^\[\]]*--[^\[\]]*\]|\[[A-Za-z][^\[\]]*\]` +
 		`|\bxxxx\b|\*\*\*|\bpath/to/|/(home|Users)/(user|you|me|username|yourname)\b` +
 		`|<[A-Za-z][\w.-]*(?: [\w.-]+)+>` +
-		`|(github|gitlab)\.com/(example|your-?(org|user|name)|username|owner)/` +
+		`|(github|gitlab)\.com/(example|your-?(org|user|name)|username|owner|contributor|someone` +
+		`|yourusername|your-github-username|my-?org|my-?user)/` +
+		`|@(fix-something|my-branch|some-branch|your-branch|feature-branch|abc123def|abc123` +
+		`|deadbeef|1234567|123abc)\b` +
 		`|(^|[^/])\.\.\.($|[\s'".])`)
 
 // HasPlaceholder reports whether s holds a token the reader must replace
