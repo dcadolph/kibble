@@ -129,15 +129,19 @@ func main() {
 		return
 	}
 
+	runner := &DockerRunner{Image: cfg.Image, Timeout: cfg.Timeout, BrewInstall: cfg.BrewInstall}
 	if hasRunnable(steps) {
 		if err := sandbox.Available(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "kibble needs Docker to run install steps: %v\n", err)
 			os.Exit(2)
 		}
+		if err := checkFreeSpace(ctx, runner, steps); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
 	}
 
 	tags := startTagLookup(ctx, paths, steps)
-	runner := &DockerRunner{Image: cfg.Image, Timeout: cfg.Timeout, BrewInstall: cfg.BrewInstall}
 	results := runAll(ctx, runner, steps, cfg.Workers)
 	if ctx.Err() != nil {
 		fmt.Fprintln(os.Stderr, "kibble: interrupted")
@@ -716,6 +720,34 @@ func hasRunnable(steps []InstallStep) bool {
 		}
 	}
 	return false
+}
+
+// checkFreeSpace returns an error when Docker has less free space than a run
+// needs. Out of space, installs fail with errors that read like the
+// document's fault. The space is measured in the image the first runnable
+// step uses, which that step pulls anyway. A measurement that cannot be taken
+// is printed as a warning and the run goes on, since each step then reports
+// Docker's own error on its row.
+func checkFreeSpace(ctx context.Context, r *DockerRunner, steps []InstallStep) error {
+	i := slices.IndexFunc(steps, func(s InstallStep) bool { return s.Run })
+	if i < 0 {
+		return nil
+	}
+	free, err := sandbox.FreeBytes(ctx, r.imageFor(steps[i]))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "kibble could not measure free space in Docker: %v\n", err)
+		return nil
+	}
+	if free < sandbox.MinFreeBytes {
+		return fmt.Errorf("kibble needs at least %s free in Docker, %s free",
+			gib(sandbox.MinFreeBytes), gib(free))
+	}
+	return nil
+}
+
+// gib formats a byte count in GiB with one decimal place.
+func gib(n int64) string {
+	return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
 }
 
 // exitCode is the process exit status for a finished run: 1 when anyFail says
