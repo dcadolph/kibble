@@ -224,6 +224,19 @@ func isInstallDoc(base string) bool {
 	return false
 }
 
+// isInstallIndex reports whether an index document is install instructions,
+// judged by the name of its parent directory. Sites such as vite keep their
+// install page at guide/index.md, so an index counts when its directory is an
+// install-named directory or a guide directory. An index directly under docs
+// or the root is a landing page and stays out.
+func isInstallIndex(base, parent string) bool {
+	if base != "index" {
+		return false
+	}
+	parent = strings.ToLower(parent)
+	return isInstallDoc(parent) || parent == "guide" || parent == "guides"
+}
+
 // installDocs returns the documents to extract install steps from, as paths
 // relative to dir, with the README first. Install instructions live in the
 // README and in install-named documents, in the tree or under a docs
@@ -254,7 +267,8 @@ func installDocs(dir, readme string) []string {
 			return nil
 		}
 		base := strings.ToLower(strings.TrimSuffix(d.Name(), filepath.Ext(d.Name())))
-		if skipNames[base] || hasSkipPrefix(base) || !isInstallDoc(base) {
+		install := isInstallDoc(base) || isInstallIndex(base, filepath.Base(filepath.Dir(rel)))
+		if skipNames[base] || hasSkipPrefix(base) || !install {
 			return nil
 		}
 		found = append(found, rel)
