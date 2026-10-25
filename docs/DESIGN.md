@@ -61,6 +61,12 @@ it needs root and a distribution whose repository holds the package. Both are re
 skips with a reason, so a repository whose only install is one of these is answered
 honestly rather than as if nothing were documented.
 
+When the documents hold no install of the tool itself that kibble extracts, the install
+check is a `SKIP` with the reason `no-install-route`. The detail names the README, how
+many install documents were read, and the routes seen, such as brew, apt, or none. It is
+not a `GAP`, because the documents may describe routes kibble does not run. When every
+row is a skip, the run exits 3, so a check that ran nothing does not read as a pass.
+
 A package install runs the documented line verbatim, so what kibble verifies is the
 command a reader would actually type, flags and all. The bin directory is compared before
 and after, so the binary is found even when the package does not name it: a `cargo
@@ -164,6 +170,20 @@ also expect a reader to bring their own file, a gap reports and counts but does 
 a run unless `-strict` is set. A brew name that no index knows lands here too: the
 document may be fine and the lookup short, and the difference is settled by installing
 it, not by asserting one.
+
+A line that would otherwise be a plain `FAIL` is `BLOCKED` with the reason
+`inherited-state` when it ran in a directory an earlier section entered with `cd`,
+`pushd`, or `popd`. Documents change directory once in a setup section and stay there, so
+a later section can fail on what that directory holds rather than on what it says.
+Crashes, gaps, and every other excuse keep precedence, and only a would-be plain `FAIL`
+moves. Resetting the working directory at every heading was rejected, because it would
+break every document that changes directory once in setup and invent failures.
+
+A tool that says it could not find a remote or a configuration section, as rclone does
+with "didn't find section in config file", is `BLOCKED` with the reason `missing-fixture`,
+since the reader configures that remote first. The rule reads the tool's own words after
+the run and does not inspect `name:` operands beforehand, because `image:tag`,
+`host:path`, and `user@host:file` share that shape.
 
 `FAIL` is reserved for a documented line that was executed and did not work. Nothing
 kibble merely looked up can produce one. That rule exists because it was broken once, in
