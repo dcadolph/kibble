@@ -95,6 +95,14 @@ func TestReadDocSet(t *testing.T) {
 		"CHANGELOG.md":      "removed tool --gone in v2\n",
 		"CONTRIBUTING.md":   "run tool --maintainer-only\n",
 		"docs/dev/notes.md": "tool --internal\n",
+		// The shapes of ruff's and schemathesis's history documents, which cited
+		// removed flags and commands and were reported as drift.
+		"BREAKING_CHANGES.md":      "ruff --format json --explain E402   # No longer works.\n",
+		"changelogs/0.5.x.md":      "- `ruff --generate-shell-completion`; use `ruff generate-shell-completion`\n",
+		"MIGRATION.md":             "- `schemathesis auth` & `schemathesis upload`. Removed.\n",
+		"docs/upgrading.md":        "tool --old-form\n",
+		"RELEASE_NOTES.md":         "tool --released-once\n",
+		"docs/release-notes/v2.md": "tool --noted\n",
 	}
 	for name, body := range files {
 		full := filepath.Join(dir, name)
@@ -111,7 +119,10 @@ func TestReadDocSet(t *testing.T) {
 			t.Errorf("doc set missing %q", want)
 		}
 	}
-	for _, unwanted := range []string{"--gone", "--maintainer-only", "--internal"} {
+	for _, unwanted := range []string{
+		"--gone", "--maintainer-only", "--internal", "--explain", "--generate-shell-completion",
+		"schemathesis auth", "--old-form", "--released-once", "--noted",
+	} {
 		if strings.Contains(all, unwanted) {
 			t.Errorf("doc set should not include a history or dev document citing %q", unwanted)
 		}

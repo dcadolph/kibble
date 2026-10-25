@@ -39,6 +39,38 @@ var skipNames = map[string]bool{
 	"skill": true, "agents": true, "claude": true,
 }
 
+// historyNames are documents that record what changed rather than how the
+// tool works now. They cite removed flags and commands on purpose, so the flag
+// check and doc coverage leave them out: ruff's BREAKING_CHANGES.md and
+// schemathesis's MIGRATION.md were reported as drift for naming what they say
+// is gone. Replay still reads a migration guide, since its steps are meant to
+// run. The prefixes catch numbered and versioned forms such as migrating-to-v4.
+var (
+	historyNames    = map[string]bool{"changes": true, "news": true, "releases": true}
+	historyPrefixes = []string{
+		"breaking_change", "breaking-change", "migrat", "upgrad",
+		"release_note", "release-note", "releasenote",
+	}
+	historyDirs = map[string]bool{
+		"changelog": true, "changelogs": true, "changes": true, "history": true,
+		"releases": true, "release-notes": true, "release_notes": true,
+		"migration": true, "migrations": true, "upgrading": true,
+	}
+)
+
+// isHistoryDoc reports whether a document base name marks a history document.
+func isHistoryDoc(base string) bool {
+	if historyNames[base] {
+		return true
+	}
+	for _, p := range historyPrefixes {
+		if strings.HasPrefix(base, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // skipPrefixes drop documents written for an agent or a maintainer rather
 // than a reader following instructions, whatever suffix the name carries.
 var skipPrefixes = []string{"claude", "agent", "skill", "adr-", "rfc-", "design"}
