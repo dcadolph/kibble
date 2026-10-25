@@ -207,10 +207,13 @@ func helpFlags(helpText string) map[string]bool {
 // unknownNamed builds a pattern for a parser saying it does not have the
 // subcommand that was probed. Naming matters: a subcommand that exists but
 // takes no --help answers "schedule: unknown subcommand \"--help\"", which
-// says the argument was wrong, not the subcommand.
+// says the argument was wrong, not the subcommand. The name must stand alone,
+// with no dash or word character on either side: ruff answers `ruff help
+// --help` with "unrecognized subcommand '--help'", and a plain word boundary
+// found the help subcommand inside the flag and called it drift.
 func unknownNamed(leaf string) *regexp.Regexp {
 	return regexp.MustCompile(`(?i)(unknown|invalid|unrecognized|no such) ` +
-		`(command|subcommand)[^\n]{0,16}\b` + regexp.QuoteMeta(leaf) + `\b`)
+		`(command|subcommand)[^\n]{0,16}[^\w-]` + regexp.QuoteMeta(leaf) + `([^\w-]|$)`)
 }
 
 // rejectedSub reports whether the binary rejected a subcommand the docs cite.

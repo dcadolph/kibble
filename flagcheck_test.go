@@ -299,6 +299,17 @@ func TestRejectedSub(t *testing.T) {
 	}, { // Test 6: a nested subcommand is judged on its own probe, by name.
 		SubCodes: map[string]int{"walk rotate": 2}, Sub: "walk rotate", Want: true,
 		HelpBySub: map[string]string{"walk rotate": `Error: unknown command "rotate"`},
+	}, { // Test 7: ruff 0.17.1 answers `ruff help --help` by rejecting the flag,
+		// and the help inside --help is not the help subcommand.
+		SubCodes: map[string]int{"help": 2}, Sub: "help", Want: false,
+		HelpBySub: map[string]string{"help": "error: unrecognized subcommand '--help'\n\n" +
+			"Usage: ruff [OPTIONS] <COMMAND>\n\nFor more information, try '--help'."},
+	}, { // Test 8: the same parser naming a missing subcommand is a rejection.
+		SubCodes: map[string]int{"bogus": 2}, Sub: "bogus", Want: true,
+		HelpBySub: map[string]string{"bogus": "error: unrecognized subcommand 'bogus'"},
+	}, { // Test 9: a longer name that starts with the cited one is not it.
+		SubCodes: map[string]int{"list": 2}, Sub: "list", Want: false,
+		HelpBySub: map[string]string{"list": "error: unrecognized subcommand 'list-all'"},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
