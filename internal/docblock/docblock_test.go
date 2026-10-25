@@ -59,6 +59,32 @@ func TestHasPlaceholder(t *testing.T) {
 		In: `tool <in > out`, Want: false,
 	}, { // Test 6: A single-word slot still is.
 		In: `tool <in> out`, Want: true,
+	}, { // Test 7: A contributor owner and a fix-something ref are stand-ins.
+		In:   `pipx install git+https://github.com/contributor/pipx.git@fix-something`,
+		Want: true,
+	}, { // Test 8: A real owner with an abc123def ref is a stand-in.
+		In:   `pipx install git+https://github.com/pypa/pipx.git@abc123def`,
+		Want: true,
+	}, { // Test 9: A main ref on a real repository is not.
+		In: `pipx install git+https://github.com/psf/black.git@main`, Want: false,
+	}, { // Test 10: A version tag ref is not.
+		In: `pipx install git+https://github.com/pypa/pipx.git@v1.2.3`, Want: false,
+	}, { // Test 11: A latest ref is not.
+		In: `pipx install git+https://github.com/pypa/pipx.git@latest`, Want: false,
+	}, { // Test 12: A full 40-hex sha is not.
+		In: "pip install git+https://github.com/pypa/pipx.git@" +
+			"0123456789abcdef0123456789abcdef01234567",
+		Want: false,
+	}, { // Test 13: A 40-hex sha that begins with abc123 is not.
+		In: "pip install git+https://github.com/pypa/pipx.git@" +
+			"abc1230123456789abcdef0123456789abcdef01",
+		Want: false,
+	}, { // Test 14: A 40-hex sha that begins with deadbeef is not.
+		In: "pip install git+https://github.com/pypa/pipx.git@" +
+			"deadbeef23456789abcdef0123456789abcdef01",
+		Want: false,
+	}, { // Test 15: A your-github-username owner is a stand-in.
+		In: `git clone https://github.com/your-github-username/repo`, Want: true,
 	}}
 
 	for testNum, test := range tests {
