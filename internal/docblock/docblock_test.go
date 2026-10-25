@@ -70,3 +70,36 @@ func TestHasPlaceholder(t *testing.T) {
 		})
 	}
 }
+
+// TestCodeBlocksAdmonition checks that an indented body under an admonition
+// marker is prose, while an indented block after an ordinary paragraph is code.
+func TestCodeBlocksAdmonition(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		In        string
+		WantCount int
+	}{{ // Test 0: A note admonition body is not code.
+		In: "!!! note\n\n    uv does not validate the credentials, so the command succeeds " +
+			"even if they are incorrect.\n",
+		WantCount: 0,
+	}, { // Test 1: A collapsible admonition body is not code.
+		In:        "??? tip\n\n    Some advice.\n\n???+ warning\n\n    Be careful.\n",
+		WantCount: 0,
+	}, { // Test 2: An indented block after an ordinary paragraph is code.
+		In:        "Run this command:\n\n    make build\n",
+		WantCount: 1,
+	}, { // Test 3: A fenced block after an admonition marker is still code.
+		In:        "!!! note\n\n```sh\nmake build\n```\n",
+		WantCount: 1,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			got := len(CodeBlocks(test.In))
+			if diff := cmp.Diff(test.WantCount, got); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
