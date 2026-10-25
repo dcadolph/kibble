@@ -258,7 +258,7 @@ func flagChecks(results []Result) []Result {
 			out = append(out, check)
 			continue
 		}
-		var missing, unverifiable []string
+		var rejected, missing, unreleased, unverifiable []string
 		for _, f := range r.Step.Usage.Flags {
 			if known[f] {
 				continue
@@ -269,7 +269,7 @@ func flagChecks(results []Result) []Result {
 			// was partial. A screen is metadata; the probe is the tool.
 			if probe, probed := r.helpByFlag[f]; probed {
 				if flagRejected(probe, f) {
-					missing = append(missing, r.Step.Usage.dashOf(f)+f)
+					rejected = append(rejected, f)
 				}
 				continue
 			}
@@ -283,6 +283,24 @@ func flagChecks(results []Result) []Result {
 			unverifiable = append(unverifiable, r.Step.Usage.dashOf(f)+f)
 		}
 		sort.Strings(unverifiable)
+		ahead := unreleasedFlags(r.Step.dir, r.Step.Kind, rejected)
+		for _, f := range rejected {
+			if ahead[f] {
+				unreleased = append(unreleased, r.Step.Usage.dashOf(f)+f)
+			} else {
+				missing = append(missing, r.Step.Usage.dashOf(f)+f)
+			}
+		}
+		sort.Strings(unreleased)
+		release := "the installed release"
+		if r.SmokeLine != "" {
+			release = "the installed " + r.SmokeLine
+		}
+		unreleasedNote := ""
+		if len(unreleased) > 0 {
+			unreleasedNote = fmt.Sprintf("%d unreleased (%s), defined in the source at HEAD but not in %s",
+				len(unreleased), strings.Join(unreleased, " "), release)
+		}
 		var badSubs []string
 		for _, s := range r.Step.Usage.Subs {
 			if rejectedSub(r, s) {
@@ -295,10 +313,13 @@ func flagChecks(results []Result) []Result {
 		case len(missing) == 0 && len(badSubs) == 0:
 			check.Status = StatusVerified
 			check.Detail = fmt.Sprintf("%d cited flags ok, %d subcommands cited",
-				len(r.Step.Usage.Flags)-len(unverifiable), len(r.Step.Usage.Subs))
+				len(r.Step.Usage.Flags)-len(unverifiable)-len(unreleased), len(r.Step.Usage.Subs))
 			if len(unverifiable) > 0 {
 				check.Detail += fmt.Sprintf(", %d unverified (%s)",
 					len(unverifiable), strings.Join(unverifiable, " "))
+			}
+			if unreleasedNote != "" {
+				check.Detail += ", " + unreleasedNote
 			}
 		default:
 			check.Status = StatusDrift
@@ -308,6 +329,9 @@ func flagChecks(results []Result) []Result {
 			}
 			if len(badSubs) > 0 {
 				parts = append(parts, "unknown subcommand "+strings.Join(badSubs, " "))
+			}
+			if unreleasedNote != "" {
+				parts = append(parts, unreleasedNote)
 			}
 			check.Detail = strings.Join(parts, ", ")
 		}
