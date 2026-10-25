@@ -24,6 +24,7 @@ const (
 	BucketWorks              = verdict.BucketWorks
 	ReasonAlreadyProven      = verdict.ReasonAlreadyProven
 	ReasonDependsOnSkipped   = verdict.ReasonDependsOnSkipped
+	ReasonInheritedState     = verdict.ReasonInheritedState
 	ReasonInteractive        = verdict.ReasonInteractive
 	ReasonLongRunning        = verdict.ReasonLongRunning
 	ReasonMissingDependency  = verdict.ReasonMissingDependency

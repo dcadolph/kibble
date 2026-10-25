@@ -159,4 +159,7 @@ const (
 	// of the tool itself, so nothing about installing it was checked. It is not
 	// a gap: the documents may describe routes kibble does not run.
 	ReasonNoInstallRoute Reason = "no-install-route"
+	// ReasonInheritedState marks a failure in a directory an earlier section
+	// entered, so the section's own claim was not tested as written.
+	ReasonInheritedState Reason = "inherited-state"
 )

@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
-	"github.com/dcadolph/kibble/internal/docblock"
-	kplan "github.com/dcadolph/kibble/internal/plan"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dcadolph/kibble/internal/docblock"
+	kplan "github.com/dcadolph/kibble/internal/plan"
+	"github.com/dcadolph/kibble/internal/shell"
 )
 
 // Reading the session's output back into per-line outcomes. The marker
@@ -31,7 +33,15 @@ type lineOutcome struct {
 	// exit code and never sees its words, so an empty output here means the
 	// output went somewhere else and not that the command was quiet.
 	logged bool
+	// cwd is the directory the line ran in, empty when the marker carried none.
+	cwd string
+	// inherited marks a line that ran in a directory an earlier section of its
+	// document entered, which its own section never did.
+	inherited bool
 }
+
+// sessionRepoDir is the directory every document's shell starts in.
+const sessionRepoDir = "/work/repo"
 
 // markerTail splits a line on a session marker, returning the output that
 // preceded the marker, the text that followed it, and whether the marker is
@@ -87,8 +97,9 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 			switch {
 			case m[3] != "":
 				o.code, _ = strconv.Atoi(m[3])
-			case m[4] != "":
-				ready, _ := strconv.Atoi(m[4])
+				o.cwd = m[4]
+			case m[5] != "":
+				ready, _ := strconv.Atoi(m[5])
 				o.background = true
 				o.ready = ready == 0
 			}
@@ -126,8 +137,13 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 	run := &exampleRun{}
 	documented := documentedSettings(plan)
 	ended := false
+	// entered holds the sections, by document and heading, that ran a cd. A
+	// document keeps one shell, so a directory one section enters is where
+	// every later section of that document runs.
+	entered := map[string]bool{}
 	for _, s := range plan.Steps {
 		es := exampleStep{ID: s.ID, Doc: s.Doc, Heading: s.Heading}
+		section := s.Doc + "\x00" + s.Heading
 		for i, l := range s.Lines {
 			key := fmt.Sprintf("%s:%d", s.ID, i)
 			lr := lineResult{Cmd: docblock.Flatten(l.Cmd), Code: -1, Line: l.Line, Synthetic: l.Synthetic}
@@ -163,7 +179,11 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 				// silence from one of its lines is kibble's blind spot rather
 				// than the command's.
 				o.logged = s.Background
+				o.inherited = o.cwd != "" && o.cwd != sessionRepoDir && !entered[section]
 				lr = classifyLineResult(lr, l, o, wrapped[key], documented, lineBudget)
+			}
+			if changesDir(l.Cmd) {
+				entered[section] = true
 			}
 			es.Lines = append(es.Lines, lr)
 		}
@@ -173,6 +193,21 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 	resolveDependentFailures(run, plan)
 	status, detail := summarize(run)
 	return run, status, detail
+}
+
+// changesDir reports whether a line moves the shell to another directory.
+func changesDir(cmd string) bool {
+	line, ok := shell.Parse(docblock.Flatten(cmd))
+	if !ok {
+		return false
+	}
+	for _, c := range line.Cmds {
+		switch c.Name() {
+		case "cd", "pushd", "popd":
+			return true
+		}
+	}
+	return false
 }
 
 // summarize reduces per-line outcomes to the aggregate status and detail:
