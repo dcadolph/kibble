@@ -810,3 +810,54 @@ func TestReaderNamedOperand(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildPlanProvidedTools checks that a tool an example installs is a known
+// command for the lines after it, as uv's README installs ruff and then runs
+// it, and that a tool installed by a block that does not run stays unknown.
+func TestBuildPlanProvidedTools(t *testing.T) {
+	t.Parallel()
+	toolInstall := regexp.MustCompile(`^uv tool install (\S+)$`)
+	rec := testRecognizer()
+	rec.Provides = func(flat string) string {
+		if m := toolInstall.FindStringSubmatch(flat); m != nil {
+			return m[1]
+		}
+		return ""
+	}
+	tests := []struct {
+		Markdown string
+		Rec      *Recognizer
+		WantCmds []string
+		WantExcl int
+	}{{ // Test 0: ruff installed by an earlier line qualifies.
+		Markdown: "```console\n$ uv tool install ruff\n$ ruff --version\n```\n",
+		Rec:      rec, WantCmds: []string{"uv tool install ruff", "ruff --version"},
+	}, { // Test 1: ruff installed by an earlier block qualifies.
+		Markdown: "```sh\nuv tool install ruff\n```\n\n```sh\nruff check\n```\n",
+		Rec:      rec, WantCmds: []string{"uv tool install ruff", "ruff check"},
+	}, { // Test 2: without the recognizer's answer, the call is an unknown command.
+		Markdown: "```console\n$ uv tool install ruff\n$ ruff --version\n```\n",
+		Rec:      testRecognizer(), WantExcl: 1,
+	}, { // Test 3: an install in a block that does not qualify provides nothing.
+		Markdown: "```sh\nuv tool install ruff\nprose here\n```\n\n```sh\nruff check\n```\n",
+		Rec:      rec, WantExcl: 2,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := BuildPlan("uv", t.TempDir(), test.Markdown, []string{"uv"}, nil, nil, test.Rec)
+			var cmds []string
+			for _, st := range plan.Steps {
+				for _, l := range st.Lines {
+					cmds = append(cmds, l.Cmd)
+				}
+			}
+			if diff := cmp.Diff(test.WantCmds, cmds, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("planned lines mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantExcl, plan.Excluded); diff != "" {
+				t.Errorf("excluded mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

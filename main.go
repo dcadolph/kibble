@@ -267,6 +267,12 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 				steps = append(steps, st)
 			}
 		}
+		// An install of some other package is an example of using the tool,
+		// not a route to it. Kept as an install, it became the tool under test,
+		// and uv's report described ruff. Package installs still run as example
+		// lines, since the planner only leaves owned installs to the installer.
+		owned := ownedNames(p, repo)
+		steps = slices.DeleteFunc(steps, func(s InstallStep) bool { return !owned.owns(s) })
 		bins, installs := sessionInstalls(p, steps)
 		// Flags and subcommands are cited across the whole documentation set,
 		// not only the README, and a reference page drifts faster than a front
@@ -328,6 +334,7 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 				skippedDocs: skippedDocs,
 			})
 		}
+		rec := installRecognizer(repo, owned)
 		var merged *kplan.Plan
 		for _, doc := range docs {
 			text := md
@@ -338,7 +345,7 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 				}
 				text = string(body)
 			}
-			_, plan, perr := exampleStepFor(repo, p, doc, text, sessionBins, installs, cfg)
+			_, plan, perr := exampleStepFor(repo, p, doc, text, sessionBins, installs, cfg, rec)
 			if perr != nil || plan == nil || len(plan.Steps) == 0 {
 				continue
 			}
@@ -498,11 +505,11 @@ func sameEcosystem(installs []kplan.PlanInstall, dir string) []kplan.PlanInstall
 // install step that runs it. A bad .kibble.yml is returned as an error rather
 // than dropped, so a config typo cannot pass as a green check.
 func exampleStepFor(repo, dir, doc, md string, bins []string, installs []kplan.PlanInstall,
-	cfg *config.ExamplesConfig) (*InstallStep, *kplan.Plan, error) {
+	cfg *config.ExamplesConfig, rec *kplan.Recognizer) (*InstallStep, *kplan.Plan, error) {
 	if cfg != nil && cfg.Disable {
 		return nil, nil, nil
 	}
-	plan := kplan.BuildPlan(repo, dir, md, bins, installs, cfg, installRecognizer())
+	plan := kplan.BuildPlan(repo, dir, md, bins, installs, cfg, rec)
 	if len(plan.Steps) == 0 {
 		return nil, plan, nil
 	}
@@ -709,10 +716,24 @@ func repoName(path string) string {
 // it can leave them to the installer instead of replaying them as examples.
 // The patterns live here, beside the extractor that already owns them, rather
 // than inside the planner: deciding what to run should not require knowing
-// what every ecosystem's install looks like.
-func installRecognizer() *kplan.Recognizer {
+// what every ecosystem's install looks like. A go install of another module
+// is left to the planner, since it installs something an example then uses.
+func installRecognizer(repo string, owned repoNames) *kplan.Recognizer {
 	return &kplan.Recognizer{
-		Clones:   func(flat string) bool { return reGitClone.MatchString(flat) },
-		Installs: func(flat string) bool { return reGoInstall.MatchString(flat) || reBrew.MatchString(flat) },
+		Clones: func(flat string) bool { return reGitClone.MatchString(flat) },
+		Installs: func(flat string) bool {
+			if reBrew.MatchString(flat) {
+				return true
+			}
+			s, _, ok := classifyLine(repo, flat)
+			return ok && s.Kind == "go-install" && owned.owns(s)
+		},
+		Provides: func(flat string) string {
+			s, _, ok := classifyLine(repo, flat)
+			if !ok || !s.Run || owned.owns(s) || (s.Kind != "go-install" && pkgKinds[s.Kind].Ecosystem == "") {
+				return ""
+			}
+			return s.Binary
+		},
 	}
 }

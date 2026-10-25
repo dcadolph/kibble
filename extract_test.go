@@ -256,7 +256,7 @@ func TestClassifyPackage(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			kind, pkg, ok := classifyPackage(test.In)
+			kind, pkg, ok := classifyPackage("", test.In)
 			if diff := cmp.Diff(test.WantOK, ok); diff != "" {
 				t.Errorf("ok mismatch (-want +got):\n%s", diff)
 			}
@@ -285,6 +285,12 @@ func TestPackageBinary(t *testing.T) {
 		In: "prettier@3.3.3", WantName: "prettier",
 	}, { // Test 3: a scoped and pinned request reduces to the name.
 		In: "@biomejs/biome@1.8.0", WantName: "biome",
+	}, { // Test 4: a git URL with a ref names its repository, not name.git.
+		In: "git+https://github.com/contributor/pipx.git@fix-something", WantName: "pipx",
+	}, { // Test 5: an ssh git URL names its repository.
+		In: "git+ssh://git@github.com/psf/black", WantName: "black",
+	}, { // Test 6: an archive URL names its repository, not the archive file.
+		In: "https://github.com/psf/black/archive/18.9b0.zip", WantName: "black",
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
