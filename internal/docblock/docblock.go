@@ -39,6 +39,10 @@ type Block struct {
 	Lines []string
 }
 
+// admonitionMarker matches the first line of a MkDocs admonition, whose indented
+// body is prose that markdown parsers read as an indented code block.
+var admonitionMarker = regexp.MustCompile(`^(!!!|\?\?\?\+?)\s`)
+
 // CodeBlocks returns the code the author marked, grouped by block: each
 // fenced or indented block is one group of lines, and each inline span is its
 // own group.
@@ -66,6 +70,9 @@ func CodeBlocks(markdown string) []Block {
 			b.Lines = strings.Split(BlockText(node, src), "\n")
 			b.Line = BlockLine(node, src)
 		case *ast.CodeBlock:
+			if admonitionMarker.MatchString(intro) {
+				return ast.WalkContinue, nil
+			}
 			b.Lines = strings.Split(BlockText(node, src), "\n")
 			b.Line = BlockLine(node, src)
 		case *ast.CodeSpan:
