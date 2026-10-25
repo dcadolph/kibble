@@ -185,6 +185,16 @@ Require stack:
 		Cmd:    "tool sync",
 		Output: "Error: ENOENT: no such file or directory\n",
 		Code:   1, WantStatus: StatusFail,
+	}, { // Test 15: A remote the reader configures first is blocked, not a failure.
+		Cmd: "rclone lsd remote:",
+		Output: "2026/10/22 16:24:10 CRITICAL: Failed to create file system for \"remote:\": " +
+			"didn't find section in config file (\"remote\")\n",
+		Code: 1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "names a remote or configuration section the reader configures first: ",
+	}, { // Test 16: A refusal that names no remote or section still fails.
+		Cmd:    "rclone lsd remote:",
+		Output: "Failed to lsd: permission denied\n",
+		Code:   1, WantStatus: StatusFail,
 	}}
 
 	for testNum, test := range tests {
