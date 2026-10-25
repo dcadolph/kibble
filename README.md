@@ -174,6 +174,7 @@ it, so a CI log can always say which kibble produced its verdict.
 | `-timeout`  | `240s`        | Per-step build timeout.                         |
 | `-workers`  | `3`           | Max concurrent installs.                        |
 | `-json`     | `false`       | Emit results as JSON to stdout.                 |
+| `-triage`   | `false`       | After the table, list every non-working result in full. |
 | `-version`  | `false`       | Print the version and exit.                     |
 | `-strict`   | `false`       | Also fail on timeouts, smoke failures, drift, and gaps. |
 | `-examples` | `true`        | Replay each document's example blocks in the container. |
