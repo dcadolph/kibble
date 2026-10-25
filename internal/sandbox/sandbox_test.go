@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -75,5 +77,50 @@ func TestBinRespectsOverride(t *testing.T) {
 	t.Setenv("KIBBLE_DOCKER", "")
 	if got := Bin(); got != "docker" {
 		t.Errorf("Bin() = %q, want the docker default", got)
+	}
+}
+
+// TestParseDF reads the available column from df -Pk output as the four
+// images print it, and refuses output it cannot read.
+func TestParseDF(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Out        string
+		WantResult int64
+		WantShort  bool
+		Want       error
+	}{{ // Test 0: The Docker Desktop VM at 4 GB free.
+		Out: "Filesystem     1024-blocks     Used Available Capacity Mounted on\n" +
+			"overlay           61202244 53917240   4143680      93% /\n",
+		WantResult: 4143680 * 1024,
+	}, { // Test 1: One GiB free reads under the threshold.
+		Out: "Filesystem     1024-blocks     Used Available Capacity Mounted on\n" +
+			"overlay           61202244 60153668   1048576      99% /\n",
+		WantResult: 1 << 30, WantShort: true,
+	}, { // Test 2: A header with no data row is refused.
+		Out:  "Filesystem     1024-blocks     Used Available Capacity Mounted on\n",
+		Want: ErrDF,
+	}, { // Test 3: An available column that is not a number is refused.
+		Out:  "Filesystem 1024-blocks Used Available Capacity Mounted on\noverlay 1 1 - 9% /\n",
+		Want: ErrDF,
+	}, { // Test 4: Empty output is refused.
+		Out:  "",
+		Want: ErrDF,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			got, err := parseDF(test.Out)
+			if !errors.Is(err, test.Want) {
+				t.Fatalf("parseDF error = %v, want %v", err, test.Want)
+			}
+			if got != test.WantResult {
+				t.Errorf("parseDF = %d, want %d", got, test.WantResult)
+			}
+			if short := test.Want == nil && got < MinFreeBytes; short != test.WantShort {
+				t.Errorf("%d free under the %d threshold = %v, want %v",
+					got, MinFreeBytes, short, test.WantShort)
+			}
+		})
 	}
 }
