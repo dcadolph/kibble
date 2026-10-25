@@ -14,9 +14,11 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -103,6 +105,43 @@ func Bin() string {
 		return bin
 	}
 	return "docker"
+}
+
+// MinFreeBytes is the free space kibble needs inside Docker before a run. A
+// daemon out of space fails installs with errors that read like the
+// document's fault, so the run refuses to start instead.
+const MinFreeBytes int64 = 2 << 30
+
+// ErrDF reports df output kibble cannot read a free-space figure from.
+var ErrDF = errors.New("df output not understood")
+
+// FreeBytes returns the space available on the root filesystem of a container
+// started from image. On Docker Desktop that is the VM's disk, which images,
+// volumes, and build cache from every project share. kibble only measures:
+// what to remove is the owner's decision.
+func FreeBytes(ctx context.Context, image string) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, Bin(), "run", "--rm", image, "df", "-Pk", "/").CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("df in %s failed: %s", image, strings.TrimSpace(string(out)))
+	}
+	return parseDF(string(out))
+}
+
+// parseDF reads the available column of POSIX df -Pk output, in kilobyte
+// blocks, and returns it in bytes.
+func parseDF(out string) (int64, error) {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(lines) < 2 || len(fields) < 6 {
+		return 0, fmt.Errorf("%w: %q", ErrDF, out)
+	}
+	kb, err := strconv.ParseInt(fields[3], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%w: available column %q: %w", ErrDF, fields[3], err)
+	}
+	return kb * 1024, nil
 }
 
 // DockerAvailable reports an error when the docker CLI cannot reach a running
