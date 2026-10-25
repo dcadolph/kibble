@@ -130,6 +130,11 @@ type Recognizer struct {
 	// Installs reports whether a line installs the documented tool. Such a
 	// line is skipped on its own; the rest of the block may still be examples.
 	Installs func(flat string) bool
+	// Provides returns the binary a line installs when that binary is some
+	// other tool an example uses, such as ruff after `uv tool install ruff`
+	// in uv's README. Later lines calling it are examples, not unknown
+	// commands. It returns empty for every other line.
+	Provides func(flat string) string
 }
 
 // clones and installs answer false when no recognizer was supplied, which is
@@ -143,12 +148,21 @@ func (r *Recognizer) installs(flat string) bool {
 	return r != nil && r.Installs != nil && r.Installs(flat)
 }
 
+// provides answers empty when no recognizer was supplied.
+func (r *Recognizer) provides(flat string) string {
+	if r == nil || r.Provides == nil {
+		return ""
+	}
+	return r.Provides(flat)
+}
+
 func BuildPlan(repo, dir, markdown string, binaries []string, installs []PlanInstall, cfg *config.ExamplesConfig, rec *Recognizer) *Plan {
 	p := &Plan{Repo: repo, Installs: installs, Binaries: binaries}
 	pl := &planner{
 		rec:      rec,
 		plan:     p,
 		binaries: map[string]bool{},
+		provided: map[string]bool{},
 		tree:     repoTree(dir),
 		module:   moduledPath(dir),
 		created:  map[string]bool{},
@@ -254,6 +268,9 @@ type planner struct {
 	plan *Plan
 	// binaries is the set of documented binary names.
 	binaries map[string]bool
+	// provided is the set of other tools earlier example lines installed, so
+	// a later line calling one of them still qualifies as an example.
+	provided map[string]bool
 	// tree is the set of repo-relative paths in the local checkout.
 	tree map[string]bool
 	// created is the set of paths earlier lines or fixtures produce.
@@ -386,9 +403,12 @@ func (pl *planner) addBlock(block docblock.Block) {
 }
 
 // qualifies reports whether every command line of a block starts with a
-// known command, a documented binary, a package tool, or an assignment.
+// known command, a documented binary, a tool an earlier line installed, a
+// package tool, or an assignment. A tool installed by a block that does not
+// qualify is not recorded, since that install never runs.
 func (pl *planner) qualifies(lines []string) bool {
 	commands := 0
+	provided := map[string]bool{}
 	for _, ln := range lines {
 		flat := strings.TrimSpace(docblock.Flatten(ln))
 		if flat == "" || strings.HasPrefix(flat, "#") {
@@ -396,16 +416,25 @@ func (pl *planner) qualifies(lines []string) bool {
 		}
 		first := shell.FirstWord(flat)
 		switch {
-		case knownCommands[first], pl.binaries[first]:
+		case knownCommands[first], pl.binaries[first], pl.provided[first], provided[first]:
 		case packageTools[first] != "":
 			pl.packages[packageTools[first]] = true
 		case reAssignPrefix.MatchString(flat) && reSimpleWord.MatchString(strings.SplitN(first, "=", 2)[0]):
 		default:
 			return false
 		}
+		if b := pl.rec.provides(flat); b != "" {
+			provided[b] = true
+		}
 		commands++
 	}
-	return commands > 0
+	if commands == 0 {
+		return false
+	}
+	for b := range provided {
+		pl.provided[b] = true
+	}
+	return true
 }
 
 // CommandEcosystem maps a build command to the ecosystem that provides it.

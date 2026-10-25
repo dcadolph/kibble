@@ -251,7 +251,7 @@ func classifyLine(repo, line string) (InstallStep, string, bool) {
 			Repo: repo, Kind: "brew", Raw: strings.TrimSpace(line), Module: target, Run: run,
 		}, repo + "|brew|" + target, true
 	}
-	if kind, pkg, ok := classifyPackage(line); ok {
+	if kind, pkg, ok := classifyPackage(repo, line); ok {
 		// The package name is asked rather than the line: Python extras such
 		// as httpie[socks] are shaped like a bracketed placeholder, and the
 		// name has already had them removed.
@@ -337,14 +337,16 @@ var bootstrapPackages = map[string]bool{
 }
 
 // classifyPackage matches a line against the known package installs and
-// returns the step kind and the package being installed.
-func classifyPackage(line string) (string, string, bool) {
+// returns the step kind and the package being installed. A bootstrap package
+// that is the repository itself is kept, since `pip install uv` in uv's README
+// is uv's own install, not machine setup.
+func classifyPackage(repo, line string) (string, string, bool) {
 	for _, inv := range pkgInvocations {
 		if inv.Global && !hasGlobalFlag(line) {
 			continue
 		}
 		pkg := normalizePackage(installTarget(line, inv.Words...))
-		if pkg == "" || bootstrapPackages[pkg] {
+		if pkg == "" || (bootstrapPackages[pkg] && normalizeName(pkg) != normalizeName(repo)) {
 			continue
 		}
 		return inv.Kind, pkg, true
@@ -426,8 +428,17 @@ func installTarget(line string, words ...string) string {
 
 // packageBinary guesses the binary name a package provides, for the case where
 // the install adds nothing detectable to the bin directory. A scoped node
-// package and a versioned request both reduce to the bare name.
+// package and a versioned request both reduce to the bare name, and a URL
+// names the repository in its owner/name path, so an archive or a ref does not
+// become the name.
 func packageBinary(pkg string) string {
+	if strings.Contains(pkg, "://") {
+		if els := packageCandidates(pkg); len(els) > 1 {
+			return els[1]
+		} else if len(els) == 1 {
+			return els[0]
+		}
+	}
 	if i := strings.LastIndex(pkg, "@"); i > 0 {
 		pkg = pkg[:i]
 	}
