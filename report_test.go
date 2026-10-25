@@ -212,6 +212,35 @@ func TestReportJSONVersionFields(t *testing.T) {
 	}
 }
 
+// TestReportNoInstallRoute checks the no-install-route row prints through the
+// existing paths: the JSON names its reason and bucket, and the table shows the
+// row, counts it as other, and does not call the run verified.
+func TestReportNoInstallRoute(t *testing.T) {
+	t.Parallel()
+	row := Result{
+		Step:   InstallStep{Repo: "jq", Kind: "install", readme: "README.md"},
+		Status: StatusSkipped, Reason: ReasonNoInstallRoute,
+		Detail: "no install route kibble runs in README.md and 0 install documents (routes seen: none)",
+	}
+	var js bytes.Buffer
+	reportJSON(&js, []Result{row})
+	for _, want := range []string{
+		`"kind": "install"`, `"status": "SKIP"`, `"bucket": "not-attempted"`,
+		`"reason": "no-install-route"`, `routes seen: none`,
+	} {
+		if !strings.Contains(js.String(), want) {
+			t.Errorf("JSON lacks %s:\n%s", want, js.String())
+		}
+	}
+	var table bytes.Buffer
+	reportTable(&table, []Result{row})
+	for _, want := range []string{"jq", "no install route", "INCOMPLETE", "1 other"} {
+		if !strings.Contains(table.String(), want) {
+			t.Errorf("table lacks %q:\n%s", want, table.String())
+		}
+	}
+}
+
 // TestSharedCauseKeyIgnoresVersion checks the version fields do not split a shared cause.
 func TestSharedCauseKeyIgnoresVersion(t *testing.T) {
 	t.Parallel()

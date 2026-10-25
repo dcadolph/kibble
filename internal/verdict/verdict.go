@@ -155,4 +155,8 @@ const (
 	// ReasonUnsupportedMethod marks a documented install method kibble sees but
 	// does not run, such as a piped shell installer or a system package.
 	ReasonUnsupportedMethod Reason = "unsupported-method"
+	// ReasonNoInstallRoute marks a repository whose documents hold no install
+	// of the tool itself, so nothing about installing it was checked. It is not
+	// a gap: the documents may describe routes kibble does not run.
+	ReasonNoInstallRoute Reason = "no-install-route"
 )

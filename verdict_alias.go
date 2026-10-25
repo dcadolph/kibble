@@ -30,6 +30,7 @@ const (
 	ReasonMissingFixture     = verdict.ReasonMissingFixture
 	ReasonNeedsCredentials   = verdict.ReasonNeedsCredentials
 	ReasonNoDataExpected     = verdict.ReasonNoDataExpected
+	ReasonNoInstallRoute     = verdict.ReasonNoInstallRoute
 	ReasonNoOutputNonzero    = verdict.ReasonNoOutputNonzero
 	ReasonNotExecuted        = verdict.ReasonNotExecuted
 	ReasonOtherPlatform      = verdict.ReasonOtherPlatform

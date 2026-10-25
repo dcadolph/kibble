@@ -53,6 +53,121 @@ func TestAnyFail(t *testing.T) {
 	}
 }
 
+// TestExitCode checks the process exit status, including the code that says a
+// run checked nothing because no repository had an install route kibble runs.
+func TestExitCode(t *testing.T) {
+	t.Parallel()
+	res := func(s Status) Result { return Result{Status: s} }
+	noRoute := Result{Step: InstallStep{Kind: "install"}, Status: StatusSkipped, Reason: ReasonNoInstallRoute}
+	exampleSkip := Result{Step: InstallStep{Kind: "example"}, Status: StatusSkipped}
+	aptSkip := Result{Step: InstallStep{Kind: "os-package"}, Status: StatusSkipped, Reason: ReasonUnsupportedMethod}
+	tests := []struct {
+		Results  []Result
+		Strict   bool
+		WantCode int
+	}{{ // Test 0: a pass exits zero.
+		Results: []Result{res(StatusVerified), res(StatusSkipped)}, WantCode: 0,
+	}, { // Test 1: a failure exits one.
+		Results: []Result{res(StatusVerified), res(StatusFail)}, WantCode: 1,
+	}, { // Test 2: strict promotes drift to a failure.
+		Results: []Result{res(StatusDrift)}, Strict: true, WantCode: 1,
+	}, { // Test 3: a lone no-install-route row means nothing was checked.
+		Results: []Result{noRoute}, WantCode: 3,
+	}, { // Test 4: jq's shape, the row beside the example skip it causes.
+		Results: []Result{noRoute, exampleSkip}, WantCode: 3,
+	}, { // Test 5: another repository that verified means something was checked.
+		Results: []Result{noRoute, res(StatusVerified)}, WantCode: 0,
+	}, { // Test 6: a failure elsewhere outranks nothing checked.
+		Results: []Result{noRoute, res(StatusFail)}, WantCode: 1,
+	}, { // Test 7: buku's shape, an apt route kibble does not run and the example
+		// skip it causes, is nothing checked too.
+		Results: []Result{aptSkip, exampleSkip}, WantCode: 3,
+	}, { // Test 8: an error elsewhere outranks nothing checked.
+		Results: []Result{noRoute, res(StatusError)}, WantCode: 1,
+	}, { // Test 9: a formula lookup is a check, so a brew row beside skips passes.
+		Results: []Result{res(StatusExists), exampleSkip}, WantCode: 0,
+	}, { // Test 10: strict does not turn nothing checked into a failure.
+		Results: []Result{noRoute, exampleSkip}, Strict: true, WantCode: 3,
+	}, { // Test 11: an empty run exits zero.
+		WantCode: 0,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if got := exitCode(test.Results, test.Strict); got != test.WantCode {
+				t.Errorf("want %d got %d", test.WantCode, got)
+			}
+		})
+	}
+}
+
+// TestCollectNoInstallRoute checks that a repository with no install step
+// kibble runs reaches the report as a row naming what was read, instead of
+// leaving the run silent and green.
+func TestCollectNoInstallRoute(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Files      map[string]string
+		WantRow    bool
+		WantDetail string
+	}{{ // Test 0: jq's shape, a README documenting no install kibble extracts.
+		Files:      map[string]string{"README.md": "# r\n\nDownload a release.\n"},
+		WantRow:    true,
+		WantDetail: "no install route kibble runs in README.md and 0 install documents (routes seen: none)",
+	}, { // Test 1: an install of another package is named as a route seen, and the
+		// install document that held nothing is counted.
+		Files: map[string]string{
+			"go.mod":     "module example.com/tool\n",
+			"README.md":  "# r\n\n```sh\npip install black\n```\n",
+			"INSTALL.md": "# Install\n\nDownload a release.\n",
+		},
+		WantRow: true,
+		WantDetail: "no install route kibble runs in README.md and 1 install document " +
+			"(routes seen: pip-install)",
+	}, { // Test 2: a documented install of the tool itself produces no row.
+		Files: map[string]string{"README.md": "# r\n\n```sh\ngo install example.com/tool@latest\n```\n"},
+	}, { // Test 3: a brew formula is looked up on its own row, so no row here.
+		Files: map[string]string{"README.md": "# r\n\n```sh\nbrew install x\n```\n"},
+	}, { // Test 4: an apt route is reported on its own row as not run, so no row here.
+		Files: map[string]string{"README.md": "# r\n\n```sh\nsudo apt-get install x\n```\n"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, body := range test.Files {
+				writeRepoFile(t, dir, name, body)
+			}
+			_, _, problems := collect([]string{dir}, true)
+			var rows []Result
+			for _, p := range problems {
+				if p.Reason == ReasonNoInstallRoute {
+					rows = append(rows, p)
+				}
+			}
+			if !test.WantRow {
+				if len(rows) != 0 {
+					t.Fatalf("want no row, got %+v", rows)
+				}
+				return
+			}
+			if len(rows) != 1 {
+				t.Fatalf("want one no-install-route row, got %+v", problems)
+			}
+			r := rows[0]
+			if r.Status != StatusSkipped || r.Step.Kind != "install" || r.Step.readme != "README.md" {
+				t.Errorf("row = %+v, want an install SKIP naming README.md", r)
+			}
+			if diff := cmp.Diff(test.WantDetail, r.Detail); diff != "" {
+				t.Errorf("detail mismatch (-want +got):\n%s", diff)
+			}
+			if anyFail(problems, false) {
+				t.Errorf("the row alone must not fail the run")
+			}
+		})
+	}
+}
+
 // TestHasRunnable checks detection of executable steps.
 func TestHasRunnable(t *testing.T) {
 	t.Parallel()
