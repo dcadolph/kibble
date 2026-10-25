@@ -49,6 +49,15 @@ func helpProbe(step InstallStep) string {
 	// with nothing to probe before its flags once had its whole help corpus
 	// mistaken for probe output and trimmed away.
 	b.WriteString("printf '" + markerLead + "KIBBLE-ROOT-END\\n'\n")
+	// A subcommand the root help marks as the default receives the flags of
+	// a line that names no subcommand. ast-grep's run is one, and its flags
+	// probed alone at the root were rejected there while the documented line
+	// worked, so the default's own screen joins the help the check reads.
+	b.WriteString(`kd=$(printf '%s\n' "$kh" | grep -E '^ +[a-z][a-z0-9_-]* +.*\(default( command| subcommand)?\)' |` +
+		` head -n 1 | awk '{print $1}')` + "\n")
+	b.WriteString(`if [ -n "$kd" ]; then kh=$(timeout 15 "$bin" "$kd" --help 2>&1); kc=$?;` +
+		` printf '%s\n' "$kh" | head -n 200;` +
+		` printf '` + markerLead + `KIBBLE-SUB %s CODE=%d\n' "$kd" "$kc"; fi` + "\n")
 	for _, s := range subs {
 		fmt.Fprintf(&b, `kh=$(timeout 15 "$bin" %s --help 2>&1); kc=$?`+"\n", s)
 		b.WriteString(`printf '%s\n' "$kh" | head -n 200` + "\n")
