@@ -254,3 +254,59 @@ func TestSharedCauseKeyIgnoresVersion(t *testing.T) {
 		t.Errorf("key mismatch (-base +versioned):\n%s", diff)
 	}
 }
+
+// TestReportTriage checks that the triage listing prints every result that is
+// not working, whole, and leaves out the VERIFIED result and VERIFIED lines.
+func TestReportTriage(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("long drift detail ", 12)
+	results := []Result{{
+		Step:   InstallStep{Repo: "okrepo", Kind: "go-install", doc: "OKDOC.md"},
+		Status: StatusVerified, Detail: "okdetail",
+	}, {
+		Step:   InstallStep{Repo: "driftrepo", Kind: "go-install", doc: "DRIFTDOC.md"},
+		Status: StatusDrift, Detail: long,
+	}, {
+		Step:   InstallStep{Repo: "exrepo", Kind: "example", doc: "EXDOC.md"},
+		Status: StatusBlocked, Detail: "exdetail",
+		example: &exampleRun{Steps: []exampleStep{{Doc: "docs/guide.md", Lines: []lineResult{
+			{Cmd: "verifiedcmd", Status: StatusVerified, Line: 3},
+			{Cmd: "blockedcmd", Status: StatusBlocked, Line: 7, Detail: "blockeddetail"},
+		}}}},
+	}}
+	tests := []struct {
+		Want   []string
+		WantNo []string
+	}{{ // Test 0: non-working rows appear whole and verified ones are absent.
+		Want: []string{
+			"driftrepo", "DRIFTDOC.md", long, "exrepo", "EXDOC.md", "exdetail",
+			"docs/guide.md:7: blockedcmd", "blockeddetail",
+		},
+		WantNo: []string{"okrepo", "OKDOC.md", "okdetail", "verifiedcmd", "docs/guide.md:3"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			reportTriage(&buf, results)
+			out := buf.String()
+			var missing, present []string
+			for _, w := range test.Want {
+				if !strings.Contains(out, w) {
+					missing = append(missing, w)
+				}
+			}
+			for _, w := range test.WantNo {
+				if strings.Contains(out, w) {
+					present = append(present, w)
+				}
+			}
+			if diff := cmp.Diff([]string(nil), missing); diff != "" {
+				t.Errorf("missing (-want +got):\n%s\n%s", diff, out)
+			}
+			if diff := cmp.Diff([]string(nil), present); diff != "" {
+				t.Errorf("unexpected (-want +got):\n%s\n%s", diff, out)
+			}
+		})
+	}
+}

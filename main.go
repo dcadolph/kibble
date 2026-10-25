@@ -40,6 +40,8 @@ type runOptions struct {
 	Workers int
 	// JSON reports whether to emit machine-readable output.
 	JSON bool
+	// Triage reports whether to list every non-working result in full after the table.
+	Triage bool
 	// Version reports whether to print the version and exit.
 	Version bool
 	// Strict reports whether timeouts and smoke failures also fail the run.
@@ -64,6 +66,8 @@ func main() {
 	flag.DurationVar(&cfg.Timeout, "timeout", 240*time.Second, "per-step build timeout")
 	flag.IntVar(&cfg.Workers, "workers", 3, "max concurrent installs")
 	flag.BoolVar(&cfg.JSON, "json", false, "emit results as JSON to stdout")
+	flag.BoolVar(&cfg.Triage, "triage", false,
+		"after the table, list every result that is not working, in full")
 	flag.BoolVar(&cfg.Version, "version", false, "print the version and exit")
 	flag.BoolVar(&cfg.Strict, "strict", false,
 		"also fail on timeouts, smoke-test failures, drift, and documentation gaps")
@@ -152,7 +156,7 @@ func main() {
 	annotateVersions(results, <-tags)
 	results = append(results, problems...)
 
-	report(os.Stdout, results, cfg.JSON)
+	report(os.Stdout, results, cfg.JSON, cfg.Triage)
 	if os.Getenv("GITHUB_ACTIONS") == "true" {
 		// JSON mode owns stdout. A workflow command printed after the array
 		// corrupts the JSON a caller redirected, and a redirected stdout never
