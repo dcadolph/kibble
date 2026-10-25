@@ -13,8 +13,9 @@ import (
 	"github.com/dcadolph/kibble/internal/util"
 )
 
-// report writes results to w, as a table or JSON.
-func report(w io.Writer, results []Result, asJSON bool) {
+// report writes results to w, as a table or JSON. The triage listing follows
+// the table only, since the JSON already carries every field it prints.
+func report(w io.Writer, results []Result, asJSON, triage bool) {
 	sort.SliceStable(results, func(i, j int) bool {
 		if results[i].Step.Repo != results[j].Step.Repo {
 			return results[i].Step.Repo < results[j].Step.Repo
@@ -26,6 +27,44 @@ func report(w io.Writer, results []Result, asJSON bool) {
 		return
 	}
 	reportTable(w, results)
+	if triage {
+		reportTriage(w, results)
+	}
+}
+
+// reportTriage writes one block per result whose bucket is not works, with
+// the full detail and every example line that is not VERIFIED. Shared causes
+// are not collapsed.
+func reportTriage(w io.Writer, results []Result) {
+	c := newPalette(w)
+	for _, r := range results {
+		if r.Status.Bucket() == BucketWorks {
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "\n%s %s\n", c.statusWord(r.Status), c.dim(string(r.Reason)))
+		_, _ = fmt.Fprintf(w, "  repo:     %s\n", r.Step.Repo)
+		_, _ = fmt.Fprintf(w, "  kind:     %s\n", r.Step.Kind)
+		_, _ = fmt.Fprintf(w, "  document: %s\n", r.Step.doc)
+		detail := r.Detail
+		if detail == "" {
+			detail = r.SmokeLine
+		}
+		_, _ = fmt.Fprintf(w, "  detail:   %s\n", detail)
+		if r.example == nil {
+			continue
+		}
+		for _, s := range r.example.Steps {
+			for _, l := range s.Lines {
+				if l.Status == StatusVerified {
+					continue
+				}
+				_, _ = fmt.Fprintf(w, "  %s:%d: %s\n", s.Doc, l.Line, docblock.Flatten(l.Cmd))
+				_, _ = fmt.Fprintf(w, "    status: %s\n", l.Status)
+				_, _ = fmt.Fprintf(w, "    reason: %s\n", l.Reason)
+				_, _ = fmt.Fprintf(w, "    detail: %s\n", l.Detail)
+			}
+		}
+	}
 }
 
 // reportJSON writes results as an indented JSON array. Example rows carry
