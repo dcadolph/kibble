@@ -76,3 +76,127 @@ func TestClassifyExampleDocumentExit(t *testing.T) {
 		})
 	}
 }
+
+// TestLineMarker checks that a line marker carries the directory the line ran
+// in when the session printed one, and parses as before when it did not.
+func TestLineMarker(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Line     string
+		WantCode string
+		WantCwd  string
+		WantBG   string
+	}{{ // Test 0: An exit code with the directory.
+		Line:     "KIBBLE-LINE b1:0 CODE=2 CWD=/work/repo/example",
+		WantCode: "2", WantCwd: "/work/repo/example",
+	}, { // Test 1: A directory with a space in its name.
+		Line:     "KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo/my dir",
+		WantCode: "0", WantCwd: "/work/repo/my dir",
+	}, { // Test 2: An exit code without a directory.
+		Line: "KIBBLE-LINE b1:0 CODE=1", WantCode: "1",
+	}, { // Test 3: A background readiness marker.
+		Line: "KIBBLE-LINE b1:0 BG=0", WantBG: "0",
+	}, { // Test 4: Output that ended without a newline before the marker.
+		Line: "doneKIBBLE-LINE b1:3 CODE=0 CWD=/work/repo", WantCode: "0", WantCwd: "/work/repo",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			m := reLineMarker.FindStringSubmatch(test.Line)
+			if m == nil {
+				t.Fatalf("no marker in %q", test.Line)
+			}
+			got := []string{m[3], m[4], m[5]}
+			if diff := cmp.Diff([]string{test.WantCode, test.WantCwd, test.WantBG}, got); diff != "" {
+				t.Errorf("marker mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestClassifyExampleInheritedState checks that a failure in a directory an
+// earlier section entered is inconclusive, while a failure in the section that
+// entered it, or in the repository root, still convicts. The shape is uv's
+// README: Projects runs `uv init example` and `cd example`, and Python versions
+// later fails on the requires-python the example project pinned.
+func TestClassifyExampleInheritedState(t *testing.T) {
+	t.Parallel()
+	const pinned = "error: The requested Python version `3.11` is incompatible with the project " +
+		"`requires-python` value of `>=3.14.9`."
+	plan := &kplan.Plan{Repo: "uv", Steps: []kplan.PlanStep{
+		{ID: "b1", Doc: "README.md", Heading: "Projects", Lines: []kplan.PlanLine{
+			{Cmd: "uv init example"}, {Cmd: "cd example"}, {Cmd: "uv lock"},
+		}},
+		{ID: "b2", Doc: "README.md", Heading: "Python versions", Lines: []kplan.PlanLine{
+			{Cmd: "uv python pin 3.11"},
+		}},
+		{ID: "b3", Doc: "README.md", Heading: "Projects", Lines: []kplan.PlanLine{
+			{Cmd: "uv sync"},
+		}},
+	}}
+	step := InstallStep{Repo: "uv", Kind: "example"}
+	tests := []struct {
+		Marker     string
+		Key        string
+		WantStatus Status
+		WantReason Reason
+	}{{ // Test 0: A later section fails in the directory Projects entered.
+		Key: "b2:0", Marker: "KIBBLE-LINE b2:0 CODE=2 CWD=/work/repo/example",
+		WantStatus: StatusBlocked, WantReason: ReasonInheritedState,
+	}, { // Test 1: The section that entered the directory fails there.
+		Key: "b1:2", Marker: "KIBBLE-LINE b1:2 CODE=2 CWD=/work/repo/example",
+		WantStatus: StatusFail,
+	}, { // Test 2: A later block of the same section fails there.
+		Key: "b3:0", Marker: "KIBBLE-LINE b3:0 CODE=2 CWD=/work/repo/example",
+		WantStatus: StatusFail,
+	}, { // Test 3: A later section fails in the repository root.
+		Key: "b2:0", Marker: "KIBBLE-LINE b2:0 CODE=2 CWD=/work/repo",
+		WantStatus: StatusFail,
+	}, { // Test 4: A marker without a directory settles nothing about one.
+		Key: "b2:0", Marker: "KIBBLE-LINE b2:0 CODE=2",
+		WantStatus: StatusFail,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			markers := map[string]string{
+				"b1:0": "KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo",
+				"b1:1": "KIBBLE-LINE b1:1 CODE=0 CWD=/work/repo",
+				"b1:2": "KIBBLE-LINE b1:2 CODE=0 CWD=/work/repo/example",
+				"b2:0": "KIBBLE-LINE b2:0 CODE=0 CWD=/work/repo/example",
+				"b3:0": "KIBBLE-LINE b3:0 CODE=0 CWD=/work/repo/example",
+			}
+			markers[test.Key] = test.Marker
+			lines := []string{"KIBBLE-BUILD CODE=0"}
+			for _, s := range plan.Steps {
+				lines = append(lines, "KIBBLE-STEP "+s.ID+" START")
+				for i := range s.Lines {
+					key := fmt.Sprintf("%s:%d", s.ID, i)
+					if key == test.Key {
+						lines = append(lines, pinned)
+					}
+					lines = append(lines, markers[key])
+				}
+			}
+			lines = append(lines, "KIBBLE-DONE")
+			res := classifyExample(step, plan, sessionOut(lines...), nil, 0, lineTimeout)
+			if res.example == nil {
+				t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+			}
+			var got lineResult
+			for _, s := range res.example.Steps {
+				for i, l := range s.Lines {
+					if fmt.Sprintf("%s:%d", s.ID, i) == test.Key {
+						got = l
+					}
+				}
+			}
+			if diff := cmp.Diff(test.WantStatus, got.Status); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s\ndetail: %s", diff, got.Detail)
+			}
+			if diff := cmp.Diff(test.WantReason, got.Reason); diff != "" {
+				t.Errorf("reason mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

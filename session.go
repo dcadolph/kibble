@@ -285,14 +285,17 @@ done
 					lineSecs, shellSafe(cmd))
 				wrapped[fmt.Sprintf("%s:%d", s.ID, i)] = true
 			}
-			b.WriteString(cmd + "\n")
+			// The directory is read before the line runs, so the marker names
+			// where the line ran rather than where a cd in it went.
+			b.WriteString("__cwd=$PWD\n" + cmd + "\n")
 			// The pipeline's status is captured before anything else runs, so a
 			// producer that fails is not hidden by a consumer that exits zero.
 			// A stage killed by SIGPIPE (141) is the benign case of a consumer
 			// closing early, such as piping into head, and does not convict.
 			b.WriteString("__ps=(\"${PIPESTATUS[@]}\")\n")
 			fmt.Fprintf(&b,
-				"printf '"+markerLead+"KIBBLE-LINE %s:%d CODE=%%d\\n' \"$(__pipecode \"${__ps[@]}\")\"\n", s.ID, i)
+				"printf '"+markerLead+"KIBBLE-LINE %s:%d CODE=%%d CWD=%%s\\n' "+
+					"\"$(__pipecode \"${__ps[@]}\")\" \"$__cwd\"\n", s.ID, i)
 		}
 	}
 	if opened {
