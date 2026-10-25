@@ -67,6 +67,7 @@ func TestParseShellShape(t *testing.T) {
 		WantStruct    bool
 		WantState     bool
 		WantHeredoc   bool
+		WantExpanded  bool
 		WantFirstName string
 	}{{ // Test 0: a plain invocation is one command that changes nothing.
 		In: "tool run notes.md", WantFirstName: "tool",
@@ -88,6 +89,13 @@ func TestParseShellShape(t *testing.T) {
 	}, { // Test 6: an export anywhere in the line marks it state-changing.
 		In: "tool env && export PATH=/x:$PATH", WantStruct: true, WantState: true,
 		WantFirstName: "tool",
+	}, { // Test 7: an argument that expands is unknown until it runs.
+		In: "tool run $TARGET", WantExpanded: true, WantFirstName: "tool",
+	}, { // Test 8: so is an assignment value that expands, which a subshell
+		// would read empty when the variable was never exported.
+		In: "FOO=$BAR tool run", WantExpanded: true, WantFirstName: "tool",
+	}, { // Test 9: a quoted literal assignment value is known.
+		In: `UV_INDEX="https://example.com/simple" uv lock`, WantFirstName: "uv",
 	}}
 
 	for testNum, test := range tests {
@@ -106,9 +114,12 @@ func TestParseShellShape(t *testing.T) {
 			if line.Heredoc != test.WantHeredoc {
 				t.Errorf("heredoc = %v, want %v", line.Heredoc, test.WantHeredoc)
 			}
-			name := ""
+			name, expanded := "", false
 			if len(line.Cmds) > 0 {
-				name = line.Cmds[0].Name()
+				name, expanded = line.Cmds[0].Name(), line.Cmds[0].Expanded
+			}
+			if expanded != test.WantExpanded {
+				t.Errorf("expanded = %v, want %v", expanded, test.WantExpanded)
 			}
 			if name != test.WantFirstName {
 				t.Errorf("first command = %q, want %q", name, test.WantFirstName)
