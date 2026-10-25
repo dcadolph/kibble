@@ -177,6 +177,10 @@ func TestHasRunnable(t *testing.T) {
 	if !hasRunnable([]InstallStep{{Run: false}, {Run: true}}) {
 		t.Errorf("want true when a runnable step exists")
 	}
+	noInstall := &kplan.Plan{Steps: []kplan.PlanStep{{}}}
+	if hasRunnable([]InstallStep{{Kind: "example", Run: true, plan: noInstall}}) {
+		t.Errorf("want false when the only step is an example with no install to run first")
+	}
 }
 
 // writeRepoFile writes one file into a test repository directory.
