@@ -43,11 +43,31 @@ type Block struct {
 // body is prose that markdown parsers read as an indented code block.
 var admonitionMarker = regexp.MustCompile(`^(!!!|\?\?\?\+?)\s`)
 
+// stripFrontMatter blanks a leading YAML or TOML front matter block, keeping the line
+// count so line numbers stay right. An unclosed block is returned unchanged.
+func stripFrontMatter(src []byte) []byte {
+	lines := strings.Split(string(src), "\n")
+	fence := strings.TrimRight(lines[0], " \t\r")
+	if fence != "---" && fence != "+++" {
+		return src
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], " \t\r") != fence {
+			continue
+		}
+		for j := 0; j <= i; j++ {
+			lines[j] = ""
+		}
+		return []byte(strings.Join(lines, "\n"))
+	}
+	return src
+}
+
 // CodeBlocks returns the code the author marked, grouped by block: each
 // fenced or indented block is one group of lines, and each inline span is its
 // own group.
 func CodeBlocks(markdown string) []Block {
-	src := []byte(markdown)
+	src := stripFrontMatter([]byte(markdown))
 	doc := goldmark.New().Parser().Parse(text.NewReader(src))
 	var blocks []Block
 	var heading, intro string
@@ -344,7 +364,7 @@ func TrailingComment(flat string) string {
 func ProseOnly(markdown string) string {
 	var b strings.Builder
 	fenced := false
-	for _, line := range strings.Split(markdown, "\n") {
+	for _, line := range strings.Split(string(stripFrontMatter([]byte(markdown))), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			fenced = !fenced
 			continue
