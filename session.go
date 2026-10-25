@@ -265,11 +265,17 @@ done
 			for _, dir := range redirectDirs(docblock.Flatten(cmd)) {
 				fmt.Fprintf(&b, "mkdir -p %s >/dev/null 2>&1 || true\n", dir)
 			}
+			simple := isSimpleCommand(docblock.Flatten(cmd))
+			prefixed, expanded := assignPrefix(cmd)
 			switch {
-			case isSimpleCommand(docblock.Flatten(cmd)):
+			case simple && !prefixed:
 				cmd = fmt.Sprintf("timeout %d %s", lineSecs, cmd)
 				wrapped[fmt.Sprintf("%s:%d", s.ID, i)] = true
-			case isolatable(cmd):
+			case simple && expanded:
+				// timeout cannot run an assignment, and a shell of its own
+				// would read an unexported variable empty, so the line runs
+				// unbounded in the session as written.
+			case simple, isolatable(cmd):
 				// The line runs in a shell of its own so timeout has
 				// something to kill. Its pipeline status is reduced inside
 				// that shell by the same rule the session uses outside, so
@@ -401,6 +407,17 @@ func isSimpleCommand(flat string) bool {
 	}
 	return len(line.Cmds) == 1 && !line.Structured && !line.StateChanging &&
 		!line.Background && !line.Heredoc && line.Cmds[0].Name() != ""
+}
+
+// assignPrefix reports whether a line's single command carries NAME=value
+// prefixes, which timeout would try to execute as a program, and whether the
+// command expands anything, which a shell of its own could not see.
+func assignPrefix(cmd string) (prefixed, expanded bool) {
+	line, ok := shell.Parse(cmd)
+	if !ok || len(line.Cmds) != 1 {
+		return false, false
+	}
+	return len(line.Cmds[0].Assigns) > 0, line.Cmds[0].Expanded
 }
 
 // isolatable reports whether a line that is not simple can still be run in
