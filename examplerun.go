@@ -72,6 +72,18 @@ const markerLead = `\n`
 // input or serves forever cannot eat the whole session budget.
 const lineTimeout = 90 * time.Second
 
+// exampleSkip returns why an example plan is skipped before any container
+// starts, or "" when it runs.
+func exampleSkip(plan *kplan.Plan) string {
+	switch {
+	case plan == nil || len(plan.Steps) == 0:
+		return "no example blocks found"
+	case len(plan.Installs) == 0:
+		return "no documented install puts a binary on PATH; examples not run"
+	}
+	return ""
+}
+
 // runExample replays a repo's example plan in one clean container: the
 // documented binaries are installed, the repo tree is copied in, and every
 // plan step runs in documented order in a single shell, so files and
@@ -79,14 +91,9 @@ const lineTimeout = 90 * time.Second
 func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result {
 	plan := step.plan
 	res := Result{Step: step}
-	if plan == nil || len(plan.Steps) == 0 {
+	if detail := exampleSkip(plan); detail != "" {
 		res.Status = StatusSkipped
-		res.Detail = "no example blocks found"
-		return res
-	}
-	if len(plan.Installs) == 0 {
-		res.Status = StatusSkipped
-		res.Detail = "no documented install puts a binary on PATH; examples not run"
+		res.Detail = detail
 		return res
 	}
 	image, ok := d.exampleImage(plan)

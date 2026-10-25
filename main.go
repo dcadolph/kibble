@@ -679,7 +679,6 @@ func runAll(ctx context.Context, r Runner, steps []InstallStep, workers int) []R
 	return results
 }
 
-// hasRunnable reports whether any step will actually be executed.
 // unrunResult is the result for a step kibble records but does not run. A
 // piped shell installer and a system package are documented install methods
 // kibble sees and deliberately declines to execute, so they are skipped with a
@@ -717,13 +716,13 @@ func unrunResult(step InstallStep) Result {
 	return res
 }
 
+// hasRunnable reports whether any step will actually be executed. An example
+// step whose plan exampleSkip rejects is skipped without a container, so a run
+// of only such steps needs no Docker.
 func hasRunnable(steps []InstallStep) bool {
-	for _, s := range steps {
-		if s.Run {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(steps, func(s InstallStep) bool {
+		return s.Run && (s.Kind != "example" || exampleSkip(s.plan) == "")
+	})
 }
 
 // checkFreeSpace returns an error when Docker has less free space than a run
