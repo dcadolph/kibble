@@ -257,6 +257,15 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		// The tool named what it lacked and the command never passed it, so
 		// the tool reached for it on its own. See settleMissing.
 		lr = settleMissing(lr, reportedMissing(o.output), tail)
+	case o.inherited:
+		// Documents cd once and stay there, so a later section can fail on
+		// what the directory holds rather than on what the section says:
+		// uv's README pins a Python version inside a project an earlier
+		// section created. The section was never tested as written.
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonInheritedState
+		lr.Detail = fmt.Sprintf("ran in %s, which an earlier section entered, so this "+
+			"section's claim was not tested as written: exited %d: %s", o.cwd, o.code, tail)
 	default:
 		lr.Status = StatusFail
 		lr.Detail = fmt.Sprintf("exited %d: %s", o.code, tail)
@@ -430,8 +439,10 @@ var (
 	// command whose output ends without a newline cannot swallow the marker
 	// that follows it and turn a real result into a missing one.
 	// A BG marker carries a readiness result rather than an exit code, for a
-	// background line that was still running when the step was judged.
-	reLineMarker = regexp.MustCompile(`KIBBLE-LINE (\S+):(\d+) (?:CODE=(-?\d+)|BG=(\d+)|SKIP)$`)
+	// background line that was still running when the step was judged. A CODE
+	// marker may carry the directory the line ran in after it.
+	reLineMarker = regexp.MustCompile(
+		`KIBBLE-LINE (\S+):(\d+) (?:CODE=(-?\d+)(?: CWD=(.*))?|BG=(\d+)|SKIP)$`)
 )
 
 // reNoInputFiles matches a pipeline stage reporting it was run with nothing

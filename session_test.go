@@ -396,3 +396,26 @@ func TestSessionScriptAssignPrefix(t *testing.T) {
 		})
 	}
 }
+
+// TestSessionScriptLineCwd checks that each line records the directory it ran
+// in before it runs and reports it in its marker, so a failure can be read
+// against the directory an earlier section left the shell in.
+func TestSessionScriptLineCwd(t *testing.T) {
+	t.Parallel()
+	plan := &kplan.Plan{
+		Repo: "repo",
+		Steps: []kplan.PlanStep{{
+			ID: "b1", Doc: "README.md", Lines: []kplan.PlanLine{{Cmd: "cd example"}, {Cmd: "uv lock"}},
+		}},
+	}
+	script, _ := sessionScript(plan, 240, 90)
+	for _, want := range []string{
+		"__cwd=$PWD\ncd example\n",
+		"__cwd=$PWD\ntimeout 90 uv lock\n",
+		`KIBBLE-LINE b1:1 CODE=%d CWD=%s\n' "$(__pipecode "${__ps[@]}")" "$__cwd"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script lacks %q:\n%s", want, script)
+		}
+	}
+}
