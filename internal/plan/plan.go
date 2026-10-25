@@ -414,12 +414,20 @@ func (pl *planner) qualifies(lines []string) bool {
 		if flat == "" || strings.HasPrefix(flat, "#") {
 			continue
 		}
-		first := shell.FirstWord(flat)
+		first := ""
+		if parsed, ok := shell.Parse(flat); ok && len(parsed.Cmds) > 0 {
+			first = parsed.Cmds[0].Name()
+		}
+		hasProgram := first != ""
+		if !hasProgram {
+			first = shell.FirstWord(flat)
+		}
 		switch {
 		case knownCommands[first], pl.binaries[first], pl.provided[first], provided[first]:
 		case packageTools[first] != "":
 			pl.packages[packageTools[first]] = true
-		case reAssignPrefix.MatchString(flat) && reSimpleWord.MatchString(strings.SplitN(first, "=", 2)[0]):
+		case !hasProgram && reAssignPrefix.MatchString(flat) &&
+			reSimpleWord.MatchString(strings.SplitN(first, "=", 2)[0]):
 		default:
 			return false
 		}

@@ -861,3 +861,37 @@ func TestBuildPlanProvidedTools(t *testing.T) {
 		})
 	}
 }
+
+// TestQualifies checks that the program a line runs, not a leading
+// assignment, decides whether the line qualifies.
+func TestQualifies(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Line       string
+		Binaries   []string
+		WantResult bool
+	}{{ // Test 0: an undocumented program behind an assignment does not qualify.
+		Line: "GOOS=linux goreleaser build", WantResult: false,
+	}, { // Test 1: a bare assignment runs no program and does not qualify.
+		Line: "FOO=bar", WantResult: false,
+	}, { // Test 2: an assignment before a known command qualifies.
+		Line: "FOO=bar make build", WantResult: true,
+	}, { // Test 3: an assignment before a documented binary qualifies.
+		Line: "FOO=bar mytool run", Binaries: []string{"mytool"}, WantResult: true,
+	}, { // Test 4: an exported assignment alone qualifies.
+		Line: "export FOO=bar", WantResult: true,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			pl := newReaderNameTestPlanner(nil, test.Binaries...)
+			pl.provided = map[string]bool{}
+			pl.packages = map[string]bool{}
+			pl.rec = &Recognizer{}
+			got := pl.qualifies([]string{test.Line})
+			if diff := cmp.Diff(test.WantResult, got); diff != "" {
+				t.Errorf("qualifies mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
