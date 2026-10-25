@@ -166,6 +166,16 @@ Pin an exact release tag so a run stays reproducible a year from now: the action
 downloads the released binary for that version and verifies its checksum before running
 it, so a CI log can always say which kibble produced its verdict.
 
+The exit code tells a script what happened:
+
+- `0` means at least one check ran and none failed.
+- `1` means the run failed. `-strict` widens what counts as a failure.
+- `2` means a usage error, such as no path and no README in the current directory,
+  Docker unavailable, or less than 2 GiB free in Docker.
+- `3` means nothing was checked: every row is a skip, so no install ran and no example
+  could run either. The action fails on purpose, since a check that ran nothing must not pass.
+- `130` means the run was interrupted.
+
 ## Flags
 
 | Flag        | Default       | What                                     &nbsp; |
@@ -208,6 +218,14 @@ verdict claims the documented step works:
   a missing account or a wrong argument, a refused connection is an absent service or a
   misnamed port, an exit 1 with no output is a search finding nothing or a command
   dying quietly. A skip would claim the document is fine. `BLOCKED` claims nothing.
+- `SKIP` with the reason `no-install-route` means the documents hold no install of the
+  tool itself that kibble extracts. The detail names the README, how many install
+  documents were read, and the routes seen. It is not a `GAP`, since the documents may
+  describe routes kibble does not run, such as apt or brew.
+- `BLOCKED` with the reason `inherited-state` means a line that would have been a plain
+  `FAIL` ran in a directory an earlier section entered with `cd`, `pushd`, or `popd`.
+  Documents `cd` once in setup and stay there, so the failure may come from what that
+  directory holds rather than from what the line says.
 - `GAP` means the document is incomplete: a file, directory, or setting nothing creates.
 - `DRIFT` means the docs cite a flag or subcommand the binary no longer has.
 - `TIMEOUT` and `ERROR` keep slow networks and kibble's own trouble out of your verdict.
