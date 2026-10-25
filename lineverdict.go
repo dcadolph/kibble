@@ -196,6 +196,10 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 			lr.Detail = fmt.Sprintf("reached for a %s the reader defines first: %s",
 				namelessRegisteredNoun(o.output), tail)
 		}
+	case reRemoteConfig.MatchString(o.output):
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonMissingFixture
+		lr.Detail = "names a remote or configuration section the reader configures first: " + tail
 	case reConfigLoad.MatchString(o.output):
 		lr.Status = StatusBlocked
 		lr.Reason = ReasonMissingFixture
@@ -339,6 +343,11 @@ var (
 	reRegisteredNotFound = regexp.MustCompile(
 		`(?i)\b(preset|profile|alias|plugin|group|context|workspace|project|remote|registry` +
 			`|template|theme) '([^']+)' not found`)
+	// reRemoteConfig matches a tool naming a remote or configuration section
+	// that the reader configures first, in rclone's family of wordings.
+	reRemoteConfig = regexp.MustCompile(
+		`(?i)didn't find section in config file|couldn't find remote|didn't find backend` +
+			`|no such remote|remote .{1,40} not found|section .{1,40} not found in config`)
 	// reConfigLoad matches a tool that could not load a configuration, which
 	// the reader's project supplies and a fresh session does not have.
 	reConfigLoad = regexp.MustCompile(
