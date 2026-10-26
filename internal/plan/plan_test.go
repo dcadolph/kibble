@@ -961,11 +961,16 @@ func TestPlanNeed(t *testing.T) {
 	}{{ // Test 0: uv's marimo guide, where the notebook comes from an unplanned block.
 		Markdown: "```console\n$ uvx marimo edit my_notebook.py\n```\n\n" +
 			"```console\n$ uv add --script my_notebook.py numpy\n```\n",
-		WantNeed: "my_notebook.py", WantUnplanned: "uvx marimo edit my_notebook.py",
-	}, { // Test 1: a file with no earlier line at all still runs and carries the file.
+		WantNeed: "my_notebook.py", WantUnplanned: "the code block at line 2",
+	}, { // Test 1: a bare output fence is named by its location, not its first output line.
+		Markdown: "## Replay\n\n```\nReplaying 2 cases from .schemathesis/default/cache/crashes\n" +
+			"Case 1 failed\nCase 2 failed\n```\n\n" +
+			"```bash\nuv run schemathesis replay --auth-wfc ./auth.yaml --auth-wfc-user admin\n```\n",
+		WantNeed: "./auth.yaml", WantUnplanned: `the code block at line 4 under "Replay"`,
+	}, { // Test 2: a file with no earlier line at all still runs and carries the file.
 		Markdown: "```sh\nuv render notebook.ipynb\n```\n",
 		WantNeed: "notebook.ipynb",
-	}, { // Test 2: a background step cannot report the check, so it keeps the plan-time gap.
+	}, { // Test 3: a background step cannot report the check, so it keeps the plan-time gap.
 		Markdown: "```sh\nuv load notebook.ipynb\n```\n",
 		Cfg:      &config.ExamplesConfig{Steps: []config.StepRule{{Match: "uv load", Background: true}}},
 		WantSkip: "references notebook.ipynb, which the docs never create",
