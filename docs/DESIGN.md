@@ -76,6 +76,13 @@ that happened to sit on the image's path already, so a package that installs not
 cannot borrow a stock tool's success. A local build such as `cargo install --path .` is
 left to the clone recipe, which already covers it.
 
+For pip the binary comes from the package itself. `pip show -f` lists the files the
+package owns as absolute paths wherever pip wrote them, a `--user` install under the home
+directory included. When `pip show` answers, only an owned binary is smoke-tested, the
+documented name preferred, and a package that owns none is `RAN`. The directory
+comparison remains for managers with no owned-binary lookup and for a `pip show` that
+failed.
+
 A `VERIFIED` install row also carries `version` and `latest` when the version the binary
 reported is one of the repository's release tags. The table marks the row `behind` when
 that version is older than the newest tag. This changes no verdict, since registries lag
@@ -179,6 +186,24 @@ Crashes, gaps, and every other excuse keep precedence, and only a would-be plain
 moves. Resetting the working directory at every heading was rejected, because it would
 break every document that changes directory once in setup and invent failures.
 
+The same holds for the checkout itself. A would-be plain `FAIL` that ran in the
+repository's own checkout, and whose output says the target "already exists" or is
+"already initialized", is `BLOCKED` with the reason `checkout-state`. The collision is
+with the checkout kibble chose, not with anything the document wrote.
+
+A file a line reads that the planner sees no earlier line create no longer skips the line
+at plan time. The plan records it as the line's need, and the session checks whether the
+file exists just before the line runs. A line that passes without the file is classified
+as usual. If the line fails and the file was absent, the verdict is `GAP` only when every
+earlier line of the document passed and no earlier block was left out of the plan.
+Otherwise it is `BLOCKED` with the reason `depends-on-skipped`, naming the first line or
+left-out command that could have created the file. A background step keeps the plan-time
+`GAP`.
+
+A session that ends before it finishes, with time left on the clock, is an `ERROR` and
+the examples get no verdict. The lines it never reached are `BLOCKED`, never `TIMEOUT`.
+A session that outlives its budget keeps `TIMEOUT`.
+
 A tool that says it could not find a remote or a configuration section, as rclone does
 with "didn't find section in config file", is `BLOCKED` with the reason `missing-fixture`,
 since the reader configures that remote first. The rule reads the tool's own words after
@@ -221,10 +246,12 @@ is a `SKIP`. The class is a `my`-prefixed name such as `my-project` or `my_packa
 noun followed by a number: `repo`, `file`, `dir`, `group`, `project`, `plugin`, `package`,
 or `app`, as in `repo1`. Both are a naming convention that says "yours goes here". Words
 such as `foo` are not in the class, because docs use them as real example values and the
-line runs and does what the document says. A token with an extension is left to the file
-rule. A name the repository or an earlier line provides is real, and so is a value given
-to an output flag, since the line writes it. A value written after a space cannot be told
-from an operand without the flag's arity, so it is read as an operand.
+line runs and does what the document says. A reserved example host is a placeholder too:
+`example.com`, `example.net`, `example.org`, or a name under `.example`, `.test`, or
+`.invalid`, written as a URL, as `user@host`, or as `host:port`. A token with an extension
+is left to the file rule. A name the repository or an earlier line provides is real, and so
+is a value given to an output flag, since the line writes it. A value written after a
+space cannot be told from an operand without the flag's arity, so it is read as an operand.
 
 Check mode is documented behavior. A subcommand such as `check`, `lint`, or `audit`
 exits nonzero when it finds something, and so does a documented tool given a flag that
@@ -252,7 +279,9 @@ top-level guides named for the job they do, such as `GETTING_STARTED.md` or
 instruct a reader: contributing guides, changelogs, security policies, decision records,
 and anything written for an agent. A document with no runnable recipe is skipped before
 a container is spent on it. Settle the rest in [.kibble.yml](CONFIG.md) with `docs` to
-add one and `skipDocs` to drop one.
+add one and `skipDocs` to drop one. Code inside a MkDocs admonition body, `!!!` or `???`,
+is read as markdown, so a fenced example in one runs at its real source line and the prose
+around it yields nothing.
 
 Each document after the first gets its own shell and a new repository, and it also gets
 the tool the install produced. A document can replace the tool under test: lla's
@@ -335,6 +364,11 @@ in the other direction too: command lines only count when they invoke the binary
 name, so flags shown for other tools do not count, and `DRIFT` fails the run only under
 `-strict`. kibble runs this check on its own README, so its flag table rots loudly, not
 silently.
+
+A flag is attributed to the binary only while the line is still speaking to it. A bare
+`--` ends the binary's flags, since what follows belongs to another program. Under a
+runner subcommand such as `run`, `exec`, or `x`, the flags end at the first operand shaped
+like a program name, so `k6 run script.js --vus 10` still cites `--vus`.
 
 The reverse question, whether every command the binary advertises appears in the docs,
 is `doc-coverage`, and it catches the more common rot: a feature ships and nobody writes
