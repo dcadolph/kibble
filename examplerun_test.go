@@ -45,6 +45,7 @@ func TestClassifyExample(t *testing.T) {
 		Out        string
 		Wrapped    map[string]bool
 		Plan       *kplan.Plan
+		End        sessionEnd
 		WantStatus Status
 		WantLines  []Status
 	}{{ // Test 0: all lines pass.
@@ -152,6 +153,7 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-BUILD CODE=0",
 			"KIBBLE-STEP b1 START",
 			"KIBBLE-LINE b1:0 CODE=0"),
+		End:        sessionEnd{expired: true},
 		WantStatus: StatusTimeout,
 		WantLines:  []Status{StatusVerified, StatusTimeout, StatusBlocked},
 	}, { // Test 6: an aborted install skips the examples.
@@ -278,7 +280,7 @@ func TestClassifyExample(t *testing.T) {
 			if plan == nil {
 				plan = examplePlan()
 			}
-			res := classifyExample(step, plan, test.Out, test.Wrapped, 0, lineTimeout)
+			res := classifyExample(step, plan, test.Out, test.Wrapped, 0, lineTimeout, test.End)
 			if res.Status != test.WantStatus {
 				t.Errorf("status = %s, want %s (detail %q)", res.Status, test.WantStatus, res.Detail)
 			}
@@ -355,7 +357,7 @@ func TestClassifyExampleMarkerRecovery(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			res := classifyExample(step, examplePlan(), test.Out, nil, 0, lineTimeout)
+			res := classifyExample(step, examplePlan(), test.Out, nil, 0, lineTimeout, sessionEnd{})
 			if res.Status != test.WantStatus {
 				t.Errorf("status = %s, want %s (detail %q)", res.Status, test.WantStatus, res.Detail)
 			}
