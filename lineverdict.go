@@ -63,6 +63,9 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Detail = fmt.Sprintf("gave no result within %s", lineBudget)
 	case o.code == 0:
 		lr.Status = StatusVerified
+		if l.File != "" {
+			lr.Detail = fmt.Sprintf("wrote %s as the document shows it", l.File)
+		}
 		if len(lr.Synthetic) > 0 {
 			// The claim is narrower than a bare pass and has to say so: the
 			// command accepted a file kibble wrote, because the document

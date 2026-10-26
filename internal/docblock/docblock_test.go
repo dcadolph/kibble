@@ -236,3 +236,36 @@ func TestCodeBlocksFrontMatter(t *testing.T) {
 		})
 	}
 }
+
+// TestCodeBlocksTitle checks that a fence's title attribute is read from its
+// info string in either quote style and is empty when the fence has none.
+func TestCodeBlocksTitle(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In        string
+		WantTitle string
+	}{{ // Test 0: A double-quoted title followed by another attribute.
+		In:        "```python title=\"process.py\" hl_lines=\"2\"\nprint(1)\n```\n",
+		WantTitle: "process.py",
+	}, { // Test 1: A single-quoted title.
+		In:        "```toml title='pyproject.toml'\n[project]\n```\n",
+		WantTitle: "pyproject.toml",
+	}, { // Test 2: A fence with no title.
+		In: "```sh\nmake build\n```\n",
+	}, { // Test 3: A title inside an admonition body.
+		In:        "!!! note\n\n    ```bash title=\"bazel/uv-auth-helper\"\n    exec uv\n    ```\n",
+		WantTitle: "bazel/uv-auth-helper",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			blocks := CodeBlocks(test.In)
+			if len(blocks) != 1 {
+				t.Fatalf("got %d blocks, want 1", len(blocks))
+			}
+			if diff := cmp.Diff(test.WantTitle, blocks[0].Title); diff != "" {
+				t.Errorf("title mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

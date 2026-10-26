@@ -490,3 +490,46 @@ func TestExistsTest(t *testing.T) {
 		t.Error("a name's shell syntax ran")
 	}
 }
+
+// TestSessionScriptFile checks that a line writing a titled block survives the
+// session's timeout wrapper: the wrapped line, run by bash, writes exactly the
+// block's content.
+func TestSessionScriptFile(t *testing.T) {
+	t.Parallel()
+	for _, tool := range []string{"bash", "timeout"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip("no " + tool)
+		}
+	}
+	content := "#!/usr/bin/env bash\necho 'it''s \"$1\"' | tr a b\n"
+	cmd := "mkdir -p 'bazel' && cat > 'bazel/uv-auth-helper' <<'KIBBLE_FILE_END'\n" + content + "KIBBLE_FILE_END"
+	plan := &kplan.Plan{
+		Repo: "repo",
+		Steps: []kplan.PlanStep{{ID: "b1", Doc: "docs/bazel.md", Lines: []kplan.PlanLine{
+			{Cmd: cmd, File: "bazel/uv-auth-helper"},
+		}}},
+	}
+	script, _ := sessionScript(plan, 240, 90)
+	fnStart := strings.Index(script, "__pipecode() {")
+	fnEnd := strings.Index(script, "export -f __pipecode\n")
+	lineStart := strings.Index(script, "__cwd=$PWD\n")
+	lineEnd := strings.Index(script, "printf '\\nKIBBLE-LINE b1:0")
+	if fnStart < 0 || fnEnd < fnStart || lineStart < 0 || lineEnd < lineStart {
+		t.Fatalf("script shape changed:\n%s", script)
+	}
+	fragment := script[fnStart:fnEnd] + "export -f __pipecode\n" + script[lineStart:lineEnd] +
+		"exit \"$(__pipecode \"${__ps[@]}\")\"\n"
+	dir := t.TempDir()
+	run := exec.Command("bash", "-c", fragment)
+	run.Dir = dir
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("write line failed: %v: %s\n%s", err, out, fragment)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "bazel", "uv-auth-helper"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(content, string(got)); diff != "" {
+		t.Errorf("content mismatch (-want +got):\n%s", diff)
+	}
+}
