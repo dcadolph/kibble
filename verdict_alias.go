@@ -23,6 +23,7 @@ const (
 	BucketUnverified         = verdict.BucketUnverified
 	BucketWorks              = verdict.BucketWorks
 	ReasonAlreadyProven      = verdict.ReasonAlreadyProven
+	ReasonCheckoutState      = verdict.ReasonCheckoutState
 	ReasonDependsOnSkipped   = verdict.ReasonDependsOnSkipped
 	ReasonInheritedState     = verdict.ReasonInheritedState
 	ReasonInteractive        = verdict.ReasonInteractive

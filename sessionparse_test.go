@@ -279,3 +279,48 @@ func TestClassifyExampleEngineDeath(t *testing.T) {
 		})
 	}
 }
+
+// TestClassifyExampleCheckoutState checks that a scaffold refused by the checkout is inconclusive.
+func TestClassifyExampleCheckoutState(t *testing.T) {
+	t.Parallel()
+	const refused = "error: Project is already initialized in `/work/repo` " +
+		"(`pyproject.toml` file exists)"
+	plan := &kplan.Plan{Repo: "uv", Steps: []kplan.PlanStep{
+		{ID: "b1", Doc: "README.md", Heading: "Projects", Lines: []kplan.PlanLine{
+			{Cmd: "cd example"}, {Cmd: "uv init"},
+		}},
+	}}
+	step := InstallStep{Repo: "uv", Kind: "example"}
+	tests := []struct {
+		Marker     string
+		Key        string
+		WantStatus Status
+		WantReason Reason
+	}{{ // Test 0: A scaffold refused in the checkout is inconclusive.
+		Key: "b1:1", Marker: "KIBBLE-LINE b1:1 CODE=2 CWD=/work/repo",
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 1: The same output in a directory the document chose still fails.
+		Key: "b1:1", Marker: "KIBBLE-LINE b1:1 CODE=2 CWD=/work/repo/example",
+		WantStatus: StatusFail,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			lines := []string{
+				"KIBBLE-BUILD CODE=0", "KIBBLE-STEP b1 START",
+				"KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo/example", refused, test.Marker, "KIBBLE-DONE",
+			}
+			res := classifyExample(step, plan, sessionOut(lines...), nil, 0, lineTimeout, sessionEnd{})
+			if res.example == nil {
+				t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+			}
+			got := res.example.Steps[0].Lines[1]
+			if diff := cmp.Diff(test.WantStatus, got.Status); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s\ndetail: %s", diff, got.Detail)
+			}
+			if diff := cmp.Diff(test.WantReason, got.Reason); diff != "" {
+				t.Errorf("reason mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
