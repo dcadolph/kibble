@@ -748,6 +748,48 @@ func TestSkipReasonReaderNames(t *testing.T) {
 	}
 }
 
+// TestSkipReasonReservedHost checks that a reserved example host in host
+// position skips as a placeholder and that ordinary hosts and files run.
+func TestSkipReasonReservedHost(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		Line     string
+		WantSkip bool
+	}{{ // Test 0: a bare URL on a reserved host.
+		Line: `tool run https://api.example.com/openapi.json`, WantSkip: true,
+	}, { // Test 1: a path placeholder and a reserved host together.
+		Line:     `tool --config-file /path/to/config.toml run https://api.example.com/openapi.json`,
+		WantSkip: true,
+	}, { // Test 2: a reserved host ahead of a flag.
+		Line: `uvx tool run https://api.example.com/openapi.json --phases=examples`, WantSkip: true,
+	}, { // Test 3: a real host runs.
+		Line: `tool https://api.github.com/repos/x/y`, WantSkip: false,
+	}, { // Test 4: a quoted sentence is one token with the host mid-token, so it runs.
+		Line: `tool commit -m "see example.com"`, WantSkip: false,
+	}, { // Test 5: a userinfo at a reserved host.
+		Line: `tool user@example.org`, WantSkip: true,
+	}, { // Test 6: a flag value on a reserved test domain.
+		Line: `tool --url http://foo.test:8080/x`, WantSkip: true,
+	}, { // Test 7: a file name ending in test is not a host.
+		Line: `tool mytest.txt`, WantSkip: false,
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			pl := newReaderNameTestPlanner(map[string]bool{}, "tool")
+			skip, reason, _ := pl.skipReason(test.Line, docblock.Flatten(test.Line))
+			if got := skip != ""; got != test.WantSkip {
+				t.Fatalf("skip = %q, want skip %v", skip, test.WantSkip)
+			}
+			if test.WantSkip && reason != verdict.ReasonPlaceholder {
+				t.Errorf("reason = %q, want %q", reason, verdict.ReasonPlaceholder)
+			}
+		})
+	}
+}
+
 // TestSkipReasonReaderFile checks that a my-prefixed file name the tree lacks
 // is given to the reader as a fixture, so the line runs rather than skips.
 func TestSkipReasonReaderFile(t *testing.T) {

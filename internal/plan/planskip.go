@@ -15,6 +15,22 @@ import (
 // placeholder, another platform, a shell the container is not, a command that
 // serves rather than returns.
 
+// reExampleHost matches a reserved example host in host position: after the
+// start of a token, a URL scheme, or a userinfo at sign.
+var reExampleHost = regexp.MustCompile(
+	`(?i)(^|://|@)([a-z0-9-]+\.)*(example\.(com|net|org)|[a-z0-9-]+\.(example|test|invalid))(:\d+)?(/|$|[?#])`)
+
+// reservedExampleHost returns the first operand holding a reserved example
+// host in host position, or empty when none does.
+func reservedExampleHost(flat string) string {
+	for _, op := range shell.Operands(flat) {
+		if reExampleHost.MatchString(op) {
+			return op
+		}
+	}
+	return ""
+}
+
 // skipReason returns why a line cannot run in a clean container, or empty
 // when it can. The checks run in order of how specific their reason is.
 // Substitutions have already been applied, so a placeholder that survives
@@ -22,6 +38,10 @@ import (
 func (pl *planner) skipReason(cmd, flat string) (string, verdict.Reason, bool) {
 	if docblock.HasPlaceholder(docblock.CommandHead(flat)) {
 		return "docs use a placeholder the reader must fill in", verdict.ReasonPlaceholder, false
+	}
+	if host := reservedExampleHost(flat); host != "" {
+		return fmt.Sprintf("docs use the reserved example host %q, which the reader replaces", host),
+			verdict.ReasonPlaceholder, false
 	}
 	// Asked before the rules that read the line as shell, and after the
 	// placeholder rule, since `--key <YOUR-KEY>` is an unparseable line whose
