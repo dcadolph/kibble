@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -942,5 +943,107 @@ func TestClassifyStripsANSI(t *testing.T) {
 	}
 	if !strings.Contains(res.Detail, "repository not found") {
 		t.Errorf("detail lost the message: %q", res.Detail)
+	}
+}
+
+// TestPkgScriptOwnedBinaries runs the pip script against a fake pip. What the
+// package owns decides which binary is smoke-tested, wherever pip wrote it: a
+// user install lands outside the system bin directory, where the old diff
+// never looked, and a package with no console script once had a build
+// dependency's tool smoke-tested in its name. A pip that cannot answer still
+// falls back to the diff.
+func TestPkgScriptOwnedBinaries(t *testing.T) {
+	t.Parallel()
+	for _, tool := range []string{"bash", "readlink", "timeout", "comm"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("no %s", tool)
+		}
+	}
+	tests := []struct {
+		Show      string
+		ShowCode  int
+		Install   string
+		Prebuilt  string
+		WantLine  string
+		WantNoBin bool
+	}{{ // Test 0: A user install writes outside the system bin directory.
+		Show:     "Location: $T/user/lib/python3/site-packages\n  ../../../bin/pipx",
+		Prebuilt: "user/bin/pipx",
+		WantLine: "SMOKELINE=pipx 1.18.4",
+	}, { // Test 1: A system install is found through its owned path.
+		Show:     "Location: $T/sys/lib/python3/site-packages\n  ../../../bin/pipx",
+		Install:  "pipx",
+		WantLine: "SMOKELINE=pipx 1.18.4",
+	}, { // Test 2: A package that owns no binary does not borrow a foreign one.
+		Show:      "Location: $T/sys/lib/python3/site-packages\n  code2prompt/__init__.py",
+		Install:   "patchelf",
+		WantNoBin: true,
+	}, { // Test 3: A pip that cannot answer falls back to the diff.
+		ShowCode: 1,
+		Install:  "patchelf",
+		WantLine: "SMOKELINE=patchelf 0.18.0",
+	}, { // Test 4: The documented name wins among several owned binaries.
+		Show:     "Location: $T/sys/lib/python3/site-packages\n  ../../../bin/aaa\n  ../../../bin/pipx",
+		Prebuilt: "sys/bin/aaa",
+		Install:  "pipx",
+		WantLine: "SMOKELINE=pipx 1.18.4",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, d := range []string{"fake", "user/bin", "user/lib/python3/site-packages",
+				"sys/bin", "sys/lib/python3/site-packages"} {
+				if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tools := map[string]string{
+				"pipx": "#!/bin/sh\necho 'pipx 1.18.4'\n", "patchelf": "#!/bin/sh\necho 'patchelf 0.18.0'\n",
+				"aaa": "#!/bin/sh\necho 'aaa 1.0'\n",
+			}
+			if test.Prebuilt != "" {
+				name := filepath.Base(test.Prebuilt)
+				//nolint:gosec // Test fixture must be executable.
+				if err := os.WriteFile(filepath.Join(dir, test.Prebuilt), []byte(tools[name]), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			install := "exit 0"
+			if test.Install != "" {
+				staged := filepath.Join(dir, "fake", test.Install+".staged")
+				//nolint:gosec // Test fixture must be executable.
+				if err := os.WriteFile(staged, []byte(tools[test.Install]), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				install = fmt.Sprintf("cp %q %q; exit 0", staged, filepath.Join(dir, "sys/bin", test.Install))
+			}
+			show := filepath.Join(dir, "fake", "show.txt")
+			if err := os.WriteFile(show, []byte(strings.ReplaceAll(test.Show, "$T", dir)+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			pip := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in\ninstall) %s ;;\nshow) cat %q; exit %d ;;\nesac\nexit 2\n",
+				install, show, test.ShowCode)
+			//nolint:gosec // Test fixture must be executable.
+			if err := os.WriteFile(filepath.Join(dir, "fake", "pip"), []byte(pip), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			script := pkgScriptFor(InstallStep{
+				Kind: "pip-install", Raw: "pip install --user pipx", Module: "pipx", Binary: "pipx"}, 60)
+			script = strings.Replace(script, `BINDIR="/usr/local/bin"`, "BINDIR="+filepath.Join(dir, "sys/bin"), 1)
+			cmd := exec.Command("bash", "-c", script)
+			cmd.Env = append(os.Environ(), "PATH="+filepath.Join(dir, "fake")+":"+os.Getenv("PATH"))
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("script: %v\n%s", err, out)
+			}
+			got := string(out)
+			if test.WantNoBin != strings.Contains(got, "NOBIN=1") {
+				t.Errorf("NOBIN = %v, want %v\n%s", !test.WantNoBin, test.WantNoBin, got)
+			}
+			if test.WantLine != "" && !strings.Contains(got, test.WantLine+"\n") {
+				t.Errorf("missing %q\n%s", test.WantLine, got)
+			}
+		})
 	}
 }
