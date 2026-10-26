@@ -189,9 +189,12 @@ A line that would otherwise be a plain `FAIL` is `BLOCKED` with the reason
 `inherited-state` when it ran in a directory an earlier section entered with `cd`,
 `pushd`, or `popd`. Documents change directory once in a setup section and stay there, so
 a later section can fail on what that directory holds rather than on what it says.
-Crashes, gaps, and every other excuse keep precedence, and only a would-be plain `FAIL`
-moves. Resetting the working directory at every heading was rejected, because it would
-break every document that changes directory once in setup and invent failures.
+Crashes and every other excuse keep precedence, and only a would-be plain `FAIL` moves,
+with one exception. A tool that reports a file the line passed as missing is read as
+`inherited-state` too, since the file's absence from that directory says nothing about the
+directory the document meant. Resetting the working directory at every heading was
+rejected, because it would break every document that changes directory once in setup and
+invent failures.
 
 The same holds for the checkout itself. A would-be plain `FAIL` that ran in the
 repository's own checkout, and whose output says the target "already exists" or is
@@ -210,6 +213,12 @@ earlier line of the document passed and no earlier block was left out of the pla
 Otherwise it is `BLOCKED` with the reason `depends-on-skipped`, naming the first line or
 left-out block that could have created the file. A left-out block is named by its line and
 heading, since its first line could be output. A background step keeps the plan-time `GAP`.
+
+The same holds when a tool reports a file the line passed as missing. If an earlier line of
+the document was to write that file, through a redirect, an output flag such as
+`--output-file`, a copy, a download, or a titled fence, and that line did not pass, the
+verdict is `BLOCKED` with the reason `depends-on-skipped`, naming that line. Only a file no
+earlier line was to write is a `GAP`.
 
 A titled fence whose title is a plain relative file path is a file the document writes. The
 planner turns it into a line that writes the block's content, so a later line reading that
