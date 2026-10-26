@@ -6,6 +6,8 @@ import (
 	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/shell"
 	"github.com/dcadolph/kibble/internal/verdict"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -111,6 +113,11 @@ type PlanLine struct {
 	Synthetic []string `json:"synthetic,omitempty"`
 	// Line is the 1-based README line the command sits on, 0 when unknown.
 	Line int `json:"line,omitempty"`
+	// File is the path a titled code block names when this line writes the
+	// block's content to it. Documentation sites show a file the reader is to
+	// create as a block titled with its name, and a later line that reads it
+	// was never missing it.
+	File string `json:"file,omitempty"`
 }
 
 // Runnable reports whether any line of the step actually runs.
@@ -211,6 +218,10 @@ func BuildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 		}
 	}
 	for _, block := range docblock.CodeBlocks(markdown) {
+		if path := fileTitle(block.Title); path != "" && !block.Span {
+			pl.addFileBlock(block, path)
+			continue
+		}
 		if block.Span || !docblock.ShellLangs[block.Lang] {
 			continue
 		}
@@ -457,6 +468,57 @@ func blockLocation(block docblock.Block) string {
 		loc += fmt.Sprintf(" under %q", block.Heading)
 	}
 	return loc
+}
+
+// reFilePath matches a relative path made only of characters that need no
+// quoting, which also keeps a title listing several names from reading as one.
+var reFilePath = regexp.MustCompile(`^[A-Za-z0-9._/+@-]+$`)
+
+// fileTitle returns a block title as the path of the file the block holds, or
+// empty when the title is not shaped like a file path. A path needs a dot or a
+// slash, so a title such as Terminal is a caption rather than a file. A path
+// that leaves the working directory, is absolute, names a directory, or lands
+// inside a .git directory is not one the session may write.
+func fileTitle(title string) string {
+	if !reFilePath.MatchString(title) || !strings.ContainsAny(title, "./") ||
+		strings.HasPrefix(title, "/") || strings.HasSuffix(title, "/") ||
+		strings.Contains(title, "..") {
+		return ""
+	}
+	for _, seg := range strings.Split(title, "/") {
+		if seg == ".git" {
+			return ""
+		}
+	}
+	return strings.TrimPrefix(title, "./")
+}
+
+// addFileBlock plans a titled block as the document writing the file it names.
+// A path the checkout already holds is never written, since overwriting the
+// repository's own file would test kibble's copy rather than the project's.
+func (pl *planner) addFileBlock(block docblock.Block, path string) {
+	if pl.tree[path] {
+		return
+	}
+	lines := block.Lines
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	term := "KIBBLE_FILE_END"
+	for i := 1; slices.Contains(lines, term); i++ {
+		term = fmt.Sprintf("KIBBLE_FILE_END_%d", i)
+	}
+	cmd := fmt.Sprintf("cat > '%s' <<'%s'", path, term)
+	if i := strings.LastIndex(path, "/"); i > 0 {
+		cmd = fmt.Sprintf("mkdir -p '%s' && %s", path[:i], cmd)
+	}
+	cmd += "\n" + strings.Join(append(append([]string(nil), lines...), term), "\n")
+	pl.plan.Steps = append(pl.plan.Steps, PlanStep{
+		ID:      fmt.Sprintf("b%d", len(pl.plan.Steps)+1),
+		Heading: block.Heading,
+		Lines:   []PlanLine{{Cmd: cmd, File: path, Line: block.Line}},
+	})
+	pl.created[path] = true
 }
 
 // qualifies reports whether every command line of a block starts with a

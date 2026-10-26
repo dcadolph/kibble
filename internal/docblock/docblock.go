@@ -37,7 +37,15 @@ type Block struct {
 	Line int
 	// Lines are the raw code lines.
 	Lines []string
+	// Title is the title attribute of a fenced block's info string, such as
+	// process.py in ```python title="process.py"```, empty when there is none.
+	// Documentation sites render it as the name of the file the block holds.
+	Title string
 }
+
+// reFenceTitle matches a title attribute in a fence's info string, in double
+// or single quotes.
+var reFenceTitle = regexp.MustCompile(`\btitle=(?:"([^"]*)"|'([^']*)')`)
 
 // admonitionMarker matches the first line of a MkDocs admonition, whose indented
 // body is prose that markdown parsers read as an indented code block.
@@ -87,6 +95,11 @@ func CodeBlocks(markdown string) []Block {
 			return ast.WalkContinue, nil
 		case *ast.FencedCodeBlock:
 			b.Lang = string(node.Language(src))
+			if node.Info != nil {
+				if m := reFenceTitle.FindStringSubmatch(string(node.Info.Segment.Value(src))); m != nil {
+					b.Title = m[1] + m[2]
+				}
+			}
 			b.Lines = strings.Split(BlockText(node, src), "\n")
 			b.Line = BlockLine(node, src)
 		case *ast.CodeBlock:

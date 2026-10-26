@@ -1031,6 +1031,72 @@ func TestPlanNeed(t *testing.T) {
 	}
 }
 
+// TestPlanFile checks that a fenced block titled with a file path is planned as
+// the document writing that file, so a later line reading it needs nothing, and
+// that a title the checkout already holds or a caption is not written.
+func TestPlanFile(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Markdown  string
+		Tree      []string
+		WantLines []string
+	}{{ // Test 0: uv's coiled guide writes process.py, then runs it.
+		Markdown: "```python title=\"process.py\"\nimport coiled\nprint(1)\n```\n\n" +
+			"```console\n$ uv run process.py\n```\n",
+		WantLines: []string{
+			"cat > 'process.py' <<'KIBBLE_FILE_END'\nimport coiled\nprint(1)\nKIBBLE_FILE_END" +
+				" file=process.py need= line=2",
+			"uv run process.py file= need= line=7",
+		},
+	}, { // Test 1: uv's bazel guide writes a script in a directory and never runs its lines.
+		Markdown: "```bash title=\"bazel/uv-auth-helper\"\n#!/usr/bin/env bash\nexec uv auth helper\n```\n\n" +
+			"```console\n$ chmod +x bazel/uv-auth-helper\n```\n",
+		WantLines: []string{
+			"mkdir -p 'bazel' && cat > 'bazel/uv-auth-helper' <<'KIBBLE_FILE_END'\n" +
+				"#!/usr/bin/env bash\nexec uv auth helper\nKIBBLE_FILE_END file=bazel/uv-auth-helper need= line=2",
+			"chmod +x bazel/uv-auth-helper file= need= line=7",
+		},
+	}, { // Test 2: a title the checkout already holds is never written.
+		Markdown:  "```toml title=\"pyproject.toml\"\n[project]\nname = \"x\"\n```\n",
+		Tree:      []string{"pyproject.toml"},
+		WantLines: nil,
+	}, { // Test 3: a caption title is not a file, so the block is planned as before.
+		Markdown:  "```bash title=\"Terminal\"\nuv sync\n```\n",
+		WantLines: []string{"uv sync file= need= line=2"},
+	}, { // Test 4: a content line equal to the terminator gets a suffixed terminator.
+		Markdown: "```text title=\"notes.txt\"\nKIBBLE_FILE_END\n```\n",
+		WantLines: []string{
+			"cat > 'notes.txt' <<'KIBBLE_FILE_END_1'\nKIBBLE_FILE_END\nKIBBLE_FILE_END_1" +
+				" file=notes.txt need= line=2",
+		},
+	}, { // Test 5: a title listing several names, or a path into .git, is not a file.
+		Markdown: "```js title=\"prettier.config.mjs, .prettierrc.mjs\"\nexport default {}\n```\n\n" +
+			"```sh title=\".git/hooks/pre-commit\"\nuv sync\n```\n",
+		WantLines: []string{"uv sync file= need= line=6"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, f := range test.Tree {
+				if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			plan := BuildPlan("repo", dir, test.Markdown, []string{"uv"}, nil, nil, testRecognizer())
+			var got []string
+			for _, s := range plan.Steps {
+				for _, l := range s.Lines {
+					got = append(got, fmt.Sprintf("%s file=%s need=%s line=%d", l.Cmd, l.File, l.Need, l.Line))
+				}
+			}
+			if diff := cmp.Diff(test.WantLines, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("lines mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestPlanOutsideCheckoutAfterCd checks that a ../ operand is called the
 // reader's only before the document changes directory. dotenvx's README runs
 // `cd apps/app1` and then reads ../../.env.keys, the reader's monorepo root.

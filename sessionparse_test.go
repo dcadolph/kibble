@@ -491,3 +491,28 @@ func TestClassifyExampleOwnProject(t *testing.T) {
 		})
 	}
 }
+
+// TestClassifyExampleFile checks that a line writing a titled block says what
+// it wrote when it passes.
+func TestClassifyExampleFile(t *testing.T) {
+	t.Parallel()
+	plan := &kplan.Plan{Repo: "uv", Steps: []kplan.PlanStep{{ID: "b1", Doc: "docs/coiled.md", Lines: []kplan.PlanLine{
+		{Cmd: "cat > 'process.py' <<'KIBBLE_FILE_END'\nprint(1)\nKIBBLE_FILE_END", File: "process.py"},
+	}}}}
+	out := sessionOut(
+		"KIBBLE-BUILD CODE=0",
+		"KIBBLE-STEP b1 START",
+		"KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo",
+		"KIBBLE-DONE")
+	res := classifyExample(InstallStep{Repo: "uv", Kind: "example"}, plan, out, nil, 0, lineTimeout, sessionEnd{})
+	if res.example == nil {
+		t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+	}
+	got := res.example.Steps[0].Lines[0]
+	if diff := cmp.Diff(StatusVerified, got.Status); diff != "" {
+		t.Errorf("status mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("wrote process.py as the document shows it", got.Detail); diff != "" {
+		t.Errorf("detail mismatch (-want +got):\n%s", diff)
+	}
+}
