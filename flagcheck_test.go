@@ -95,6 +95,14 @@ func TestExtractUsage(t *testing.T) {
 		Binaries:     []string{"tool"},
 		WantFlags:    []string{"verbose"},
 		WantUnplaced: []string{"--subflag"},
+	}, { // Test 15: consecutive flags are all cited.
+		In:        "```sh\ntool --alpha --beta --gamma --delta\n```\n",
+		Binaries:  []string{"tool"},
+		WantFlags: []string{"alpha", "beta", "gamma", "delta"},
+	}, { // Test 16: a bundle followed by two spaces does not hide the next flags.
+		In:        "```sh\nrclone -vvv  --stats-one-line --max-stats-groups 10\n```\n",
+		Binaries:  []string{"rclone"},
+		WantFlags: []string{"vvv", "stats-one-line", "max-stats-groups"},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -472,6 +480,37 @@ func TestFlagProbeOutranksScreens(t *testing.T) {
 			}
 			if got[0].Detail != test.WantDetail {
 				t.Errorf("detail = %q, want %q", got[0].Detail, test.WantDetail)
+			}
+		})
+	}
+}
+
+// TestHelpFlags checks that help text is read token by token and flag names
+// lose their dashes.
+func TestHelpFlags(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In         string
+		WantFlags  []string
+		WantAbsent []string
+	}{{ // Test 0: short and long flags on one line, with trailing comma on the short.
+		In:         "  -p, --pattern <P>  -r, --rewrite <F>",
+		WantFlags:  []string{"pattern", "rewrite"},
+		WantAbsent: []string{"p,", "p", "r"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			got := helpFlags(test.In)
+			for _, f := range test.WantFlags {
+				if !got[f] {
+					t.Errorf("missing flag %q in %v", f, got)
+				}
+			}
+			for _, f := range test.WantAbsent {
+				if got[f] {
+					t.Errorf("unexpected flag %q in %v", f, got)
+				}
 			}
 		})
 	}

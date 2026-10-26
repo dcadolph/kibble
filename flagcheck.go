@@ -44,9 +44,10 @@ func (u *Usage) dashOf(name string) string {
 }
 
 var (
-	// reFlagToken matches a flag token such as --output-dir or -json. The name
-	// must be at least two characters, so ambiguous short flags are ignored.
-	reFlagToken = regexp.MustCompile(`(^|\s)(--?[A-Za-z][A-Za-z0-9_-]+)(=|\s|$)`)
+	// reFlagWord matches one whitespace-separated token that is a flag such as
+	// --output-dir, -json, or --name=value. The name must be at least two
+	// characters, so ambiguous short flags are ignored.
+	reFlagWord = regexp.MustCompile(`^(--?[A-Za-z][A-Za-z0-9_-]+)(=.*)?$`)
 	// reSubName matches a plausible subcommand name.
 )
 
@@ -117,14 +118,14 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 					if i := slices.Index(tail, "--"); i >= 0 {
 						tail = tail[:i]
 					}
-					for _, m := range reFlagToken.FindAllStringSubmatch(strings.Join(tail, " "), -1) {
-						if !slices.Contains(use.Unplaced, m[2]) {
-							use.Unplaced = append(use.Unplaced, m[2])
+					for _, m := range flagTokens(strings.Join(tail, " ")) {
+						if !slices.Contains(use.Unplaced, m) {
+							use.Unplaced = append(use.Unplaced, m)
 						}
 					}
 				}
 			}
-			flags := reFlagToken.FindAllStringSubmatch(own, -1)
+			flags := flagTokens(own)
 			var sub string
 			if len(fields) > 1 && !tailCut && shell.IsSubcommandName(fields[1]) {
 				sub = fields[1]
@@ -143,7 +144,7 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 				flagged[bin+"|"+sub] = true
 			}
 			for _, m := range flags {
-				name := strings.TrimLeft(m[2], "-")
+				name := strings.TrimLeft(m, "-")
 				if key := bin + "|" + name; !flagSeen[key] {
 					flagSeen[key] = true
 					use.Flags = append(use.Flags, name)
@@ -153,7 +154,7 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 					}
 					use.FlagSub[name] = sub
 					dash := "--"
-					if !strings.HasPrefix(m[2], "--") {
+					if !strings.HasPrefix(m, "--") {
 						dash = "-"
 					}
 					use.FlagDash[name] = dash
@@ -255,12 +256,24 @@ func splitSegments(line string) []string {
 	return reSegment.Split(line, -1)
 }
 
+// flagTokens returns the dashed name of every whitespace-separated token in s
+// that is a flag, reading token by token so consecutive flags are all found.
+func flagTokens(s string) []string {
+	var out []string
+	for _, tok := range strings.Fields(s) {
+		if m := reFlagWord.FindStringSubmatch(tok); m != nil {
+			out = append(out, m[1])
+		}
+	}
+	return out
+}
+
 // helpFlags returns the set of flag names, without dashes, that a binary's
 // collected help output advertises.
 func helpFlags(helpText string) map[string]bool {
 	out := map[string]bool{}
-	for _, m := range reFlagToken.FindAllStringSubmatch(helpText, -1) {
-		out[strings.TrimLeft(m[2], "-")] = true
+	for _, m := range flagTokens(helpText) {
+		out[strings.TrimLeft(m, "-")] = true
 	}
 	return out
 }
