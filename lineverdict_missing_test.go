@@ -18,12 +18,15 @@ func TestClassifyMissingNames(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
+		Creators   map[string]string
 		WantStatus Status
 		WantReason Reason
 		WantDetail string
 		Cmd        string
 		Output     string
+		Cwd        string
 		Code       int
+		Inherited  bool
 	}{{ // Test 0: A traceback naming a file passed through a flag value is the document's gap.
 		Cmd: "repren --patterns=patfile --word-breaks myfile1 myfile2 myfile3",
 		Output: `Traceback (most recent call last):
@@ -208,13 +211,35 @@ Require stack:
 		Cmd:    "uv add fastapi",
 		Output: "error: File not found: helper\n",
 		Code:   2, WantStatus: StatusSkipped, WantReason: ReasonMissingDependency,
+	}, { // Test 20: A crash naming a passed file in an inherited directory is blocked.
+		Cmd: "repren --patterns=patfile --word-breaks myfile1",
+		Output: `Traceback (most recent call last):
+  File "/root/.local/bin/repren", line 10, in <module>
+    sys.exit(main())
+FileNotFoundError: [Errno 2] No such file or directory: 'patfile'
+`,
+		Code: 1, Cwd: "/work/repo/example", Inherited: true,
+		WantStatus: StatusBlocked, WantReason: ReasonInheritedState,
+		WantDetail: "ran in /work/repo/example, which an earlier section entered",
+	}, { // Test 21: A crash naming a file a failed earlier line was to create is blocked.
+		Cmd: "repren --patterns=patfile --word-breaks myfile1",
+		Output: `Traceback (most recent call last):
+  File "/root/.local/bin/repren", line 10, in <module>
+    sys.exit(main())
+FileNotFoundError: [Errno 2] No such file or directory: 'patfile'
+`,
+		Code: 1, Creators: map[string]string{"patfile": "make-patterns > patfile"},
+		WantStatus: StatusBlocked, WantReason: ReasonDependsOnSkipped,
+		WantDetail: "references patfile, which an earlier line that did not pass may create: " +
+			"make-patterns > patfile",
 	}}
 
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
 			lr := classifyLineResult(lineResult{Cmd: test.Cmd}, kplan.PlanLine{},
-				lineOutcome{code: test.Code, output: test.Output}, false, nil, lineTimeout)
+				lineOutcome{code: test.Code, output: test.Output, cwd: test.Cwd, inherited: test.Inherited,
+					creators: test.Creators}, false, nil, lineTimeout)
 			if lr.Status != test.WantStatus || lr.Reason != test.WantReason {
 				t.Errorf("verdict = %s %q, want %s %q (detail %q)",
 					lr.Status, lr.Reason, test.WantStatus, test.WantReason, lr.Detail)

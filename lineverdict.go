@@ -83,7 +83,7 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		// Only the last line counts: a missing file earlier in a chained
 		// traceback did not end the process, and a crash ending any other way
 		// still convicts below.
-		lr = settleMissing(lr, crashMissingName(o.output), tail)
+		lr = settleMissing(lr, crashMissingName(o.output), tail, o)
 	case reCrash.MatchString(o.output):
 		// Checked before every excuse: a process that died did not report a
 		// condition kibble can forgive, whatever else it printed first.
@@ -253,13 +253,11 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		// how you would search some-utf16-file" earns the same verdict as a
 		// missing setup step: report it, and let a person or the author
 		// settle which it was.
-		lr.Status = StatusGap
-		lr.Detail = fmt.Sprintf("references %s, which no documented step creates: %s",
-			missingFileArg(lr.Cmd, o.output), tail)
+		lr = settleNamed(lr, missingFileArg(lr.Cmd, o.output), tail, o)
 	case reportedMissing(o.output) != "":
 		// The tool named what it lacked and the command never passed it, so
 		// the tool reached for it on its own. See settleMissing.
-		lr = settleMissing(lr, reportedMissing(o.output), tail)
+		lr = settleMissing(lr, reportedMissing(o.output), tail, o)
 	case o.cwd == sessionRepoDir && o.ownProject && !reUsageError.MatchString(o.output):
 		// A project manager run in the checkout read the checkout's own
 		// project, so it failed on what that project holds. Only a vocabulary
@@ -284,10 +282,7 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		// what the directory holds rather than on what the section says:
 		// uv's README pins a Python version inside a project an earlier
 		// section created. The section was never tested as written.
-		lr.Status = StatusBlocked
-		lr.Reason = ReasonInheritedState
-		lr.Detail = fmt.Sprintf("ran in %s, which an earlier section entered, so this "+
-			"section's claim was not tested as written: exited %d: %s", o.cwd, o.code, tail)
+		lr = inheritedResult(lr, o, tail)
 	default:
 		lr.Status = StatusFail
 		lr.Detail = fmt.Sprintf("exited %d: %s", o.code, tail)
@@ -615,11 +610,10 @@ func namedInCommand(cmd, name string) bool {
 // documented step made, and the tool or the document may be at fault, which is
 // what blocked means. A bare word, with no slash and no extension, is a
 // program the tool tried to run, and the container lacks it.
-func settleMissing(lr lineResult, name, tail string) lineResult {
+func settleMissing(lr lineResult, name, tail string, o lineOutcome) lineResult {
 	switch {
 	case namedInCommand(lr.Cmd, name):
-		lr.Status = StatusGap
-		lr.Detail = fmt.Sprintf("references %s, which no documented step creates: %s", name, tail)
+		lr = settleNamed(lr, name, tail, o)
 	case strings.Contains(name, "/") || path.Ext(name) != "":
 		lr.Status = StatusBlocked
 		lr.Reason = ReasonMissingFixture
@@ -630,6 +624,46 @@ func settleMissing(lr lineResult, name, tail string) lineResult {
 		lr.Detail = "ran a command the container lacks, reported by the tool that invoked it: " + tail
 	}
 	return lr
+}
+
+// settleNamed gives the verdict for a missing name the command passed. A line
+// that ran in a directory an earlier section entered was not run where its
+// document meant, so the name's absence there says nothing about the
+// document. A name an earlier line of the document was to create, where that
+// line did not pass, may be missing for that reason alone. Only otherwise is
+// the name a hole in the document.
+func settleNamed(lr lineResult, name, tail string, o lineOutcome) lineResult {
+	creator := o.creators[normName(name)]
+	switch {
+	case o.inherited:
+		lr = inheritedResult(lr, o, tail)
+	case creator != "":
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonDependsOnSkipped
+		lr.Detail = fmt.Sprintf("references %s, which an earlier line that did not pass may create: %s",
+			name, creator)
+	default:
+		lr.Status = StatusGap
+		lr.Detail = fmt.Sprintf("references %s, which no documented step creates: %s", name, tail)
+	}
+	return lr
+}
+
+// inheritedResult reads a line that ran in a directory an earlier section of
+// its document entered, which its own section never did.
+func inheritedResult(lr lineResult, o lineOutcome, tail string) lineResult {
+	lr.Status = StatusBlocked
+	lr.Reason = ReasonInheritedState
+	lr.Detail = fmt.Sprintf("ran in %s, which an earlier section entered, so this "+
+		"section's claim was not tested as written: exited %d: %s", o.cwd, o.code, tail)
+	return lr
+}
+
+// normName reduces a path to the form lines name it by, without quotes, a
+// leading ./ or a trailing slash.
+func normName(name string) string {
+	name = strings.Trim(name, "'\"")
+	return strings.TrimSuffix(strings.TrimPrefix(name, "./"), "/")
 }
 
 // missingCommandName returns the program a shell reported missing, or empty

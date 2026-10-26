@@ -118,6 +118,10 @@ type PlanLine struct {
 	// create as a block titled with its name, and a later line that reads it
 	// was never missing it.
 	File string `json:"file,omitempty"`
+	// Creates names the paths this line writes, as the planner reads them. A
+	// later line that finds one missing after this line failed may be missing
+	// it for that reason alone, which is not the document's gap.
+	Creates []string `json:"creates,omitempty"`
 }
 
 // Runnable reports whether any line of the step actually runs.
@@ -430,7 +434,7 @@ func (pl *planner) addBlock(block docblock.Block) {
 			}
 		}
 		if line.Skip == "" {
-			pl.recordCreated(flat)
+			line.Creates = pl.recordCreated(flat)
 			if gitStages(flat) {
 				pl.staged = true
 			}
