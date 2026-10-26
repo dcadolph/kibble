@@ -59,7 +59,7 @@ var (
 	// reCreatedToken matches a token a line creates: a redirect target, an
 	// -o argument, or the arguments of mkdir, touch, cp, or mv.
 	reCreatedToken = regexp.MustCompile(
-		`>{1,2}\s*([^\s&|;]+)|\s-o\s+(\S+)|--?(?:output|outfile|dest|out|o)[= ]([^\s&|;]+)`)
+		`>{1,2}\s*([^\s&|;]+)|\s-o\s+(\S+)|--?(?:output-file|output|outfile|dest|out|o)[= ]([^\s&|;]+)`)
 	// reAssignPrefix matches a leading VAR= or export VAR= assignment and
 	// captures the variable name.
 	reAssignPrefix = regexp.MustCompile(`^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=`)

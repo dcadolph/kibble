@@ -144,34 +144,42 @@ func (pl *planner) missingRedirectIn(flat string) string {
 var reNeverFabricate = regexp.MustCompile(`(?i)checksum|sha\d*sum|SHA\d+SUMS|\.(sig|asc)$`)
 
 // recordCreated tracks the paths a running line will produce, so later
-// lines that read them are not flagged as missing their file.
-func (pl *planner) recordCreated(flat string) {
+// lines that read them are not flagged as missing their file, and returns
+// them in the order the line names them.
+func (pl *planner) recordCreated(flat string) []string {
+	var out []string
+	add := func(name string) {
+		name = strings.TrimPrefix(name, "./")
+		pl.created[name] = true
+		out = append(out, name)
+	}
 	flat = docblock.StripComment(flat)
 	for _, m := range reCreatedToken.FindAllStringSubmatch(flat, -1) {
 		for _, tok := range m[1:] {
 			if tok != "" {
-				pl.created[strings.TrimPrefix(tok, "./")] = true
+				add(tok)
 			}
 		}
 	}
 	fields := shell.WordsOrFields(flat)
 	if len(fields) < 2 {
-		return
+		return out
 	}
 	switch fields[0] {
 	case "mkdir", "touch":
 		for _, tok := range fields[1:] {
 			if !strings.HasPrefix(tok, "-") {
-				pl.created[strings.TrimPrefix(tok, "./")] = true
+				add(tok)
 			}
 		}
 	case "cp", "mv":
-		pl.created[strings.TrimPrefix(fields[len(fields)-1], "./")] = true
+		add(fields[len(fields)-1])
 	case "curl", "wget":
 		for _, name := range downloadedNames(fields) {
-			pl.created[name] = true
+			add(name)
 		}
 	}
+	return out
 }
 
 // downloadedNames returns the file names a curl or wget line writes into the
