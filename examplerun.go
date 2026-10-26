@@ -131,14 +131,15 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 	}()
 	defer func() { _ = pr.Close() }()
 	cmd.Stdin = pr
-	out, _ := cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) {
 		return Result{
 			Step: step, Status: StatusError, Duration: time.Since(start),
 			Detail: "run was interrupted, so the examples have no verdict",
 		}
 	}
-	res = classifyExample(step, plan, string(out), wrapped, time.Since(start), d.lineBudget())
+	end := sessionEnd{expired: errors.Is(ctx.Err(), context.DeadlineExceeded), err: err}
+	res = classifyExample(step, plan, string(out), wrapped, time.Since(start), d.lineBudget(), end)
 	if image != d.Image {
 		res.Image = image
 	}

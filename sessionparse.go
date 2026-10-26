@@ -9,6 +9,7 @@ import (
 	"github.com/dcadolph/kibble/internal/docblock"
 	kplan "github.com/dcadolph/kibble/internal/plan"
 	"github.com/dcadolph/kibble/internal/shell"
+	"github.com/dcadolph/kibble/internal/util"
 )
 
 // Reading the session's output back into per-line outcomes. The marker
@@ -56,10 +57,21 @@ func markerTail(line, marker string) (before, after string, ok bool) {
 	return line[:i], line[i+len(marker):], true
 }
 
+// sessionEnd records how the session's container stopped, which the output
+// alone cannot say. A session that ends early with budget left was ended by
+// the container rather than by a document, since the outer script only stops
+// at its done marker.
+type sessionEnd struct {
+	// expired reports whether the session's budget ran out.
+	expired bool
+	// err is the container client's exit error, nil when it exited cleanly.
+	err error
+}
+
 // classifyExample parses session output into a Result: per-line outcomes
 // feed step results, and the worst outcome names the repo's example status.
 func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map[string]bool,
-	dur, lineBudget time.Duration) Result {
+	dur, lineBudget time.Duration, end sessionEnd) Result {
 	res := Result{Step: step, Duration: dur}
 	outcomes := map[string]lineOutcome{}
 	have := map[string]bool{}
@@ -119,21 +131,44 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 		res.Detail = "installed tool is not on PATH under any documented name; examples not run"
 		return res
 	}
-	run, worst, detail := buildOutcomes(plan, outcomes, wrapped, done, have, lineBudget)
+	run, worst, detail := buildOutcomes(plan, outcomes, wrapped, done, end.expired, have, lineBudget)
 	res.example = run
 	res.Status = worst
 	res.Detail = detail
 	if pkgCode != 0 && res.Status == StatusVerified {
 		res.Detail += "; package install failed"
 	}
+	if !done && !end.expired && unsettled(plan, outcomes) {
+		// The lines still carry what ran, for the triage listing, but the
+		// session as a whole has no verdict: a container that dies with budget
+		// left says nothing about the document it was running.
+		res.Status = StatusError
+		res.Detail = "the container ended before the session finished, so the examples have no verdict"
+		if end.err != nil {
+			first, _, _ := strings.Cut(end.err.Error(), "\n")
+			res.Detail += ": " + util.Truncate(first, 120)
+		}
+	}
 	return res
+}
+
+// unsettled reports whether any runnable plan line printed no marker.
+func unsettled(plan *kplan.Plan, outcomes map[string]lineOutcome) bool {
+	for _, s := range plan.Steps {
+		for i, l := range s.Lines {
+			if _, seen := outcomes[fmt.Sprintf("%s:%d", s.ID, i)]; l.Skip == "" && !seen {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // buildOutcomes walks the plan against the recorded markers, resolves
 // failures that only depend on skipped lines, and returns the per-step
 // outcomes with the aggregate status and its summary detail.
 func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped map[string]bool,
-	done bool, have map[string]bool, lineBudget time.Duration) (*exampleRun, Status, string) {
+	done, expired bool, have map[string]bool, lineBudget time.Duration) (*exampleRun, Status, string) {
 	run := &exampleRun{}
 	documented := documentedSettings(plan)
 	ended := false
@@ -170,9 +205,17 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 					// before it, and later documents still ran.
 					lr.Detail = "not established: the document's shell exited at or before this line"
 				}
-			case !seen:
+			case !seen && expired:
 				lr.Status = StatusTimeout
 				lr.Detail = "session ended while this line ran"
+				ended = true
+			case !seen:
+				// The session stopped with budget left, so the container ended
+				// rather than this line hanging. What the line would have done
+				// is not known.
+				lr.Status = StatusBlocked
+				lr.Reason = ReasonNotExecuted
+				lr.Detail = "not established: the container ended before this line settled"
 				ended = true
 			default:
 				// A background step sends the whole block's output to a log, so
