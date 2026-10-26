@@ -419,3 +419,74 @@ func TestSessionScriptLineCwd(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionScriptNeed checks that a line reading a file the planner never
+// saw created asks whether the file exists just before it runs, so the parser
+// can judge the gap with evidence rather than a guess.
+func TestSessionScriptNeed(t *testing.T) {
+	t.Parallel()
+	plan := &kplan.Plan{
+		Repo: "repo",
+		Steps: []kplan.PlanStep{{ID: "b1", Doc: "docs/marimo.md", Lines: []kplan.PlanLine{
+			{Cmd: "uv add --script my_notebook.py numpy", Need: "my_notebook.py"},
+			{Cmd: "tool --run ~/.config/tool/config.toml", Need: "~/.config/tool/config.toml"},
+		}}},
+	}
+	script, _ := sessionScript(plan, 240, 90)
+	for _, want := range []string{
+		"if [ -e 'my_notebook.py' ]; then __kn=1; else __kn=0; fi\n" +
+			`printf '\nKIBBLE-NEED b1:0 %d\n' "$__kn"` + "\n__cwd=$PWD\ntimeout 90 uv add --script my_notebook.py numpy\n",
+		"if [ -e \"$HOME\"/'.config/tool/config.toml' ]; then __kn=1; else __kn=0; fi\n" +
+			`printf '\nKIBBLE-NEED b1:1 %d\n' "$__kn"` + "\n__cwd=$PWD\n",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script lacks %q:\n%s", want, script)
+		}
+	}
+}
+
+// TestExistsTest runs the generated existence test in bash, so the quoting is
+// checked by a shell rather than by eye.
+func TestExistsTest(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("no bash")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "it's here.txt"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "home", ".config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "home", ".config", "x.toml"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		Path string
+		Want bool
+	}{{ // Test 0: A present file with a quote in its name.
+		Path: "it's here.txt", Want: true,
+	}, { // Test 1: An absent file.
+		Path: "absent.txt", Want: false,
+	}, { // Test 2: A home path expands against HOME.
+		Path: "~/.config/x.toml", Want: true,
+	}, { // Test 3: Shell syntax in a name is not run.
+		Path: "$(touch pwned).txt", Want: false,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			cmd := exec.Command("bash", "-c", existsTest(test.Path))
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "HOME="+filepath.Join(dir, "home"))
+			got := cmd.Run() == nil
+			if got != test.Want {
+				t.Errorf("exists = %v, want %v", got, test.Want)
+			}
+		})
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pwned")); err == nil {
+		t.Error("a name's shell syntax ran")
+	}
+}

@@ -144,13 +144,16 @@ func (pl *planner) skipReason(cmd, flat string) (string, verdict.Reason, bool) {
 	if v := pl.unsetVar(flat); v != "" {
 		return fmt.Sprintf("expands $%s, which the docs never set", v), verdict.ReasonMissingFixture, false
 	}
+	// A file the planner cannot see created is not proof the docs never
+	// create it: a scaffold such as `uv init` writes files no list of verbs
+	// names. The line runs, and the session checks for the file just before
+	// it, where the claim can be proven.
 	if path := pl.missingRedirectIn(flat); path != "" {
-		return fmt.Sprintf("references %s, which the docs never create", path), verdict.ReasonMissingFixture, true
+		pl.need = path
+	} else if path := pl.missingFile(flat); path != "" {
+		pl.need = path
 	}
-	if path := pl.missingFile(flat); path != "" {
-		return fmt.Sprintf("references %s, which the docs never create", path), verdict.ReasonMissingFixture, true
-	}
-	if p := pl.missingHomePath(flat); p != "" {
+	if p := pl.missingHomePath(flat); p != "" && p != pl.need {
 		return fmt.Sprintf("reads %s, which only the reader's machine has", p), verdict.ReasonMissingFixture, false
 	}
 	return "", "", false

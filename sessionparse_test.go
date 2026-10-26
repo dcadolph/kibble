@@ -324,3 +324,95 @@ func TestClassifyExampleCheckoutState(t *testing.T) {
 		})
 	}
 }
+
+// TestClassifyExampleNeed checks how a line that started without a file it
+// reads is settled. The gap is the document's only when every earlier line of
+// the same document passed. Any earlier line that did not pass, or a block the
+// plan left out, may be what creates the file, so the line is blocked naming
+// it. A line that passed without the file never needed it.
+func TestClassifyExampleNeed(t *testing.T) {
+	t.Parallel()
+	const marimo = "uvx marimo edit my_notebook.py"
+	need := kplan.PlanLine{Cmd: "uv add --script my_notebook.py numpy", Need: "my_notebook.py"}
+	step := InstallStep{Repo: "uv", Kind: "example"}
+	tests := []struct {
+		First      kplan.PlanLine
+		FirstDoc   string
+		Unplanned  string
+		Need       string
+		Code       string
+		WantStatus Status
+		WantReason Reason
+		WantDetail string
+	}{{ // Test 0: Every earlier line passed, so the gap is earned.
+		First: kplan.PlanLine{Cmd: "uv --version"}, Need: "0", Code: "2",
+		WantStatus: StatusGap, WantReason: ReasonMissingFixture,
+		WantDetail: "references my_notebook.py, which no documented step creates",
+	}, { // Test 1: An earlier skipped line may create the file.
+		First: kplan.PlanLine{Cmd: marimo, Skip: "starts an interactive session"}, Need: "0", Code: "2",
+		WantStatus: StatusBlocked, WantReason: ReasonDependsOnSkipped,
+		WantDetail: "references my_notebook.py, which an earlier line that did not pass may create: " + marimo,
+	}, { // Test 2: A block the plan left out may create the file.
+		First: kplan.PlanLine{Cmd: "uv --version"}, Unplanned: marimo, Need: "0", Code: "2",
+		WantStatus: StatusBlocked, WantReason: ReasonDependsOnSkipped,
+		WantDetail: "references my_notebook.py, which an earlier line that did not pass may create: " + marimo,
+	}, { // Test 3: The file was there, so the line reads by its own exit code.
+		First: kplan.PlanLine{Cmd: "uv --version"}, Need: "1", Code: "2",
+		WantStatus: StatusFail,
+	}, { // Test 4: The file was there and the line passed.
+		First: kplan.PlanLine{Cmd: "uv --version"}, Need: "1", Code: "0",
+		WantStatus: StatusVerified,
+	}, { // Test 5: A line that passed without the file never needed it.
+		First: kplan.PlanLine{Cmd: marimo, Skip: "starts an interactive session"}, Need: "0", Code: "0",
+		WantStatus: StatusVerified,
+	}, { // Test 6: A skipped line in another document does not block this one.
+		First: kplan.PlanLine{Cmd: marimo, Skip: "starts an interactive session"}, FirstDoc: "README.md",
+		Need: "0", Code: "2",
+		WantStatus: StatusGap, WantReason: ReasonMissingFixture,
+		WantDetail: "references my_notebook.py, which no documented step creates",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			doc := "docs/marimo.md"
+			firstDoc := doc
+			if test.FirstDoc != "" {
+				firstDoc = test.FirstDoc
+			}
+			line := need
+			line.Unplanned = test.Unplanned
+			plan := &kplan.Plan{Repo: "uv", Steps: []kplan.PlanStep{
+				{ID: "b1", Doc: firstDoc, Lines: []kplan.PlanLine{test.First}},
+				{ID: "b2", Doc: doc, Lines: []kplan.PlanLine{line}},
+			}}
+			first := "KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo"
+			if test.First.Skip != "" {
+				first = "KIBBLE-LINE b1:0 SKIP"
+			}
+			out := sessionOut(
+				"KIBBLE-BUILD CODE=0",
+				"KIBBLE-STEP b1 START", first,
+				"KIBBLE-STEP b2 START",
+				"KIBBLE-NEED b2:0 "+test.Need,
+				"error: failed to read from file `my_notebook.py`",
+				"KIBBLE-LINE b2:0 CODE="+test.Code+" CWD=/work/repo",
+				"KIBBLE-DONE")
+			res := classifyExample(step, plan, out, nil, 0, lineTimeout, sessionEnd{})
+			if res.example == nil {
+				t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+			}
+			got := res.example.Steps[1].Lines[0]
+			if diff := cmp.Diff(test.WantStatus, got.Status); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s\ndetail: %s", diff, got.Detail)
+			}
+			if diff := cmp.Diff(test.WantReason, got.Reason); diff != "" {
+				t.Errorf("reason mismatch (-want +got):\n%s", diff)
+			}
+			if test.WantDetail != "" {
+				if diff := cmp.Diff(test.WantDetail, got.Detail); diff != "" {
+					t.Errorf("detail mismatch (-want +got):\n%s", diff)
+				}
+			}
+		})
+	}
+}
