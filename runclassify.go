@@ -62,6 +62,8 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 			res.SmokeLine = strings.TrimPrefix(line, "SMOKELINE=")
 		case strings.HasPrefix(line, "NOBIN="):
 			noBin = true
+		case strings.HasPrefix(line, "BINKIND="):
+			res.BinKind = strings.TrimPrefix(line, "BINKIND=")
 		default:
 			if strings.TrimSpace(line) != "" {
 				tail = append(tail, line)
@@ -96,6 +98,12 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 		res.Detail = "recipe exited 0 but produced no binary to smoke-test"
 	case smokeCode == 0:
 		res.Status = StatusVerified
+		if res.BinKind == "function" {
+			res.Detail = "a shell function the documented sourcing defines"
+			if res.SmokeLine != "" {
+				res.Detail += ", which reports " + res.SmokeLine
+			}
+		}
 	case reArchMismatch.MatchString(res.SmokeLine):
 		// Only the smoke line convicts. Scanning the whole output once let an
 		// arch string anywhere in a build log or help screen relabel a real

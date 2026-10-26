@@ -167,7 +167,8 @@ func DefaultExtractor() Extractor {
 		var steps []InstallStep
 		var taps []string
 		tapSeen := map[string]bool{}
-		for _, block := range docblock.CodeBlocks(markdown) {
+		blocks := docblock.CodeBlocks(markdown)
+		for bi, block := range blocks {
 			for i, line := range block.Lines {
 				if m := reBrewTap.FindStringSubmatch(line); m != nil && !tapSeen[m[1]] {
 					tapSeen[m[1]] = true
@@ -181,7 +182,10 @@ func DefaultExtractor() Extractor {
 				if block.Line > 0 {
 					s.Line = block.Line + i
 				}
-				if s.Kind == "git-clone" {
+				switch {
+				case s.Kind == "git-clone" && block.Span && block.List != 0:
+					s.Block = listRecipe(blocks, bi)
+				case s.Kind == "git-clone":
 					s.Block = installRecipe(block.Lines[i:])
 				}
 				steps = append(steps, s)
@@ -198,6 +202,53 @@ func DefaultExtractor() Extractor {
 		}
 		return steps
 	})
+}
+
+// recipeCommands are the first words of a span that reads as a step of an
+// install recipe written across list items.
+var recipeCommands = map[string]bool{
+	"cd": true, "git": true, ".": true, "source": true, "make": true, "export": true,
+	"sh": true, "bash": true, "cargo": true, "go": true, "npm": true, "pip": true,
+	"python": true, "python3": true,
+}
+
+// listRecipe returns the install recipe for a clone written as an inline span
+// in a list. nvm's README spreads its install over list items, `cd ~/` and the
+// clone in the first, `cd ~/.nvm` and the checkout in the second, sourcing in
+// the third, and the clone span alone is a recipe whose product never exists.
+// The recipe joins the spans of the clone's outermost list from the first span
+// of the clone's item to the end of the list. A span starting with a recipe
+// command joins, a single other word such as `nvm` is a prose mention and is
+// dropped, and anything else, a code block inside the list, or a second clone
+// keeps the clone span alone, since a recipe the document did not write is
+// worse than an unverified one.
+func listRecipe(blocks []docblock.Block, at int) []string {
+	clone := blocks[at]
+	alone := installRecipe(clone.Lines)
+	var joined []string
+	for k, b := range blocks {
+		if b.List != clone.List || b.Item < clone.Item {
+			continue
+		}
+		if !b.Span {
+			return alone
+		}
+		text := strings.TrimSpace(strings.Join(b.Lines, " "))
+		fields := strings.Fields(text)
+		switch {
+		case len(fields) == 0:
+			continue
+		case k != at && reGitClone.MatchString(text):
+			return alone
+		case recipeCommands[fields[0]] || strings.HasPrefix(fields[0], "./"):
+			joined = append(joined, text)
+		case len(fields) == 1:
+			continue
+		default:
+			return alone
+		}
+	}
+	return installRecipe(joined)
 }
 
 // reTeardown matches a line that undoes an install, such as make uninstall or

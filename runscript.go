@@ -110,6 +110,15 @@ func cloneScriptFor(step InstallStep, timeoutSecs int) string {
 	for _, l := range step.Block {
 		recipe = append(recipe, rewriteSSH(l))
 	}
+	// A recipe that ends by sourcing a file may define its product as a shell
+	// function, as nvm's does, which no search for a file finds. The function
+	// exists only in the shell that sourced it, so it is asked for there.
+	if n := len(recipe); n > 0 && kplan.IsSimpleWord(step.Repo) &&
+		(strings.HasPrefix(recipe[n-1], ". ") || strings.HasPrefix(recipe[n-1], "source ")) {
+		recipe = append(recipe,
+			fmt.Sprintf(`printf 'KIBBLE-FNKIND=%%s\n' "$(type -t '%s' 2>/dev/null)"`, step.Repo),
+			fmt.Sprintf(`'%s' --version 2>&1 | head -n1 | sed 's/^/KIBBLE-FNVER=/'`, step.Repo))
+	}
 	body := strings.Join(recipe, "\n")
 	body = strings.ReplaceAll(body, "'", `'\''`)
 	// The repository name lands inside a single-quoted shell string, so the
@@ -134,7 +143,8 @@ fi
 
 // cloneScript runs a documented clone recipe and smoke-tests the result. It
 // prints the same markers as installScript, plus NOBIN when the recipe
-// produced no binary to test.
+// produced no binary to test, and BINKIND=function when the recipe's own shell
+// reported its product to be a shell function.
 const cloneScript = `set -u
 export GOBIN=/root/gobin
 mkdir -p "$GOBIN" /work
@@ -147,6 +157,11 @@ if [ "$code" -ne 0 ]; then
   exit 0
 fi
 printf 'BUILDCODE=0\n'
+if printf '%%s\n' "$out" | grep -q '^KIBBLE-FNKIND=function$'; then
+  printf 'BINKIND=function\nSMOKECODE=0\n'
+  printf 'SMOKELINE=%%s\n' "$(printf '%%s\n' "$out" | sed -n 's/^KIBBLE-FNVER=//p' | head -n1 | cut -c1-70)"
+  exit 0
+fi
 bin=''
 if [ -x "$GOBIN/%[3]s" ]; then
   bin="$GOBIN/%[3]s"

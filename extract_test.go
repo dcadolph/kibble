@@ -389,3 +389,55 @@ func TestPlaceholderInstallNotRun(t *testing.T) {
 		})
 	}
 }
+
+// nvmGitInstall is nvm's README lines 319 to 327 verbatim at the pinned commit.
+const nvmGitInstall = "### Git Install\n" +
+	"\n" +
+	"If you have `git` installed (requires git v1.7.10+):\n" +
+	"\n" +
+	"1. clone this repo in the root of your user profile\n" +
+	"    - `cd ~/` from anywhere then `git clone https://github.com/nvm-sh/nvm.git .nvm`\n" +
+	"1. `cd ~/.nvm` and check out the latest version with `git checkout v0.40.8`\n" +
+	"1. activate `nvm` by sourcing it from your shell: `. ./nvm.sh`\n" +
+	"\n"
+
+// TestExtractListRecipe checks that a clone written as a span in a list takes
+// the recipe from the spans of its outermost list, starting at its own item,
+// and keeps the clone alone when a span is not a recipe step.
+func TestExtractListRecipe(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In        string
+		WantBlock []string
+	}{{ // Test 0: nvm's git install, with the nvm prose span dropped.
+		In: nvmGitInstall,
+		WantBlock: []string{
+			"cd ~/", "git clone https://github.com/nvm-sh/nvm.git .nvm", "cd ~/.nvm",
+			"git checkout v0.40.8", ". ./nvm.sh",
+		},
+	}, { // Test 1: a span that is neither a recipe step nor one word keeps the clone alone.
+		In:        "1. `git clone https://github.com/o/tool.git`\n1. `now run the tool`\n",
+		WantBlock: []string{"git clone https://github.com/o/tool.git"},
+	}, { // Test 2: a code block inside the list keeps the clone alone.
+		In:        "1. `git clone https://github.com/o/tool.git`\n1. build it:\n\n   ```sh\n   make\n   ```\n",
+		WantBlock: []string{"git clone https://github.com/o/tool.git"},
+	}, { // Test 3: a clone outside a list is read from its own block as before.
+		In:        "```sh\ngit clone https://github.com/o/tool.git\ncd tool\nmake\n```\n",
+		WantBlock: []string{"git clone https://github.com/o/tool.git", "cd tool", "make"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for _, s := range DefaultExtractor().Extract("tool", test.In) {
+				if s.Kind == "git-clone" {
+					got = s.Block
+					break
+				}
+			}
+			if diff := cmp.Diff(test.WantBlock, got); diff != "" {
+				t.Errorf("recipe mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
