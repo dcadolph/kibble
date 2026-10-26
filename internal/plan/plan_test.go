@@ -18,6 +18,7 @@ import (
 // planLine is a compact projection of a PlanLine for test comparison.
 type planLine struct {
 	Cmd       string
+	Need      string
 	Skip      bool
 	Gap       bool
 	NonzeroOK bool
@@ -30,7 +31,7 @@ func projectPlan(p *Plan) [][]planLine {
 		var step []planLine
 		for _, l := range s.Lines {
 			step = append(step, planLine{
-				Cmd: docblock.Flatten(l.Cmd), Skip: l.Skip != "", Gap: l.Gap,
+				Cmd: docblock.Flatten(l.Cmd), Need: l.Need, Skip: l.Skip != "", Gap: l.Gap,
 				NonzeroOK: l.NonzeroOK,
 			})
 		}
@@ -68,9 +69,10 @@ func TestBuildPlan(t *testing.T) {
 			{Cmd: "tool sync"},
 			{Cmd: "tool --version"},
 		}},
-	}, { // Test 2a: a file no documented line creates is the document's gap.
+	}, { // Test 2a: a file no line is seen to create runs, and the session
+		// checks for it, since only the run can prove the document's gap.
 		Markdown:  "```sh\ntool run ./secrets\n```\n",
-		WantSteps: [][]planLine{{{Cmd: "tool run ./secrets", Skip: true, Gap: true}}},
+		WantSteps: [][]planLine{{{Cmd: "tool run ./secrets", Need: "./secrets"}}},
 	}, { // Test 2b: an unset variable is not a gap. An interactive shell
 		// provides names such as HISTFILE that no documented line assigns, so
 		// the document is right and only the container is not that shell.
@@ -155,10 +157,10 @@ func TestBuildPlan(t *testing.T) {
 		WantSteps: [][]planLine{{
 			{Cmd: "tool run '\\n'", NonzeroOK: true},
 		}},
-	}, { // Test 2p: a notebook the docs never create is the reader's, the
-		// same as any other file argument, and running it is a false failure.
+	}, { // Test 2p: a notebook is never fabricated, the same as any other file
+		// argument, so the session checks for it before the line.
 		Markdown:  "```sh\ntool render notebook.ipynb\n```\n",
-		WantSteps: [][]planLine{{{Cmd: "tool render notebook.ipynb", Skip: true, Gap: true}}},
+		WantSteps: [][]planLine{{{Cmd: "tool render notebook.ipynb", Need: "notebook.ipynb"}}},
 	}, { // Test 3: two-column usage blocks lose the description column.
 		Markdown: "```\ntool add \"x\"      Append an entry to today.\n" +
 			"tool list          Print every entry.\n```\n",
@@ -178,10 +180,10 @@ func TestBuildPlan(t *testing.T) {
 	}, { // Test 6: go install lines drop, the rest of the block stays.
 		Markdown:  "```sh\ngo install example.com/tool@latest\ntool --version\n```\n",
 		WantSteps: [][]planLine{{{Cmd: "tool --version"}}},
-	}, { // Test 7: structured missing files skip, localhost skips.
+	}, { // Test 7: structured missing files are checked at run time, localhost skips.
 		Markdown: "```sh\ntool load data.csv\ntool ping --base-url http://localhost:9\n```\n",
 		WantSteps: [][]planLine{{
-			{Cmd: "tool load data.csv", Skip: true, Gap: true},
+			{Cmd: "tool load data.csv", Need: "data.csv"},
 			{Cmd: "tool ping --base-url http://localhost:9", Skip: true},
 		}},
 	}, { // Test 8: a skipped export poisons lines expanding its variable.
@@ -295,7 +297,7 @@ func TestBuildPlanRepoTree(t *testing.T) {
 	plan := BuildPlan("repo", dir, md, []string{"tool"}, nil, nil, testRecognizer())
 	want := [][]planLine{{
 		{Cmd: "tool index --file examples/people.csv"},
-		{Cmd: "tool index --file missing.csv", Skip: true, Gap: true},
+		{Cmd: "tool index --file missing.csv", Need: "missing.csv"},
 	}}
 	if diff := cmp.Diff(want, projectPlan(plan)); diff != "" {
 		t.Errorf("steps mismatch (-want +got):\n%s", diff)
@@ -331,6 +333,7 @@ func TestSkipHeuristics(t *testing.T) {
 	tests := []struct {
 		Markdown string
 		WantSkip string
+		WantNeed string
 		WantRun  bool
 		WantNZ   bool
 	}{{ // Test 0: a brace placeholder is the reader's to fill in.
@@ -356,7 +359,7 @@ func TestSkipHeuristics(t *testing.T) {
 		WantRun:  true, WantNZ: true,
 	}, { // Test 7: an @-prefixed missing file is still a missing file.
 		Markdown: "```sh\ntool check @args.json\n```\n",
-		WantSkip: "never create",
+		WantRun:  true, WantNeed: "args.json",
 	}, { // Test 8: the Go all-packages pattern is not an ellipsis placeholder.
 		Markdown: "```sh\ntool ./...\n```\n",
 		WantRun:  true,
@@ -369,9 +372,9 @@ func TestSkipHeuristics(t *testing.T) {
 	}, { // Test 11: a foreign shell requested by flag skips.
 		Markdown: "```sh\ntool --shell zsh 'echo hi'\n```\n",
 		WantSkip: "zsh shell",
-	}, { // Test 12: a home config the docs never create is skipped.
+	}, { // Test 12: a home config no line is seen to create is checked at run time.
 		Markdown: "```sh\ntool --runOptions ~/.config/tool/config.toml\n```\n",
-		WantSkip: "references ~/.config/tool/config.toml",
+		WantRun:  true, WantNeed: "~/.config/tool/config.toml",
 	}, { // Test 13: a rule spec inside a flag is not a missing file glob.
 		Markdown: "```sh\ntool --exclude-rules=\"cmd/.*:G204\" ./...\n```\n",
 		WantRun:  true,
@@ -432,6 +435,9 @@ func TestSkipHeuristics(t *testing.T) {
 			}
 			if test.WantNZ && !last.NonzeroOK {
 				t.Error("expected NonzeroOK")
+			}
+			if diff := cmp.Diff(test.WantNeed, last.Need); diff != "" {
+				t.Errorf("need mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -711,24 +717,23 @@ func TestSkipReasonReaderNames(t *testing.T) {
 	tests := []struct {
 		Line       string
 		WantSkip   string
+		WantNeed   string
 		WantReason verdict.Reason
 		WantGap    bool
 	}{{ // Test 0: files is a placeholder word.
 		Line:       `gita files`,
 		WantSkip:   `docs use "files" as a placeholder the reader must fill in`,
 		WantReason: verdict.ReasonPlaceholder,
-	}, { // Test 1: a missing redirect input is a gap.
-		Line:       `gita run < input`,
-		WantSkip:   "references input, which the docs never create",
-		WantReason: verdict.ReasonMissingFixture, WantGap: true,
+	}, { // Test 1: a missing redirect input is checked at run time.
+		Line:     `gita run < input`,
+		WantNeed: "input",
 	}, { // Test 2: a stand-in repository owner is a placeholder.
 		Line:       `gita install --git https://github.com/example/my-plugins`,
 		WantSkip:   "docs use a placeholder the reader must fill in",
 		WantReason: verdict.ReasonPlaceholder,
-	}, { // Test 3: a checksum file is a gap rather than a fixture.
-		Line:       `gita verify aqua_checksums.txt`,
-		WantSkip:   "references aqua_checksums.txt, which the docs never create",
-		WantReason: verdict.ReasonMissingFixture, WantGap: true,
+	}, { // Test 3: a checksum file is checked at run time rather than fabricated.
+		Line:     `gita verify aqua_checksums.txt`,
+		WantNeed: "aqua_checksums.txt",
 	}, { // Test 4: a numbered operand is a placeholder.
 		Line:       `gita group add repo1 repo2`,
 		WantSkip:   `docs use "repo1" as a placeholder the reader must fill in`,
@@ -743,6 +748,9 @@ func TestSkipReasonReaderNames(t *testing.T) {
 			if skip != test.WantSkip || reason != test.WantReason || gap != test.WantGap {
 				t.Errorf("skipReason = (%q, %q, %v), want (%q, %q, %v)",
 					skip, reason, gap, test.WantSkip, test.WantReason, test.WantGap)
+			}
+			if pl.need != test.WantNeed {
+				t.Errorf("need = %q, want %q", pl.need, test.WantNeed)
 			}
 		})
 	}
@@ -933,6 +941,55 @@ func TestQualifies(t *testing.T) {
 			got := pl.qualifies([]string{test.Line})
 			if diff := cmp.Diff(test.WantResult, got); diff != "" {
 				t.Errorf("qualifies mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestPlanNeed checks that a file the planner sees no line create no longer
+// skips the line. The line runs and carries the file, so the session can say
+// whether it exists. uv's marimo guide creates its notebook in a block the plan
+// leaves out, which the line carries too, since that block never runs.
+func TestPlanNeed(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Markdown      string
+		Cfg           *config.ExamplesConfig
+		WantNeed      string
+		WantUnplanned string
+		WantSkip      string
+	}{{ // Test 0: uv's marimo guide, where the notebook comes from an unplanned block.
+		Markdown: "```console\n$ uvx marimo edit my_notebook.py\n```\n\n" +
+			"```console\n$ uv add --script my_notebook.py numpy\n```\n",
+		WantNeed: "my_notebook.py", WantUnplanned: "uvx marimo edit my_notebook.py",
+	}, { // Test 1: a file with no earlier line at all still runs and carries the file.
+		Markdown: "```sh\nuv render notebook.ipynb\n```\n",
+		WantNeed: "notebook.ipynb",
+	}, { // Test 2: a background step cannot report the check, so it keeps the plan-time gap.
+		Markdown: "```sh\nuv load notebook.ipynb\n```\n",
+		Cfg:      &config.ExamplesConfig{Steps: []config.StepRule{{Match: "uv load", Background: true}}},
+		WantSkip: "references notebook.ipynb, which the docs never create",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := BuildPlan("repo", "", test.Markdown, []string{"uv"}, nil, test.Cfg, testRecognizer())
+			if len(plan.Steps) == 0 {
+				t.Fatal("no steps planned")
+			}
+			steps := plan.Steps
+			l := steps[len(steps)-1].Lines[len(steps[len(steps)-1].Lines)-1]
+			if diff := cmp.Diff(test.WantNeed, l.Need); diff != "" {
+				t.Errorf("need mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantUnplanned, l.Unplanned); diff != "" {
+				t.Errorf("unplanned mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantSkip, l.Skip); diff != "" {
+				t.Errorf("skip mismatch (-want +got):\n%s", diff)
+			}
+			if test.WantSkip != "" && !l.Gap {
+				t.Error("background fallback lost its gap flag")
 			}
 		})
 	}
