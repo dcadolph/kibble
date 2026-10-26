@@ -269,3 +269,26 @@ func TestCodeBlocksTitle(t *testing.T) {
 		})
 	}
 }
+
+// TestCodeBlocksList checks that a block records its outermost list and that
+// list's item, with nested lists counting as their parent item.
+func TestCodeBlocksList(t *testing.T) {
+	t.Parallel()
+	in := "Run `make` first.\n\n" +
+		"1. clone it\n    - `cd ~/` then `git clone x`\n1. `cd x`\n\n" +
+		"Then:\n\n- `make install`\n"
+	type pos struct {
+		Text       string
+		List, Item int
+	}
+	want := []pos{
+		{"make", 0, 0}, {"cd ~/", 1, 1}, {"git clone x", 1, 1}, {"cd x", 1, 2}, {"make install", 2, 1},
+	}
+	var got []pos
+	for _, b := range CodeBlocks(in) {
+		got = append(got, pos{strings.Join(b.Lines, " "), b.List, b.Item})
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("list positions mismatch (-want +got):\n%s", diff)
+	}
+}

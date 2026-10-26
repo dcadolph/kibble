@@ -29,6 +29,9 @@ type Result struct {
 	Duration time.Duration
 	// SmokeLine is the first line the installed binary printed.
 	SmokeLine string
+	// BinKind is "function" when the install's product is a shell function its
+	// recipe's sourcing defines rather than a file, and empty otherwise.
+	BinKind string
 	// Version is the release the installed binary reported, set only when it
 	// is one of the repository's release tags.
 	Version string

@@ -41,6 +41,14 @@ type Block struct {
 	// process.py in ```python title="process.py"```, empty when there is none.
 	// Documentation sites render it as the name of the file the block holds.
 	Title string
+	// List numbers the outermost list the block sits in, in document order
+	// from 1, and is 0 outside a list. A recipe written as list steps spreads
+	// its commands over spans in several items, and nested lists inside an
+	// item are the same recipe.
+	List int
+	// Item is the 1-based index of the outermost list's item the block sits
+	// in, and is 0 outside a list.
+	Item int
 }
 
 // reFenceTitle matches a title attribute in a fence's info string, in double
@@ -79,7 +87,24 @@ func CodeBlocks(markdown string) []Block {
 	doc := goldmark.New().Parser().Parse(text.NewReader(src))
 	var blocks []Block
 	var heading, intro string
+	lists, depth, list, item := 0, 0, 0, 0
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		switch n.(type) {
+		case *ast.List:
+			if entering {
+				if depth == 0 {
+					lists++
+					list, item = lists, 0
+				}
+				depth++
+			} else if depth--; depth == 0 {
+				list, item = 0, 0
+			}
+		case *ast.ListItem:
+			if entering && depth == 1 {
+				item++
+			}
+		}
 		if !entering {
 			return ast.WalkContinue, nil
 		}
@@ -87,7 +112,7 @@ func CodeBlocks(markdown string) []Block {
 			intro = spanText(p, src)
 			return ast.WalkContinue, nil
 		}
-		b := Block{Heading: heading, Intro: intro}
+		b := Block{Heading: heading, Intro: intro, List: list, Item: item}
 		switch node := n.(type) {
 		case *ast.Heading:
 			heading = spanText(node, src)
@@ -134,6 +159,9 @@ func admonitionBlocks(node *ast.CodeBlock, src []byte, heading, intro string) []
 	for i := range nested {
 		nested[i].Line += start - 1
 		nested[i].Heading = heading
+		// The nested parse numbers its own lists, which would collide with
+		// the outer document's, so nested blocks count as outside any list.
+		nested[i].List, nested[i].Item = 0, 0
 		if nested[i].Intro == "" {
 			nested[i].Intro = intro
 		}

@@ -1047,3 +1047,65 @@ func TestPkgScriptOwnedBinaries(t *testing.T) {
 		})
 	}
 }
+
+// TestCloneScriptFunctionProduct runs a generated clone script whose recipe
+// sources a file defining the product as a shell function, and checks that the
+// function is found in the recipe's own shell and reported with its version.
+func TestCloneScriptFunctionProduct(t *testing.T) {
+	t.Parallel()
+	for _, tool := range []string{"bash", "timeout"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip("no " + tool)
+		}
+	}
+	dir := t.TempDir()
+	step := InstallStep{Repo: "nvm", Kind: "git-clone", Block: []string{
+		`printf 'nvm() { echo 0.40.8; }\n' > f.sh`, ". ./f.sh",
+	}}
+	script := cloneScriptFor(step, 30)
+	script = strings.ReplaceAll(script, "/root/gobin", filepath.Join(dir, "gobin"))
+	script = strings.ReplaceAll(script, "/work", filepath.Join(dir, "work"))
+	out, err := exec.Command("bash", "-c", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("script failed: %v: %s", err, out)
+	}
+	for _, want := range []string{"BUILDCODE=0\n", "BINKIND=function\n", "SMOKECODE=0\n", "SMOKELINE=0.40.8\n"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestClassifyBinKind checks that a function product reads VERIFIED and says
+// what it is, and that an ordinary binary is unchanged.
+func TestClassifyBinKind(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Out        string
+		WantKind   string
+		WantDetail string
+		WantStatus Status
+	}{{ // Test 0: A shell function product.
+		Out:      "BUILDCODE=0\nBINKIND=function\nSMOKECODE=0\nSMOKELINE=0.40.8\n",
+		WantKind: "function", WantStatus: StatusVerified,
+		WantDetail: "a shell function the documented sourcing defines, which reports 0.40.8",
+	}, { // Test 1: An ordinary binary.
+		Out:        "BUILDCODE=0\nSMOKECODE=0\nSMOKELINE=tool 1.0\n",
+		WantStatus: StatusVerified,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			res := classify(InstallStep{Repo: "nvm", Kind: "git-clone"}, test.Out, 0)
+			if diff := cmp.Diff(test.WantStatus, res.Status); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantKind, res.BinKind); diff != "" {
+				t.Errorf("kind mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantDetail, res.Detail); diff != "" {
+				t.Errorf("detail mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
