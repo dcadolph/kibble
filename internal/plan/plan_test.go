@@ -798,6 +798,37 @@ func TestSkipReasonReservedHost(t *testing.T) {
 	}
 }
 
+// TestSkipReasonOutsideCheckout checks that a first operand under ../ skips and
+// that other relative operands run.
+func TestSkipReasonOutsideCheckout(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		Line     string
+		WantSkip bool
+	}{{ // Test 0: an editable install from a sibling directory.
+		Line: `uv add --editable ../projects/bar/`, WantSkip: true,
+	}, { // Test 1: cd to the parent is not a ../ operand.
+		Line: `cd ..`, WantSkip: false,
+	}, { // Test 2: a ./ path stays inside the checkout.
+		Line: `cat ./x.md`, WantSkip: false,
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			pl := newReaderNameTestPlanner(map[string]bool{}, "tool")
+			skip, reason, _ := pl.skipReason(test.Line, docblock.Flatten(test.Line))
+			if got := skip != ""; got != test.WantSkip {
+				t.Fatalf("skip = %q, want skip %v", skip, test.WantSkip)
+			}
+			if test.WantSkip && reason != verdict.ReasonMissingFixture {
+				t.Errorf("reason = %q, want %q", reason, verdict.ReasonMissingFixture)
+			}
+		})
+	}
+}
+
 // TestSkipReasonReaderFile checks that a my-prefixed file name the tree lacks
 // is given to the reader as a fixture, so the line runs rather than skips.
 func TestSkipReasonReaderFile(t *testing.T) {
@@ -995,6 +1026,40 @@ func TestPlanNeed(t *testing.T) {
 			}
 			if test.WantSkip != "" && !l.Gap {
 				t.Error("background fallback lost its gap flag")
+			}
+		})
+	}
+}
+
+// TestPlanOutsideCheckoutAfterCd checks that a ../ operand is called the
+// reader's only before the document changes directory. dotenvx's README runs
+// `cd apps/app1` and then reads ../../.env.keys, the reader's monorepo root.
+func TestPlanOutsideCheckoutAfterCd(t *testing.T) {
+	t.Parallel()
+	const outside = "lies outside the repository checkout"
+	tests := []struct {
+		Markdown    string
+		WantOutside bool
+	}{{ // Test 0: no cd, so ../ leaves the checkout.
+		Markdown:    "```sh\n$ dotenvx get -fk ../../.env.keys -f .env\n```\n",
+		WantOutside: true,
+	}, { // Test 1: after a cd, ../ is relative to where the document went.
+		Markdown: "```sh\n$ cd apps/app1\n$ dotenvx get -fk ../../.env.keys -f .env\n```\n",
+	}, { // Test 2: a cd in an earlier block of the same document counts.
+		Markdown: "```sh\n$ mkdir -p apps/app1 && cd apps/app1\n```\n\n" +
+			"```sh\n$ dotenvx get -fk ../../.env.keys -f .env\n```\n",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := BuildPlan("dotenvx", "", test.Markdown, []string{"dotenvx"}, nil, nil, testRecognizer())
+			if len(plan.Steps) == 0 {
+				t.Fatal("no steps planned")
+			}
+			steps := plan.Steps
+			l := steps[len(steps)-1].Lines[len(steps[len(steps)-1].Lines)-1]
+			if got := strings.Contains(l.Skip, outside); got != test.WantOutside {
+				t.Errorf("outside skip = %v, want %v (skip %q)", got, test.WantOutside, l.Skip)
 			}
 		})
 	}

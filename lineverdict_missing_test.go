@@ -195,6 +195,19 @@ Require stack:
 		Cmd:    "rclone lsd remote:",
 		Output: "Failed to lsd: permission denied\n",
 		Code:   1, WantStatus: StatusFail,
+	}, { // Test 17: uv's missing input that the command passed is the document's gap.
+		Cmd:    "uv add -r requirements-docs.in -c requirements-docs.txt --group docs",
+		Output: "error: File not found: requirements-docs.in\n",
+		Code:   2, WantStatus: StatusGap, WantDetail: "references requirements-docs.in, which no documented step creates: ",
+	}, { // Test 18: uv's missing input the command never named is blocked.
+		Cmd:    "uv add fastapi",
+		Output: "error: File not found: requirements-docs.in\n",
+		Code:   2, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "reads requirements-docs.in, which no documented step creates: ",
+	}, { // Test 19: uv's missing bare word is a program the container lacks.
+		Cmd:    "uv add fastapi",
+		Output: "error: File not found: helper\n",
+		Code:   2, WantStatus: StatusSkipped, WantReason: ReasonMissingDependency,
 	}}
 
 	for testNum, test := range tests {
