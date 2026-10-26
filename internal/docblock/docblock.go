@@ -91,6 +91,7 @@ func CodeBlocks(markdown string) []Block {
 			b.Line = BlockLine(node, src)
 		case *ast.CodeBlock:
 			if admonitionMarker.MatchString(intro) {
+				blocks = append(blocks, admonitionBlocks(node, src, heading, intro)...)
 				return ast.WalkContinue, nil
 			}
 			b.Lines = strings.Split(BlockText(node, src), "\n")
@@ -106,6 +107,25 @@ func CodeBlocks(markdown string) []Block {
 		return ast.WalkContinue, nil
 	})
 	return blocks
+}
+
+// admonitionBlocks parses an admonition body as markdown and returns the code
+// blocks nested in it, with lines mapped back to the outer source and the outer
+// heading and intro applied where the nested block has none.
+func admonitionBlocks(node *ast.CodeBlock, src []byte, heading, intro string) []Block {
+	start := BlockLine(node, src)
+	if start == 0 {
+		return nil
+	}
+	nested := CodeBlocks(BlockText(node, src))
+	for i := range nested {
+		nested[i].Line += start - 1
+		nested[i].Heading = heading
+		if nested[i].Intro == "" {
+			nested[i].Intro = intro
+		}
+	}
+	return nested
 }
 
 // CodeLines returns every line the author marked as code, across all blocks.
