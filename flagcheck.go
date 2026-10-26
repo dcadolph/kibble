@@ -5,6 +5,7 @@ import (
 	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/shell"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -25,6 +26,10 @@ type Usage struct {
 	// single-dash form is probed as written. A bundle such as `-Poy` is `-P -o
 	// -y` to the parser and probing it as `--Poy` would falsely convict it.
 	FlagDash map[string]string
+	// Unplaced are flags written after a leading flag's first positional, with
+	// their dashes as written. A leading flag's value cannot be told from a
+	// subcommand, so these are cited as unverified and never probed.
+	Unplaced []string
 }
 
 // dashOf returns the dash prefix a cited flag was written with, defaulting to
@@ -102,12 +107,26 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 			// The segment is cut only where the binary's own flags end, so a
 			// line no rule shortens is read exactly as written.
 			own := seg
+			tailCut := false
 			if end := ownFlagSpan(fields); end < len(fields) {
 				own = strings.Join(fields[:end], " ")
+				if len(fields) > 1 && strings.HasPrefix(fields[1], "-") && fields[end] != "--" {
+					tailCut = true
+					// Flags after a later bare `--` belong to a child, not to this binary.
+					tail := fields[end:]
+					if i := slices.Index(tail, "--"); i >= 0 {
+						tail = tail[:i]
+					}
+					for _, m := range reFlagToken.FindAllStringSubmatch(strings.Join(tail, " "), -1) {
+						if !slices.Contains(use.Unplaced, m[2]) {
+							use.Unplaced = append(use.Unplaced, m[2])
+						}
+					}
+				}
 			}
 			flags := reFlagToken.FindAllStringSubmatch(own, -1)
 			var sub string
-			if len(fields) > 1 && shell.IsSubcommandName(fields[1]) {
+			if len(fields) > 1 && !tailCut && shell.IsSubcommandName(fields[1]) {
 				sub = fields[1]
 				// A flag on a nested invocation such as `tool walk rotate --x`
 				// lives on the nested command, so capture the two-token path
@@ -172,7 +191,9 @@ var runnerSubs = map[string]bool{"run": true, "exec": true, "x": true}
 
 // ownFlagSpan returns the index of the first field that is not the binary's
 // own. A bare `--` ends the span, and after a runner subcommand the program
-// name it runs ends it, since the flags after either belong to a child.
+// name it runs ends it, since the flags after either belong to a child. After
+// a leading flag, the first field that is not a flag ends it, since that field
+// is the flag's value or a subcommand and the two cannot be told apart.
 func ownFlagSpan(fields []string) int {
 	end := len(fields)
 	for i, f := range fields {
@@ -180,6 +201,14 @@ func ownFlagSpan(fields []string) int {
 			end = i
 			break
 		}
+	}
+	if len(fields) >= 2 && strings.HasPrefix(fields[1], "-") {
+		for i := 2; i < end; i++ {
+			if !strings.HasPrefix(fields[i], "-") {
+				return i
+			}
+		}
+		return end
 	}
 	if len(fields) < 2 || !runnerSubs[fields[1]] {
 		return end
@@ -314,6 +343,12 @@ func flagChecks(results []Result) []Result {
 			// never as missing.
 			unverifiable = append(unverifiable, r.Step.Usage.dashOf(f)+f)
 		}
+		nUnverifiedFlags := len(unverifiable)
+		for _, f := range r.Step.Usage.Unplaced {
+			if !slices.Contains(unverifiable, f) {
+				unverifiable = append(unverifiable, f)
+			}
+		}
 		sort.Strings(unverifiable)
 		ahead := unreleasedFlags(r.Step.dir, r.Step.Kind, rejected)
 		for _, f := range rejected {
@@ -345,7 +380,7 @@ func flagChecks(results []Result) []Result {
 		case len(missing) == 0 && len(badSubs) == 0:
 			check.Status = StatusVerified
 			check.Detail = fmt.Sprintf("%d cited flags ok, %d subcommands cited",
-				len(r.Step.Usage.Flags)-len(unverifiable)-len(unreleased), len(r.Step.Usage.Subs))
+				len(r.Step.Usage.Flags)-nUnverifiedFlags-len(unreleased), len(r.Step.Usage.Subs))
 			if len(unverifiable) > 0 {
 				check.Detail += fmt.Sprintf(", %d unverified (%s)",
 					len(unverifiable), strings.Join(unverifiable, " "))

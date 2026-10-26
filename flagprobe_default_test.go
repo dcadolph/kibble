@@ -39,7 +39,9 @@ exit 2
 
 // TestFlagCheckDefaultSubcommand checks that a flag belonging to the default
 // subcommand is not drift. ast-grep's README:76 cites --lang and --rewrite on
-// a line with no subcommand, and kibble reported both missing.
+// a line with no subcommand, and kibble reported both missing. The tail of a
+// leading-flag line is reported, not probed, because a flag's value cannot be
+// told from a subcommand.
 func TestFlagCheckDefaultSubcommand(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("sh"); err != nil {
@@ -51,10 +53,11 @@ func TestFlagCheckDefaultSubcommand(t *testing.T) {
 		WantDetail string
 	}{{ // Test 0: ast-grep's documented line, flags on the default run.
 		Readme:     "```\nast-grep --pattern 'var code = $PATTERN' --rewrite 'let code = new $PATTERN' --lang ts\n```\n",
-		WantStatus: StatusVerified, WantDetail: "3 cited flags ok, 0 subcommands cited",
-	}, { // Test 1: a flag neither the root nor the default knows is still drift.
+		WantStatus: StatusVerified, WantDetail: "1 cited flags ok, 0 subcommands cited, 2 unverified (--lang --rewrite)",
+	}, { // Test 1: a flag after the first positional is reported, not probed.
 		Readme:     "```\nast-grep --pattern x --bogus\n```\n",
-		WantStatus: StatusDrift, WantDetail: "missing --bogus",
+		WantStatus: StatusVerified,
+		WantDetail: "1 cited flags ok, 0 subcommands cited, 1 unverified (--bogus)",
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
