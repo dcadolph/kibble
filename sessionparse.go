@@ -39,6 +39,9 @@ type lineOutcome struct {
 	// inherited marks a line that ran in a directory an earlier section of its
 	// document entered, which its own section never did.
 	inherited bool
+	// ownProject marks a line that invoked a project manager, whose commands
+	// read the project in the directory they run in.
+	ownProject bool
 	// missing marks a line whose needed file did not exist just before it ran.
 	missing bool
 }
@@ -182,6 +185,10 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 	run := &exampleRun{}
 	documented := documentedSettings(plan)
 	ended := false
+	bins := map[string]bool{}
+	for _, b := range plan.Binaries {
+		bins[b] = true
+	}
 	// entered holds the sections, by document and heading, that ran a cd. A
 	// document keeps one shell, so a directory one section enters is where
 	// every later section of that document runs.
@@ -241,6 +248,9 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 				// than the command's.
 				o.logged = s.Background
 				o.inherited = o.cwd != "" && o.cwd != sessionRepoDir && !entered[section]
+				if bin, _ := kplan.InvokedBinary(docblock.Flatten(l.Cmd), bins); bin != "" {
+					o.ownProject = kplan.CommandEcosystem[bin] != ""
+				}
 				lr = classifyLineResult(lr, l, o, wrapped[key], documented, lineBudget)
 			}
 			if changesDir(l.Cmd) {
