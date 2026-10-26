@@ -139,6 +139,10 @@ The file and line under a failure are the point. A verdict a reader has to go hu
 in a log costs them the search, so the broken line, where it is written, and what the tool
 said are printed together. In CI the same three become an annotation on that README line.
 
+A session the container ends early is an `ERROR` with no verdict on its examples, and the
+lines it never reached are `BLOCKED`. A file a document reads that no earlier line is
+seen to create is checked at run time, just before the line that reads it.
+
 ## Use it in CI
 
 Add a workflow that fails a pull request when a documented install breaks:
@@ -226,6 +230,10 @@ verdict claims the documented step works:
   `FAIL` ran in a directory an earlier section entered with `cd`, `pushd`, or `popd`.
   Documents `cd` once in setup and stay there, so the failure may come from what that
   directory holds rather than from what the line says.
+- `BLOCKED` with the reason `checkout-state` means a line that would have been a plain
+  `FAIL` ran in the repository's own checkout and its output says the target already
+  exists or is already initialized. The collision is with the checkout kibble chose, so
+  the document may be fine.
 - `GAP` means the document is incomplete: a file, directory, or setting nothing creates.
 - `DRIFT` means the docs cite a flag or subcommand the binary no longer has.
 - `TIMEOUT` and `ERROR` keep slow networks and kibble's own trouble out of your verdict.
