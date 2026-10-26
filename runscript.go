@@ -45,11 +45,14 @@ func shellCommand(raw string) string {
 }
 
 // pkgScript installs a documented package and smoke-tests the binary it
-// added. The package's own name is preferred among the new files, because a
-// pip install drops its dependencies' entry points into the same directory
-// and the alphabetically first of those is what got smoke-tested in the
-// package's name. The diff fallback still covers a package whose binary
-// carries a different name, as ripgrep provides rg.
+// added. When the manager can say which binaries the package owns, only those
+// are candidates, wherever they were written: a pip install drops its
+// dependencies' entry points into the same directory, a user install writes
+// outside it, and a package with no console script of its own once had a
+// build dependency's tool smoke-tested in its name. Otherwise the new files in
+// the bin directory are the candidates. Either way the documented name is
+// preferred, and the first candidate covers a package whose binary carries a
+// different name, as ripgrep provides rg.
 const pkgScript = `set -u
 BINDIR=%[1]s
 mkdir -p "$BINDIR" 2>/dev/null || true
@@ -65,13 +68,21 @@ printf 'BUILDCODE=0\n'
 after=$(ls "$BINDIR" 2>/dev/null | sort)
 newbins=$(comm -13 <(printf '%%s\n' "$before") <(printf '%%s\n' "$after"))
 own=''
+ownknown=0
 %[5]s
-bin=$(printf '%%s\n' "$newbins" | grep -Fx '%[4]s' | head -n1)
-if [ -z "$bin" ] && [ -n "$own" ]; then
-  bin=$(printf '%%s\n' "$newbins" | grep -Fxf <(printf '%%s\n' "$own") | head -n1)
+if [ "$ownknown" = 1 ]; then
+  runnable=$(printf '%%s\n' "$own" | while IFS= read -r p; do
+    if [ -f "$p" ] && [ -x "$p" ]; then printf '%%s\n' "$p"; fi
+  done)
+  bin=$(printf '%%s\n' "$runnable" | while IFS= read -r p; do
+    if [ "${p##*/}" = '%[4]s' ]; then printf '%%s\n' "$p"; break; fi
+  done)
+  [ -z "$bin" ] && bin=$(printf '%%s\n' "$runnable" | grep -v '^$' | head -n1)
+else
+  bin=$(printf '%%s\n' "$newbins" | grep -Fx '%[4]s' | head -n1)
+  [ -z "$bin" ] && bin=$(printf '%%s\n' "$newbins" | grep -v '^$' | head -n1)
+  if [ -n "$bin" ]; then bin="$BINDIR/$bin"; fi
 fi
-[ -z "$bin" ] && bin=$(printf '%%s\n' "$newbins" | grep -v '^$' | head -n1)
-if [ -n "$bin" ]; then bin="$BINDIR/$bin"; fi
 if [ -z "$bin" ]; then
   printf 'NOBIN=1\n'
   exit 0

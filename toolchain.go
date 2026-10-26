@@ -36,10 +36,12 @@ type pkgKind struct {
 	// Bootstrap is a command that must run before the install, for a manager
 	// the base image does not ship.
 	Bootstrap string
-	// OwnedBins is a shell assignment template that sets own to the binaries
-	// the installed package itself provides, one basename per line. Only a
-	// manager that lands dependency entry points in the same directory needs
-	// one; for the rest, whatever the bin diff finds is already the package's.
+	// OwnedBins is a shell template that sets own to the absolute paths of the
+	// binaries the installed package itself provides, one per line, and sets
+	// ownknown to 1 when the manager answered. An answer is authoritative: it
+	// covers binaries written outside BinDir, as a user install does, and an
+	// empty one means the package owns no binary. Without one, whatever the
+	// bin diff finds is taken as the package's.
 	OwnedBins string
 }
 
@@ -57,7 +59,12 @@ var pkgKinds = map[string]pkgKind{
 	"pip-install": {
 		Ecosystem: "python",
 		BinDir:    `"/usr/local/bin"`,
-		OwnedBins: `own=$(pip show -f '%s' 2>/dev/null | awk -F/ '/bin\// {print $NF}' | sort -u)`,
+		OwnedBins: `if info=$(pip show -f '%s' 2>/dev/null); then
+  ownknown=1
+  own=$(printf '%%s\n' "$info" |
+    awk '/^Location: /{loc=substr($0,11)} /^  .*\/bin\/[^\/]+$/{sub(/^ +/,""); print loc "/" $0}' |
+    while IFS= read -r p; do readlink -f "$p"; done)
+fi`,
 	},
 	"pipx-install": {
 		Ecosystem: "python",
