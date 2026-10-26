@@ -97,8 +97,8 @@ type PlanLine struct {
 	// create. The session reports whether it exists just before the line
 	// runs, so a missing file is judged at run time rather than guessed.
 	Need string `json:"need,omitempty"`
-	// Unplanned is the first command of a block earlier in the document that
-	// the plan leaves out, set only alongside Need. That command never runs,
+	// Unplanned is the location of a code block earlier in the document that
+	// the plan leaves out, set only alongside Need. That block never runs,
 	// so it may be what creates the needed file, and a missing file after it
 	// is not proof of the document's gap.
 	Unplanned string `json:"unplanned,omitempty"`
@@ -312,8 +312,8 @@ type planner struct {
 	// need is the file the line being planned reads and the planner saw no
 	// earlier line create, drained onto that line when it runs.
 	need string
-	// unplanned is the first command of the first block in this document the
-	// plan leaves out because it does not qualify.
+	// unplanned is the location of the first block in this document the plan
+	// leaves out because it does not qualify.
 	unplanned string
 	// cfg is the repo's .kibble.yml overrides, or nil.
 	cfg *config.ExamplesConfig
@@ -347,7 +347,7 @@ func (pl *planner) addBlock(block docblock.Block) {
 	if !pl.qualifies(lines) {
 		pl.plan.Excluded++
 		if pl.unplanned == "" {
-			pl.unplanned = firstCommand(lines)
+			pl.unplanned = blockLocation(block)
 		}
 		return
 	}
@@ -440,15 +440,17 @@ func (pl *planner) addBlock(block docblock.Block) {
 	pl.plan.Steps = append(pl.plan.Steps, step)
 }
 
-// firstCommand returns the first line of a block that is neither blank nor a
-// comment, flattened, or empty when there is none.
-func firstCommand(lines []string) string {
-	for _, ln := range lines {
-		if flat := strings.TrimSpace(docblock.Flatten(ln)); flat != "" && !strings.HasPrefix(flat, "#") {
-			return flat
-		}
+// blockLocation names a code block by its line and heading, for a block the
+// plan leaves out.
+func blockLocation(block docblock.Block) string {
+	if block.Line <= 0 {
+		return "an earlier code block"
 	}
-	return ""
+	loc := fmt.Sprintf("the code block at line %d", block.Line)
+	if block.Heading != "" {
+		loc += fmt.Sprintf(" under %q", block.Heading)
+	}
+	return loc
 }
 
 // qualifies reports whether every command line of a block starts with a
