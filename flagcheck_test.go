@@ -14,11 +14,12 @@ import (
 func TestExtractUsage(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		In        string
-		Binaries  []string
-		WantFlags []string
-		WantSubs  []string
-		WantNone  bool
+		In           string
+		Binaries     []string
+		WantFlags    []string
+		WantSubs     []string
+		WantNone     bool
+		WantUnplaced []string
 	}{{ // Test 0: flags on direct invocations, with prompt and =value forms.
 		In:        "```sh\n$ tool fix --dialect=american notes.md\ntool check --json notes.md\n```\n",
 		Binaries:  []string{"tool"},
@@ -79,6 +80,21 @@ func TestExtractUsage(t *testing.T) {
 		In:       "```sh\ntool build -- --child-flag\n```\n",
 		Binaries: []string{"tool"},
 		WantSubs: []string{"build"},
+	}, { // Test 12: a leading flag's tail is unplaced, never probed.
+		In:           "```sh\nuv --preview-features auth-helper auth helper --protocol=bazel get\n```\n",
+		Binaries:     []string{"uv"},
+		WantFlags:    []string{"preview-features"},
+		WantUnplaced: []string{"--protocol"},
+	}, { // Test 13: a flag after a leading flag and a positional is unplaced.
+		In:           "```sh\ntool --verbose sub --subflag\n```\n",
+		Binaries:     []string{"tool"},
+		WantFlags:    []string{"verbose"},
+		WantUnplaced: []string{"--subflag"},
+	}, { // Test 14: a child's flags after a bare `--` in a leading-flag tail are not unplaced.
+		In:           "```sh\ntool --verbose sub --subflag -- --child-flag\n```\n",
+		Binaries:     []string{"tool"},
+		WantFlags:    []string{"verbose"},
+		WantUnplaced: []string{"--subflag"},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -100,6 +116,9 @@ func TestExtractUsage(t *testing.T) {
 			}
 			if diff := cmp.Diff(test.WantSubs, use.Subs, cmpopts.SortSlices(less), cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("subs mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantUnplaced, use.Unplaced, cmpopts.SortSlices(less), cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("unplaced mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
