@@ -58,6 +58,27 @@ func TestExtractUsage(t *testing.T) {
 		Binaries:  []string{"moffee"},
 		WantFlags: nil,
 		WantSubs:  []string{"live"},
+	}, { // Test 8: flags after a runner's program name belong to the program.
+		In: "```sh\nuv run --only-dev cargo xwin build --xwin-arch x86 " +
+			"--release --target x\n```\n",
+		Binaries:  []string{"uv"},
+		WantFlags: []string{"only-dev"},
+		WantSubs:  []string{"run"},
+	}, { // Test 9: a second program after the runner is not the binary's.
+		In: "```sh\nuv run --only-dev cargo codspeed build -m walltime " +
+			"--profile profiling -p uv-bench --bench git_fetch\n```\n",
+		Binaries:  []string{"uv"},
+		WantFlags: []string{"only-dev"},
+		WantSubs:  []string{"run"},
+	}, { // Test 10: a script argument does not end a runner's span.
+		In:        "```sh\nk6 run script.js --vus 10\n```\n",
+		Binaries:  []string{"k6"},
+		WantFlags: []string{"vus"},
+		WantSubs:  []string{"run"},
+	}, { // Test 11: flags after a bare double dash belong to the child.
+		In:       "```sh\ntool build -- --child-flag\n```\n",
+		Binaries: []string{"tool"},
+		WantSubs: []string{"build"},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
