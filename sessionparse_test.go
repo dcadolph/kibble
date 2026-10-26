@@ -418,3 +418,76 @@ func TestClassifyExampleNeed(t *testing.T) {
 		})
 	}
 }
+
+// TestClassifyExampleOwnProject checks that a project manager failing in the
+// repository's own checkout settles nothing unless the tool rejected the words
+// of the command, and that a tool which is not a project manager still fails.
+func TestClassifyExampleOwnProject(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Bin        string
+		Cmd        string
+		Output     string
+		Cwd        string
+		Code       int
+		Enter      bool
+		WantStatus Status
+		WantReason Reason
+	}{{ // Test 0: An extra the checkout's project lacks is inconclusive.
+		Bin: "uv", Cmd: "uv sync --extra foo", Cwd: "/work/repo", Code: 2,
+		Output:     "error: Extra `foo` is not defined in the `optional-dependencies` table for `uv`",
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 1: A dependency the checkout's project lacks is inconclusive.
+		Bin: "uv", Cmd: "uv remove httpx", Cwd: "/work/repo", Code: 2,
+		Output:     "error: The dependency `httpx` could not be found in `project.dependencies`",
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 2: A vocabulary error is the tool's own answer and fails.
+		Bin: "uv", Cmd: "uv sync --bogus", Cwd: "/work/repo", Code: 2,
+		Output:     "error: unexpected argument '--bogus' found",
+		WantStatus: StatusFail,
+	}, { // Test 3: A directory the section entered is not the checkout's project.
+		Bin: "uv", Cmd: "uv remove httpx", Cwd: "/work/repo/example", Code: 2, Enter: true,
+		Output:     "error: The dependency `httpx` could not be found in `project.dependencies`",
+		WantStatus: StatusFail,
+	}, { // Test 4: A tool that is not a project manager still fails in the checkout.
+		Bin: "rg", Cmd: "rg --foo x", Cwd: "/work/repo", Code: 2,
+		Output:     "error: something went wrong",
+		WantStatus: StatusFail,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			planLines := []kplan.PlanLine{{Cmd: test.Cmd}}
+			enter := ""
+			if test.Enter {
+				planLines = []kplan.PlanLine{{Cmd: "cd example"}, {Cmd: test.Cmd}}
+				enter = "KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo/example"
+			}
+			plan := &kplan.Plan{Repo: test.Bin, Binaries: []string{test.Bin}, Steps: []kplan.PlanStep{
+				{ID: "b1", Doc: "README.md", Heading: "Usage", Lines: planLines},
+			}}
+			step := InstallStep{Repo: test.Bin, Kind: "example"}
+			lines := []string{
+				"KIBBLE-BUILD CODE=0", "KIBBLE-STEP b1 START",
+			}
+			idx := 0
+			if test.Enter {
+				lines = append(lines, enter)
+				idx = 1
+			}
+			lines = append(lines, test.Output,
+				fmt.Sprintf("KIBBLE-LINE b1:%d CODE=%d CWD=%s", idx, test.Code, test.Cwd), "KIBBLE-DONE")
+			res := classifyExample(step, plan, sessionOut(lines...), nil, 0, lineTimeout, sessionEnd{})
+			if res.example == nil {
+				t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+			}
+			got := res.example.Steps[0].Lines[idx]
+			if diff := cmp.Diff(test.WantStatus, got.Status); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s\ndetail: %s", diff, got.Detail)
+			}
+			if diff := cmp.Diff(test.WantReason, got.Reason); diff != "" {
+				t.Errorf("reason mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

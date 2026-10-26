@@ -257,6 +257,15 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		// The tool named what it lacked and the command never passed it, so
 		// the tool reached for it on its own. See settleMissing.
 		lr = settleMissing(lr, reportedMissing(o.output), tail)
+	case o.cwd == sessionRepoDir && o.ownProject && !reUsageError.MatchString(o.output):
+		// A project manager run in the checkout read the checkout's own
+		// project, so it failed on what that project holds. Only a vocabulary
+		// error, a flag or subcommand the tool does not know, is the tool's
+		// own answer to the line as written.
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonCheckoutState
+		lr.Detail = fmt.Sprintf("ran in the repository's own checkout, whose project this "+
+			"command read, so the claim was not tested as written: exited %d: %s", o.code, tail)
 	case o.cwd == sessionRepoDir && reAlreadyExists.MatchString(o.output):
 		// A scaffold command such as uv init refuses because the checkout it
 		// ran in already holds a project. The document meant a fresh
@@ -285,6 +294,9 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 }
 
 var (
+	// reUsageError matches a tool rejecting the words of the command itself.
+	reUsageError = regexp.MustCompile(`(?i)\b(unexpected|unrecognized|unknown|invalid) ` +
+		`(argument|flag|option|subcommand|command)\b|flag provided but not defined`)
 	// reAlreadyExists matches a scaffold command refusing because its target
 	// is already there.
 	reAlreadyExists = regexp.MustCompile(`(?i)already (initiali[sz]ed|exists?)`)
