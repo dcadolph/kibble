@@ -1130,3 +1130,43 @@ func TestPlanOutsideCheckoutAfterCd(t *testing.T) {
 		})
 	}
 }
+
+// TestPlanCreates checks that a running line records the paths it writes, so
+// a later line missing one of them after this line failed can name it, and
+// that uv's --output-file target is created rather than fabricated.
+func TestPlanCreates(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Markdown      string
+		WantCreates   []string
+		WantSynthetic []string
+	}{{ // Test 0: A redirect target.
+		Markdown:    "```sh\n$ tool list > out.txt\n```\n",
+		WantCreates: []string{"out.txt"},
+	}, { // Test 1: uv's --output-file is written, not fabricated.
+		Markdown: "```sh\n$ uv pip compile requirements.in --universal " +
+			"--output-file requirements.txt\n```\n",
+		WantCreates: []string{"requirements.txt"},
+	}, { // Test 2: The destination of a copy.
+		Markdown:    "```sh\n$ cp a.conf b.conf\n```\n",
+		WantCreates: []string{"b.conf"},
+	}, { // Test 3: A skipped line creates nothing.
+		Markdown: "```sh\n$ tool get https://api.example.com/v1 > out.txt\n```\n",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := BuildPlan("tool", "", test.Markdown, []string{"tool", "uv"}, nil, nil, testRecognizer())
+			if len(plan.Steps) == 0 {
+				t.Fatal("no steps planned")
+			}
+			l := plan.Steps[len(plan.Steps)-1].Lines[0]
+			if diff := cmp.Diff(test.WantCreates, l.Creates, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("creates mismatch (-want +got):\n%s\nskip %q", diff, l.Skip)
+			}
+			if diff := cmp.Diff(test.WantSynthetic, l.Synthetic, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("synthetic mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

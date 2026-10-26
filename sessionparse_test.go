@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -413,6 +414,160 @@ func TestClassifyExampleNeed(t *testing.T) {
 			if test.WantDetail != "" {
 				if diff := cmp.Diff(test.WantDetail, got.Detail); diff != "" {
 					t.Errorf("detail mismatch (-want +got):\n%s", diff)
+				}
+			}
+		})
+	}
+}
+
+// TestClassifyExampleCreator checks that a missing file is the document's gap
+// only when the line ran where its document meant and no earlier line of the
+// document was to create the file and failed. The fixtures are uv's README,
+// which compiles requirements.txt from requirements.in and then syncs it.
+func TestClassifyExampleCreator(t *testing.T) {
+	t.Parallel()
+	const (
+		compile = "uv pip compile requirements.in --universal --output-file requirements.txt"
+		sync    = "uv pip sync requirements.txt"
+		noIn    = "error: File not found: requirements.in"
+		noTxt   = "error: File not found: requirements.txt"
+		ranIn   = "ran in /work/repo/example, which an earlier section entered, " +
+			"so this section's claim was not tested as written: exited 2: "
+		noStep = ", which no documented step creates: "
+	)
+	creator := kplan.PlanLine{Cmd: compile, Creates: []string{"requirements.txt"}}
+	type want struct {
+		Status Status
+		Reason Reason
+		Detail string
+	}
+	tests := []struct {
+		Steps []kplan.PlanStep
+		Out   []string
+		Want  []want
+	}{{ // Test 0: Both lines ran in a directory an earlier section entered.
+		Steps: []kplan.PlanStep{
+			{ID: "b1", Doc: "README.md", Heading: "Projects",
+				Lines: []kplan.PlanLine{{Cmd: "uv init example"}, {Cmd: "cd example"}}},
+			{ID: "b2", Doc: "README.md", Heading: "pip", Lines: []kplan.PlanLine{creator, {Cmd: sync}}},
+		},
+		Out: []string{
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo",
+			"KIBBLE-LINE b1:1 CODE=0 CWD=/work/repo/example",
+			"KIBBLE-STEP b2 START",
+			noIn, "KIBBLE-LINE b2:0 CODE=2 CWD=/work/repo/example",
+			noTxt, "KIBBLE-LINE b2:1 CODE=2 CWD=/work/repo/example",
+		},
+		Want: []want{
+			{Status: StatusBlocked, Reason: ReasonInheritedState, Detail: ranIn + noIn},
+			{Status: StatusBlocked, Reason: ReasonInheritedState, Detail: ranIn + noTxt},
+		},
+	}, { // Test 1: The compile line lacks its input, so the sync line's file was never made.
+		Steps: []kplan.PlanStep{
+			{ID: "b1", Doc: "README.md", Heading: "pip", Lines: []kplan.PlanLine{creator, {Cmd: sync}}},
+		},
+		Out: []string{
+			"KIBBLE-STEP b1 START",
+			noIn, "KIBBLE-LINE b1:0 CODE=2 CWD=/work/repo",
+			noTxt, "KIBBLE-LINE b1:1 CODE=2 CWD=/work/repo",
+		},
+		Want: []want{
+			{Status: StatusGap, Detail: "references requirements.in" + noStep + noIn},
+			{Status: StatusBlocked, Reason: ReasonDependsOnSkipped, Detail: "references requirements.txt, " +
+				"which an earlier line that did not pass may create: " + compile},
+		},
+	}, { // Test 2: No earlier line was to create the file, so the gap stands.
+		Steps: []kplan.PlanStep{
+			{ID: "b1", Doc: "README.md", Heading: "pip",
+				Lines: []kplan.PlanLine{{Cmd: "uv --version"}, {Cmd: sync}}},
+		},
+		Out: []string{
+			"KIBBLE-STEP b1 START",
+			"uv 0.13.5", "KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo",
+			noTxt, "KIBBLE-LINE b1:1 CODE=2 CWD=/work/repo",
+		},
+		Want: []want{
+			{Status: StatusVerified},
+			{Status: StatusGap, Detail: "references requirements.txt" + noStep + noTxt},
+		},
+	}, { // Test 3: The creator passed, so the sync line reads by its own failure.
+		Steps: []kplan.PlanStep{
+			{ID: "b1", Doc: "README.md", Heading: "pip", Lines: []kplan.PlanLine{creator, {Cmd: sync}}},
+		},
+		Out: []string{
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo",
+			"error: Building source distributions is disabled",
+			"KIBBLE-LINE b1:1 CODE=1 CWD=/work/repo",
+		},
+		Want: []want{{Status: StatusVerified}, {Status: StatusFail}},
+	}, { // Test 4: The creator passed and so did the sync line.
+		Steps: []kplan.PlanStep{
+			{ID: "b1", Doc: "README.md", Heading: "pip", Lines: []kplan.PlanLine{creator, {Cmd: sync}}},
+		},
+		Out: []string{
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo",
+			"KIBBLE-LINE b1:1 CODE=0 CWD=/work/repo",
+		},
+		Want: []want{{Status: StatusVerified}, {Status: StatusVerified}},
+	}, { // Test 5: A titled block's write failed, so the file it was to write is not a gap.
+		Steps: []kplan.PlanStep{
+			{ID: "b1", Doc: "docs/guide.md", Heading: "Notes", Lines: []kplan.PlanLine{
+				{Cmd: "cat > 'notes.txt' <<'KIBBLE_FILE_END'\nhello\nKIBBLE_FILE_END", File: "notes.txt"},
+				{Cmd: "wc -l notes.txt"},
+			}},
+		},
+		Out: []string{
+			"KIBBLE-STEP b1 START",
+			"bash: notes.txt: Read-only file system", "KIBBLE-LINE b1:0 CODE=1 CWD=/work/repo",
+			"wc: notes.txt: No such file or directory", "KIBBLE-LINE b1:1 CODE=1 CWD=/work/repo",
+		},
+		Want: []want{
+			{Status: StatusFail},
+			{Status: StatusBlocked, Reason: ReasonDependsOnSkipped, Detail: "references notes.txt, " +
+				"which an earlier line that did not pass may create: cat > 'notes.txt' <<'KIBBLE_FILE_END'"},
+		},
+	}, { // Test 6: A failed creator in another document does not excuse this one.
+		Steps: []kplan.PlanStep{
+			{ID: "b1", Doc: "docs/other.md", Heading: "pip", Lines: []kplan.PlanLine{creator}},
+			{ID: "b2", Doc: "README.md", Heading: "pip", Lines: []kplan.PlanLine{{Cmd: sync}}},
+		},
+		Out: []string{
+			"KIBBLE-STEP b1 START",
+			noIn, "KIBBLE-LINE b1:0 CODE=2 CWD=/work/repo",
+			"KIBBLE-STEP b2 START",
+			noTxt, "KIBBLE-LINE b2:0 CODE=2 CWD=/work/repo",
+		},
+		Want: []want{
+			{Status: StatusGap},
+			{Status: StatusGap, Detail: "references requirements.txt" + noStep + noTxt},
+		},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := &kplan.Plan{Repo: "uv", Steps: test.Steps}
+			lines := append([]string{"KIBBLE-BUILD CODE=0"}, test.Out...)
+			out := sessionOut(append(lines, "KIBBLE-DONE")...)
+			res := classifyExample(InstallStep{Repo: "uv", Kind: "example"}, plan, out, nil, 0, lineTimeout,
+				sessionEnd{})
+			if res.example == nil {
+				t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+			}
+			var got []lineResult
+			for _, s := range res.example.Steps {
+				got = append(got, s.Lines...)
+			}
+			tail := got[len(got)-len(test.Want):]
+			for i, w := range test.Want {
+				if tail[i].Status != w.Status || tail[i].Reason != w.Reason {
+					t.Errorf("line %d verdict = %s %q, want %s %q (detail %q)",
+						i, tail[i].Status, tail[i].Reason, w.Status, w.Reason, tail[i].Detail)
+				}
+				if w.Detail != "" && !strings.HasPrefix(tail[i].Detail, w.Detail) {
+					t.Errorf("line %d detail = %q, want prefix %q", i, tail[i].Detail, w.Detail)
 				}
 			}
 		})

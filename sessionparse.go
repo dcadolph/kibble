@@ -44,6 +44,9 @@ type lineOutcome struct {
 	ownProject bool
 	// missing marks a line whose needed file did not exist just before it ran.
 	missing bool
+	// creators maps each path an earlier line of the same document was to
+	// create, and did not pass, to that line's command.
+	creators map[string]string
 }
 
 // sessionRepoDir is the directory every document's shell starts in.
@@ -193,6 +196,9 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 	// document keeps one shell, so a directory one section enters is where
 	// every later section of that document runs.
 	entered := map[string]bool{}
+	// pending holds, per document, the paths earlier lines were to create and
+	// did not, each with the first such line's command.
+	pending := map[string]map[string]string{}
 	for _, s := range plan.Steps {
 		es := exampleStep{ID: s.ID, Doc: s.Doc, Heading: s.Heading}
 		section := s.Doc + "\x00" + s.Heading
@@ -248,6 +254,7 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 				// than the command's.
 				o.logged = s.Background
 				o.inherited = o.cwd != "" && o.cwd != sessionRepoDir && !entered[section]
+				o.creators = pending[s.Doc]
 				if bin, _ := kplan.InvokedBinary(docblock.Flatten(l.Cmd), bins); bin != "" {
 					o.ownProject = kplan.CommandEcosystem[bin] != ""
 				}
@@ -256,6 +263,7 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 			if changesDir(l.Cmd) {
 				entered[section] = true
 			}
+			trackCreators(pending, s.Doc, l, lr)
 			es.Lines = append(es.Lines, lr)
 		}
 		run.Steps = append(run.Steps, es)
@@ -264,6 +272,31 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 	resolveDependentFailures(run, plan)
 	status, detail := summarize(run)
 	return run, status, detail
+}
+
+// trackCreators records the paths a line was to create under its document. A
+// line that passed made them, so they are dropped. A line that did not pass
+// may not have, and the first such line stays the one named.
+func trackCreators(pending map[string]map[string]string, doc string, l kplan.PlanLine, lr lineResult) {
+	names := l.Creates
+	if l.File != "" {
+		names = append(append([]string(nil), names...), l.File)
+	}
+	if len(names) == 0 {
+		return
+	}
+	if pending[doc] == nil {
+		pending[doc] = map[string]string{}
+	}
+	for _, name := range names {
+		name = normName(name)
+		switch {
+		case lr.Status == StatusVerified:
+			delete(pending[doc], name)
+		case pending[doc][name] == "":
+			pending[doc][name] = lr.Cmd
+		}
+	}
 }
 
 // settleNeed settles a line that started without a file it reads and did not
