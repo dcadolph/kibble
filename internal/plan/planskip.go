@@ -104,6 +104,14 @@ func (pl *planner) skipReason(cmd, flat string) (string, verdict.Reason, bool) {
 		return fmt.Sprintf("changes into %s, which only the reader's system has", dir),
 			verdict.ReasonMissingFixture, false
 	}
+	// After a cd the document's ../ is relative to where it went, which may
+	// still be inside the checkout, so the rule holds only before one.
+	for _, op := range shell.Operands(flat) {
+		if !pl.moved && strings.HasPrefix(op, "../") {
+			return fmt.Sprintf("reads %s, which lies outside the repository checkout and only the reader has", op),
+				verdict.ReasonMissingFixture, false
+		}
+	}
 	if reFishSource.MatchString(flat) {
 		return "written for the fish shell, and the session runs bash", verdict.ReasonOtherPlatform, false
 	}
@@ -161,6 +169,9 @@ func (pl *planner) skipReason(cmd, flat string) (string, verdict.Reason, bool) {
 
 // reAbsoluteCd captures the target of a cd into an absolute directory.
 var reAbsoluteCd = regexp.MustCompile(`(?:^|&&|;)\s*cd\s+(/\S*)`)
+
+// reRunsCd matches a line that changes directory, alone or in a chain.
+var reRunsCd = regexp.MustCompile(`(^|&&|;|\|\|)\s*cd(\s|$)`)
 
 // systemCd returns the absolute directory a line changes into when that
 // directory is one the docs assume exists on the reader's system, such as a

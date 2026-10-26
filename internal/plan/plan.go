@@ -304,6 +304,9 @@ type planner struct {
 	// skipped. It is the only repository state the planner tracks, because a
 	// commit is the only allowed git form that needs any.
 	staged bool
+	// moved marks a document that has run a cd, after which a relative path
+	// is read from a directory the planner does not track.
+	moved bool
 	// synthetic collects the fixtures fabricated while classifying the line
 	// currently being planned, and is drained onto that line. A line that
 	// reads a file kibble invented was not tested against the document's own
@@ -419,6 +422,9 @@ func (pl *planner) addBlock(block docblock.Block) {
 			pl.recordCreated(flat)
 			if gitStages(flat) {
 				pl.staged = true
+			}
+			if reRunsCd.MatchString(flat) {
+				pl.moved = true
 			}
 		}
 		step.Lines = append(step.Lines, line)

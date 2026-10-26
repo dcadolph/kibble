@@ -513,6 +513,10 @@ var reNodeEnoent = regexp.MustCompile(`ENOENT: no such file or directory, \w+ '(
 // tach says "The path 'my_package' does not exist."
 var reNotExist = regexp.MustCompile(`(?i)\b(?:path|file|directory) '([^']+)' does not exist`)
 
+// reFileNotFound matches uv's sentence for a missing input, as in
+// "error: File not found: requirements.in".
+var reFileNotFound = regexp.MustCompile(`(?i)\bfile not found: '?"?([^\s'"]+)`)
+
 // rePyNoFile matches the line a Python traceback ends with when a file or a
 // program it tried to run was missing. Python names it after the message.
 var rePyNoFile = regexp.MustCompile(
@@ -528,7 +532,7 @@ var reErrnoName = regexp.MustCompile(`^E[A-Z]+$`)
 // generic shape, which would otherwise capture ENOENT itself.
 func reportedNames(output string) []string {
 	var out []string
-	for _, re := range []*regexp.Regexp{reNodeEnoent, reNotExist, reEnoent} {
+	for _, re := range []*regexp.Regexp{reNodeEnoent, reNotExist, reFileNotFound, reEnoent} {
 		m := re.FindStringSubmatch(output)
 		if m == nil {
 			continue
