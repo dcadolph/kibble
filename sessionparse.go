@@ -225,7 +225,8 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 				// everything before it in the document ran: a line kibble did
 				// not run may be what creates the file. A line that passed
 				// without the file never needed it, so it is classified as usual.
-				lr = settleNeed(lr, l, o, earlierNotPassed(run, es, s.Doc, l.Unplanned))
+				blocker, unplanned := earlierNotPassed(run, es, s.Doc, l.Unplanned)
+				lr = settleNeed(lr, l, o, blocker, unplanned)
 			case !seen:
 				// The session stopped with budget left, so the container ended
 				// rather than this line hanging. What the line would have done
@@ -258,8 +259,9 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 // settleNeed settles a line that started without a file it reads and did not
 // pass. With every earlier line of the document passed, the document never
 // creates the file and the line is its gap. Otherwise blocker names the first
-// earlier line that did not pass, which may be the one meant to create it.
-func settleNeed(lr lineResult, l kplan.PlanLine, o lineOutcome, blocker string) lineResult {
+// earlier line that did not pass, which may be the one meant to create it, or
+// when unplanned is set the code block kibble did not run.
+func settleNeed(lr lineResult, l kplan.PlanLine, o lineOutcome, blocker string, unplanned bool) lineResult {
 	lr.Code = o.code
 	lr.output = o.output
 	if blocker == "" {
@@ -270,17 +272,23 @@ func settleNeed(lr lineResult, l kplan.PlanLine, o lineOutcome, blocker string) 
 	}
 	lr.Status = StatusBlocked
 	lr.Reason = ReasonDependsOnSkipped
+	if unplanned {
+		lr.Detail = fmt.Sprintf("references %s, which an earlier code block kibble did not run may create: %s",
+			l.Need, blocker)
+		return lr
+	}
 	lr.Detail = fmt.Sprintf("references %s, which an earlier line that did not pass may create: %s",
 		l.Need, blocker)
 	return lr
 }
 
 // earlierNotPassed returns the first earlier line of the document that did not
-// pass, or empty when every one did. unplanned is a command the plan left out
-// of the document, which never ran and so comes first.
-func earlierNotPassed(run *exampleRun, current exampleStep, doc, unplanned string) string {
+// pass, or empty when every one did. unplanned is the location of a block the
+// plan left out of the document, which never ran and so comes first; the second
+// result reports that the blocker is such a block.
+func earlierNotPassed(run *exampleRun, current exampleStep, doc, unplanned string) (string, bool) {
 	if unplanned != "" {
-		return unplanned
+		return unplanned, true
 	}
 	steps := append(append([]exampleStep(nil), run.Steps...), current)
 	for _, s := range steps {
@@ -289,11 +297,11 @@ func earlierNotPassed(run *exampleRun, current exampleStep, doc, unplanned strin
 		}
 		for _, l := range s.Lines {
 			if l.Status != StatusVerified {
-				return l.Cmd
+				return l.Cmd, false
 			}
 		}
 	}
-	return ""
+	return "", false
 }
 
 // changesDir reports whether a line moves the shell to another directory.

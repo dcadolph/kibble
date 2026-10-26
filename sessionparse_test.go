@@ -353,9 +353,11 @@ func TestClassifyExampleNeed(t *testing.T) {
 		WantStatus: StatusBlocked, WantReason: ReasonDependsOnSkipped,
 		WantDetail: "references my_notebook.py, which an earlier line that did not pass may create: " + marimo,
 	}, { // Test 2: A block the plan left out may create the file.
-		First: kplan.PlanLine{Cmd: "uv --version"}, Unplanned: marimo, Need: "0", Code: "2",
+		First: kplan.PlanLine{Cmd: "uv --version"}, Unplanned: `the code block at line 2 under "Edit"`,
+		Need: "0", Code: "2",
 		WantStatus: StatusBlocked, WantReason: ReasonDependsOnSkipped,
-		WantDetail: "references my_notebook.py, which an earlier line that did not pass may create: " + marimo,
+		WantDetail: "references my_notebook.py, which an earlier code block kibble did not run may create: " +
+			`the code block at line 2 under "Edit"`,
 	}, { // Test 3: The file was there, so the line reads by its own exit code.
 		First: kplan.PlanLine{Cmd: "uv --version"}, Need: "1", Code: "2",
 		WantStatus: StatusFail,
