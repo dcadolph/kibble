@@ -257,6 +257,16 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		// The tool named what it lacked and the command never passed it, so
 		// the tool reached for it on its own. See settleMissing.
 		lr = settleMissing(lr, reportedMissing(o.output), tail)
+	case o.cwd == sessionRepoDir && reAlreadyExists.MatchString(o.output):
+		// A scaffold command such as uv init refuses because the checkout it
+		// ran in already holds a project. The document meant a fresh
+		// directory, so the claim was not tested as written. Only a nonzero,
+		// undocumented exit reaches this point.
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonCheckoutState
+		lr.Detail = fmt.Sprintf("ran in the repository's own checkout, which already holds "+
+			"what this line creates, so the claim was not tested as written: exited %d: %s",
+			o.code, tail)
 	case o.inherited:
 		// Documents cd once and stay there, so a later section can fail on
 		// what the directory holds rather than on what the section says:
@@ -275,6 +285,9 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 }
 
 var (
+	// reAlreadyExists matches a scaffold command refusing because its target
+	// is already there.
+	reAlreadyExists = regexp.MustCompile(`(?i)already (initiali[sz]ed|exists?)`)
 	// reTTYErr matches errors that mean the command needed a terminal. The last
 	// is the text of ENOTTY, which a terminal call returns on anything that is
 	// not one. It is all fzf prints when it has no terminal to draw on, and

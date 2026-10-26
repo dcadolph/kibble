@@ -162,4 +162,7 @@ const (
 	// ReasonInheritedState marks a failure in a directory an earlier section
 	// entered, so the section's own claim was not tested as written.
 	ReasonInheritedState Reason = "inherited-state"
+	// ReasonCheckoutState marks a scaffold command that ran in the repository's
+	// own checkout, which already holds what the command creates.
+	ReasonCheckoutState Reason = "checkout-state"
 )
