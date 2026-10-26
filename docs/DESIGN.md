@@ -45,7 +45,14 @@ recipe that finishes cleanly but leaves no binary to test is `RAN`, not a pass, 
 nothing was verified, and kibble cannot tell a recipe that should have produced a tool
 from one that legitimately installs none. A `git clone` step runs as the documented
 recipe, meaning the clone line plus the lines that follow it in the same code block, such
-as `cd` and `make install`, and whatever the recipe produces is smoke-tested. A build
+as `cd` and `make install`, and whatever the recipe produces is smoke-tested. A clone
+written as an inline span inside a list takes its recipe from the spans of the outermost
+list, from the first span of the clone's own item to the end of the list. A span starting
+with a recipe command such as `cd`, `git`, `source`, or `make` joins, and a single other
+word is a prose mention and is dropped. Any other span, a code block inside the list, or a
+second clone keeps the clone span alone. When the recipe's last line sources a file, its
+shell is asked whether the product is a shell function, and if so the install is
+`VERIFIED` with the version it reports. A build
 that exceeds the timeout is reported as `TIMEOUT`, never as a failure unless `-strict`
 promotes it, so a slow network does not fail a build that would otherwise pass.
 
@@ -189,7 +196,11 @@ break every document that changes directory once in setup and invent failures.
 The same holds for the checkout itself. A would-be plain `FAIL` that ran in the
 repository's own checkout, and whose output says the target "already exists" or is
 "already initialized", is `BLOCKED` with the reason `checkout-state`. The collision is
-with the checkout kibble chose, not with anything the document wrote.
+with the checkout kibble chose, not with anything the document wrote. A project manager,
+a documented binary with a known ecosystem such as uv, that fails in the repository's own
+checkout is `checkout-state` as well, because it read the checkout's own project. Output
+that is a vocabulary error, an unknown or unexpected flag, option, argument, or subcommand,
+stays `FAIL`.
 
 A file a line reads that the planner sees no earlier line create no longer skips the line
 at plan time. The plan records it as the line's need, and the session checks whether the
@@ -197,8 +208,13 @@ file exists just before the line runs. A line that passes without the file is cl
 as usual. If the line fails and the file was absent, the verdict is `GAP` only when every
 earlier line of the document passed and no earlier block was left out of the plan.
 Otherwise it is `BLOCKED` with the reason `depends-on-skipped`, naming the first line or
-left-out command that could have created the file. A background step keeps the plan-time
-`GAP`.
+left-out block that could have created the file. A left-out block is named by its line and
+heading, since its first line could be output. A background step keeps the plan-time `GAP`.
+
+A titled fence whose title is a plain relative file path is a file the document writes. The
+planner turns it into a line that writes the block's content, so a later line reading that
+file does not need it, and a path the checkout already holds is never overwritten. A caption
+title such as "Terminal" is not a file.
 
 A session that ends before it finishes, with time left on the clock, is an `ERROR` and
 the examples get no verdict. The lines it never reached are `BLOCKED`, never `TIMEOUT`.
@@ -225,6 +241,9 @@ nothing about the document, because the same recipe on a reader's tree finds its
 matches.
 
 A tool that names what was missing is evidence, and the verdict follows what it names.
+Output saying "File not found: X" names the file, and settles like "No such file or
+directory". A line whose operand starts with `../` is skipped at plan time as
+`missing-fixture`, since that path lies outside the checkout and only the reader has it.
 A missing file or directory the document itself mentioned is a `GAP`, the same as a
 file the planner sees no step creating. A missing path the document never mentions is
 `BLOCKED`, because the tool may have a bug or the document may have skipped a step, and
@@ -369,6 +388,13 @@ A flag is attributed to the binary only while the line is still speaking to it. 
 `--` ends the binary's flags, since what follows belongs to another program. Under a
 runner subcommand such as `run`, `exec`, or `x`, the flags end at the first operand shaped
 like a program name, so `k6 run script.js --vus 10` still cites `--vus`.
+
+When the first word after the binary is a flag, the binary's own flags end at the first word
+that is not a flag, because a flag's value cannot be told from a subcommand. Flags written
+after that point are listed in the check's unverified clause and never probed, and no
+subcommand is recorded for the line. A later bare `--` in that tail ends it, since what
+follows belongs to a child program. Cited flags and help flags are read one
+whitespace-separated token at a time, so every flag in a run of consecutive flags is found.
 
 The reverse question, whether every command the binary advertises appears in the docs,
 is `doc-coverage`, and it catches the more common rot: a feature ships and nobody writes
