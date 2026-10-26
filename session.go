@@ -285,6 +285,12 @@ done
 					lineSecs, shellSafe(cmd))
 				wrapped[fmt.Sprintf("%s:%d", s.ID, i)] = true
 			}
+			// Whether a file the line reads exists is asked just before it
+			// runs, so a missing file is judged where it can be proven.
+			if l.Need != "" {
+				fmt.Fprintf(&b, "if %s; then __kn=1; else __kn=0; fi\n", existsTest(l.Need))
+				fmt.Fprintf(&b, "printf '"+markerLead+"KIBBLE-NEED %s:%d %%d\\n' \"$__kn\"\n", s.ID, i)
+			}
 			// The directory is read before the line runs, so the marker names
 			// where the line ran rather than where a cd in it went.
 			b.WriteString("__cwd=$PWD\n" + cmd + "\n")
@@ -364,6 +370,15 @@ if [ -n "$__c" ]; then printf '`+markerLead+`KIBBLE-LINE %s:%d CODE=%%d\n' "$__c
 else printf '`+markerLead+`KIBBLE-LINE %s:%d BG=%%d\n' "$ready"; fi
 `, s.ID, i, status, s.ID, i, s.ID, i)
 	}
+}
+
+// existsTest returns a shell test for whether path exists. A path under the
+// home directory keeps its expansion, and every other character is quoted.
+func existsTest(path string) string {
+	if rest, ok := strings.CutPrefix(path, "~/"); ok {
+		return fmt.Sprintf(`[ -e "$HOME"/'%s' ]`, shellSafe(rest))
+	}
+	return fmt.Sprintf("[ -e '%s' ]", shellSafe(path))
 }
 
 // shellSafe escapes single quotes for embedding inside a single-quoted

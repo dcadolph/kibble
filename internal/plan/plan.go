@@ -93,6 +93,15 @@ type PlanLine struct {
 	// Gap marks a Skip whose cause is the document rather than the
 	// container: the line names something no documented step creates.
 	Gap bool `json:"gap,omitempty"`
+	// Need is a file the line reads that the planner saw no earlier line
+	// create. The session reports whether it exists just before the line
+	// runs, so a missing file is judged at run time rather than guessed.
+	Need string `json:"need,omitempty"`
+	// Unplanned is the first command of a block earlier in the document that
+	// the plan leaves out, set only alongside Need. That command never runs,
+	// so it may be what creates the needed file, and a missing file after it
+	// is not proof of the document's gap.
+	Unplanned string `json:"unplanned,omitempty"`
 	// NonzeroOK accepts a nonzero exit as documented behavior.
 	NonzeroOK bool `json:"nonzeroOk,omitempty"`
 	// Synthetic names the files kibble fabricated so this line had something
@@ -300,6 +309,12 @@ type planner struct {
 	// reads a file kibble invented was not tested against the document's own
 	// example, and the verdict has to be able to say so.
 	synthetic []string
+	// need is the file the line being planned reads and the planner saw no
+	// earlier line create, drained onto that line when it runs.
+	need string
+	// unplanned is the first command of the first block in this document the
+	// plan leaves out because it does not qualify.
+	unplanned string
 	// cfg is the repo's .kibble.yml overrides, or nil.
 	cfg *config.ExamplesConfig
 }
@@ -331,6 +346,9 @@ func (pl *planner) addBlock(block docblock.Block) {
 	}
 	if !pl.qualifies(lines) {
 		pl.plan.Excluded++
+		if pl.unplanned == "" {
+			pl.unplanned = firstCommand(lines)
+		}
 		return
 	}
 	step := PlanStep{
@@ -366,9 +384,12 @@ func (pl *planner) addBlock(block docblock.Block) {
 		if shownErr[strings.TrimSpace(flat)] {
 			line.NonzeroOK = true
 		}
-		pl.synthetic = nil
+		pl.synthetic, pl.need = nil, ""
 		line.Skip, line.SkipReason, line.Gap = pl.skipReason(ln, flat)
 		line.Synthetic = pl.synthetic
+		if line.Skip == "" {
+			line.Need = pl.need
+		}
 		if line.Skip == "" && scopedTo != "" {
 			line.Skip = fmt.Sprintf("documented for %s rather than this container", scopedTo)
 			line.SkipReason = verdict.ReasonOtherPlatform
@@ -378,6 +399,12 @@ func (pl *planner) addBlock(block docblock.Block) {
 			line.SkipReason = verdict.ReasonDependsOnSkipped
 		}
 		pl.applyRules(&line, &step, flat)
+		if line.Skip != "" {
+			line.Need = ""
+		}
+		if line.Need != "" {
+			line.Unplanned = pl.unplanned
+		}
 		if line.Skip != "" && strings.HasPrefix(strings.TrimSpace(flat), "cd ") {
 			lostDir = true
 		}
@@ -399,7 +426,29 @@ func (pl *planner) addBlock(block docblock.Block) {
 	if len(step.Lines) == 0 {
 		return
 	}
+	if step.Background {
+		// A background step's output goes to a log, where the session cannot
+		// read a check made before a line, so its missing files keep the
+		// plan-time gap.
+		for i := range step.Lines {
+			if l := &step.Lines[i]; l.Need != "" {
+				l.Skip = fmt.Sprintf("references %s, which the docs never create", l.Need)
+				l.SkipReason, l.Gap, l.Need, l.Unplanned = verdict.ReasonMissingFixture, true, "", ""
+			}
+		}
+	}
 	pl.plan.Steps = append(pl.plan.Steps, step)
+}
+
+// firstCommand returns the first line of a block that is neither blank nor a
+// comment, flattened, or empty when there is none.
+func firstCommand(lines []string) string {
+	for _, ln := range lines {
+		if flat := strings.TrimSpace(docblock.Flatten(ln)); flat != "" && !strings.HasPrefix(flat, "#") {
+			return flat
+		}
+	}
+	return ""
 }
 
 // qualifies reports whether every command line of a block starts with a

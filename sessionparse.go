@@ -39,6 +39,8 @@ type lineOutcome struct {
 	// inherited marks a line that ran in a directory an earlier section of its
 	// document entered, which its own section never did.
 	inherited bool
+	// missing marks a line whose needed file did not exist just before it ran.
+	missing bool
 }
 
 // sessionRepoDir is the directory every document's shell starts in.
@@ -75,6 +77,8 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 	res := Result{Step: step, Duration: dur}
 	outcomes := map[string]lineOutcome{}
 	have := map[string]bool{}
+	// absent holds the lines whose needed file did not exist when they started.
+	absent := map[string]bool{}
 	var chunk []string
 	aborted, done, noBin := false, false, false
 	pkgCode := 0
@@ -90,6 +94,12 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 		case ok:
 			keep(pre)
 			have[strings.TrimSpace(rest)] = true
+		case strings.Contains(line, "KIBBLE-NEED "):
+			pre, rest, _ := markerTail(line, "KIBBLE-NEED ")
+			keep(pre)
+			if f := strings.Fields(rest); len(f) == 2 && f[1] == "0" {
+				absent[f[0]] = true
+			}
 		case strings.Contains(line, "KIBBLE-PKGS CODE="):
 			_, code, _ := markerTail(line, "KIBBLE-PKGS CODE=")
 			pkgCode, _ = strconv.Atoi(strings.TrimSpace(code))
@@ -105,7 +115,7 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 		case reLineMarker.MatchString(line):
 			m := reLineMarker.FindStringSubmatch(line)
 			keep(line[:len(line)-len(m[0])])
-			o := lineOutcome{code: -1, output: strings.Join(chunk, "\n")}
+			o := lineOutcome{code: -1, output: strings.Join(chunk, "\n"), missing: absent[m[1]+":"+m[2]]}
 			switch {
 			case m[3] != "":
 				o.code, _ = strconv.Atoi(m[3])
@@ -209,6 +219,13 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 				lr.Status = StatusTimeout
 				lr.Detail = "session ended while this line ran"
 				ended = true
+			case l.Need != "" && o.missing && o.code != 0 && !o.background:
+				// The file was absent when the line started and the line did not
+				// pass. Whether that is the document's gap depends on whether
+				// everything before it in the document ran: a line kibble did
+				// not run may be what creates the file. A line that passed
+				// without the file never needed it, so it is classified as usual.
+				lr = settleNeed(lr, l, o, earlierNotPassed(run, es, s.Doc, l.Unplanned))
 			case !seen:
 				// The session stopped with budget left, so the container ended
 				// rather than this line hanging. What the line would have done
@@ -236,6 +253,47 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 	resolveDependentFailures(run, plan)
 	status, detail := summarize(run)
 	return run, status, detail
+}
+
+// settleNeed settles a line that started without a file it reads and did not
+// pass. With every earlier line of the document passed, the document never
+// creates the file and the line is its gap. Otherwise blocker names the first
+// earlier line that did not pass, which may be the one meant to create it.
+func settleNeed(lr lineResult, l kplan.PlanLine, o lineOutcome, blocker string) lineResult {
+	lr.Code = o.code
+	lr.output = o.output
+	if blocker == "" {
+		lr.Status = StatusGap
+		lr.Reason = ReasonMissingFixture
+		lr.Detail = fmt.Sprintf("references %s, which no documented step creates", l.Need)
+		return lr
+	}
+	lr.Status = StatusBlocked
+	lr.Reason = ReasonDependsOnSkipped
+	lr.Detail = fmt.Sprintf("references %s, which an earlier line that did not pass may create: %s",
+		l.Need, blocker)
+	return lr
+}
+
+// earlierNotPassed returns the first earlier line of the document that did not
+// pass, or empty when every one did. unplanned is a command the plan left out
+// of the document, which never ran and so comes first.
+func earlierNotPassed(run *exampleRun, current exampleStep, doc, unplanned string) string {
+	if unplanned != "" {
+		return unplanned
+	}
+	steps := append(append([]exampleStep(nil), run.Steps...), current)
+	for _, s := range steps {
+		if s.Doc != doc {
+			continue
+		}
+		for _, l := range s.Lines {
+			if l.Status != StatusVerified {
+				return l.Cmd
+			}
+		}
+	}
+	return ""
 }
 
 // changesDir reports whether a line moves the shell to another directory.
