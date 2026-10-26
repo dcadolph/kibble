@@ -2,6 +2,7 @@ package docblock
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -104,7 +105,9 @@ func TestCodeBlocksAdmonition(t *testing.T) {
 
 	tests := []struct {
 		In        string
+		WantLines []string
 		WantCount int
+		WantLine  int
 	}{{ // Test 0: A note admonition body is not code.
 		In: "!!! note\n\n    uv does not validate the credentials, so the command succeeds " +
 			"even if they are incorrect.\n",
@@ -118,13 +121,41 @@ func TestCodeBlocksAdmonition(t *testing.T) {
 	}, { // Test 3: A fenced block after an admonition marker is still code.
 		In:        "!!! note\n\n```sh\nmake build\n```\n",
 		WantCount: 1,
+	}, { // Test 4: A fenced block inside an admonition body is code at its real line.
+		In: "#### Origin URL\n\n!!! note \"\"\n\n    **Type**: String  \n" +
+			"    **Default**: null  \n\n    Specifies the base URL.\n\n" +
+			"    ```console\n    $ st run openapi.yaml --url https://api.example.com\n    ```\n",
+		WantCount: 1,
+		WantLines: []string{"$ st run openapi.yaml --url https://api.example.com"},
+		WantLine:  11,
+	}, { // Test 5: An admonition body of prose and then a fenced block yields one block.
+		In:        "!!! tip \"Hint\"\n\n    Run it.\n\n    ```sh\n    make build\n    ```\n",
+		WantCount: 1,
+		WantLines: []string{"make build"},
+		WantLine:  6,
+	}, { // Test 6: A nested admonition holding a fenced block yields one block.
+		In: "!!! note\n\n    Outer prose.\n\n    !!! tip\n\n        Inner prose.\n\n" +
+			"        ```sh\n        make build\n        ```\n",
+		WantCount: 1,
+		WantLines: []string{"make build"},
+		WantLine:  10,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			got := len(CodeBlocks(test.In))
-			if diff := cmp.Diff(test.WantCount, got); diff != "" {
-				t.Errorf("mismatch (-want +got):\n%s", diff)
+			got := CodeBlocks(test.In)
+			if diff := cmp.Diff(test.WantCount, len(got)); diff != "" {
+				t.Fatalf("count mismatch (-want +got):\n%s", diff)
+			}
+			if test.WantLines == nil {
+				return
+			}
+			lines := strings.Split(strings.TrimSuffix(strings.Join(got[0].Lines, "\n"), "\n"), "\n")
+			if diff := cmp.Diff(test.WantLines, lines); diff != "" {
+				t.Errorf("lines mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantLine, got[0].Line); diff != "" {
+				t.Errorf("line mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
