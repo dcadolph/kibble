@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 // A session that finished means the shell that stopped short was one
 // document's own, so its remaining lines say so and later documents keep
 // their results. A session that never finished still reports the line it
-// stopped on as the hang.
+// stopped on as the hang when its budget ran out.
 func TestClassifyExampleDocumentExit(t *testing.T) {
 	t.Parallel()
 	const exited = "not established: the document's shell exited at or before this line"
@@ -25,6 +26,7 @@ func TestClassifyExampleDocumentExit(t *testing.T) {
 	step := InstallStep{Repo: "repo", Kind: "example"}
 	tests := []struct {
 		Out         string
+		End         sessionEnd
 		WantStatus  []Status
 		WantDetails []string
 	}{{ // Test 0: The first document exits and the second still runs.
@@ -45,13 +47,14 @@ func TestClassifyExampleDocumentExit(t *testing.T) {
 			"KIBBLE-STEP b1 START",
 			"a",
 			"KIBBLE-LINE b1:0 CODE=0"),
+		End:         sessionEnd{expired: true},
 		WantStatus:  []Status{StatusVerified, StatusTimeout, StatusBlocked, StatusBlocked},
 		WantDetails: []string{"", "session ended while this line ran", ended, ended},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			res := classifyExample(step, plan, test.Out, nil, 0, lineTimeout)
+			res := classifyExample(step, plan, test.Out, nil, 0, lineTimeout, test.End)
 			if res.example == nil {
 				t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
 			}
@@ -179,7 +182,7 @@ func TestClassifyExampleInheritedState(t *testing.T) {
 				}
 			}
 			lines = append(lines, "KIBBLE-DONE")
-			res := classifyExample(step, plan, sessionOut(lines...), nil, 0, lineTimeout)
+			res := classifyExample(step, plan, sessionOut(lines...), nil, 0, lineTimeout, sessionEnd{})
 			if res.example == nil {
 				t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
 			}
@@ -196,6 +199,82 @@ func TestClassifyExampleInheritedState(t *testing.T) {
 			}
 			if diff := cmp.Diff(test.WantReason, got.Reason); diff != "" {
 				t.Errorf("reason mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestClassifyExampleEngineDeath checks a session the container ended with
+// budget left. The line that was running has no verdict and the session is an
+// error, since the engine dying says nothing about the document. The same
+// output from a session whose budget ran out still reads as the hang.
+func TestClassifyExampleEngineDeath(t *testing.T) {
+	t.Parallel()
+	plan := &kplan.Plan{Repo: "repo", Steps: []kplan.PlanStep{
+		{ID: "b1", Doc: "README.md", Lines: []kplan.PlanLine{{Cmd: "schemathesis --version"}}},
+		{ID: "b2", Doc: "README.md", Lines: []kplan.PlanLine{{Cmd: "export USERNAME=user"}}},
+	}}
+	step := InstallStep{Repo: "repo", Kind: "example"}
+	died := fmt.Errorf("exit status 125: %w",
+		errors.New("error waiting for container: copying response body from Docker: unexpected EOF"))
+	out := sessionOut(
+		"KIBBLE-BUILD CODE=0",
+		"KIBBLE-STEP b1 START",
+		"schemathesis 4.3.0",
+		"KIBBLE-LINE b1:0 CODE=0",
+		"KIBBLE-STEP b2 START")
+	tests := []struct {
+		End         sessionEnd
+		WantStatus  Status
+		WantDetail  string
+		WantLines   []Status
+		WantReasons []Reason
+	}{{ // Test 0: The engine dies with budget left.
+		End:        sessionEnd{err: died},
+		WantStatus: StatusError,
+		WantDetail: "the container ended before the session finished, so the examples have no verdict: " +
+			"exit status 125: error waiting for container: copying response body from Docker: unexpected EOF",
+		WantLines:   []Status{StatusVerified, StatusBlocked},
+		WantReasons: []Reason{"", ReasonNotExecuted},
+	}, { // Test 1: The budget ran out, so the running line is the hang.
+		End:         sessionEnd{expired: true, err: died},
+		WantStatus:  StatusTimeout,
+		WantDetail:  `README.md b2 "export USERNAME=user" session ended while this line ran`,
+		WantLines:   []Status{StatusVerified, StatusTimeout},
+		WantReasons: []Reason{"", ""},
+	}, { // Test 2: The engine dies with no exit error to carry.
+		End:         sessionEnd{},
+		WantStatus:  StatusError,
+		WantDetail:  "the container ended before the session finished, so the examples have no verdict",
+		WantLines:   []Status{StatusVerified, StatusBlocked},
+		WantReasons: []Reason{"", ReasonNotExecuted},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			res := classifyExample(step, plan, out, nil, 0, lineTimeout, test.End)
+			if res.Status != test.WantStatus {
+				t.Errorf("status = %s, want %s", res.Status, test.WantStatus)
+			}
+			if diff := cmp.Diff(test.WantDetail, res.Detail); diff != "" {
+				t.Errorf("detail mismatch (-want +got):\n%s", diff)
+			}
+			if res.example == nil {
+				t.Fatalf("no per-line outcomes")
+			}
+			var lines []Status
+			var reasons []Reason
+			for _, s := range res.example.Steps {
+				for _, l := range s.Lines {
+					lines = append(lines, l.Status)
+					reasons = append(reasons, l.Reason)
+				}
+			}
+			if diff := cmp.Diff(test.WantLines, lines); diff != "" {
+				t.Errorf("line status mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantReasons, reasons); diff != "" {
+				t.Errorf("line reason mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
