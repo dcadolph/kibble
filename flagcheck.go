@@ -99,7 +99,13 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 			if use == nil {
 				continue
 			}
-			flags := reFlagToken.FindAllStringSubmatch(seg, -1)
+			// The segment is cut only where the binary's own flags end, so a
+			// line no rule shortens is read exactly as written.
+			own := seg
+			if end := ownFlagSpan(fields); end < len(fields) {
+				own = strings.Join(fields[:end], " ")
+			}
+			flags := reFlagToken.FindAllStringSubmatch(own, -1)
 			var sub string
 			if len(fields) > 1 && shell.IsSubcommandName(fields[1]) {
 				sub = fields[1]
@@ -158,6 +164,32 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 		})
 	}
 	return byBin
+}
+
+// runnerSubs holds the subcommands that run another program, so the flags
+// after that program's name belong to it and not to the binary.
+var runnerSubs = map[string]bool{"run": true, "exec": true, "x": true}
+
+// ownFlagSpan returns the index of the first field that is not the binary's
+// own. A bare `--` ends the span, and after a runner subcommand the program
+// name it runs ends it, since the flags after either belong to a child.
+func ownFlagSpan(fields []string) int {
+	end := len(fields)
+	for i, f := range fields {
+		if f == "--" {
+			end = i
+			break
+		}
+	}
+	if len(fields) < 2 || !runnerSubs[fields[1]] {
+		return end
+	}
+	for i := 2; i < end; i++ {
+		if !strings.HasPrefix(fields[i], "-") && shell.IsSubcommandName(fields[i]) {
+			return i
+		}
+	}
+	return end
 }
 
 // reTableFlagRow matches a markdown table row whose first cell is a single
