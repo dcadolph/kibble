@@ -54,5 +54,5 @@ httpie	https://github.com/httpie/cli.git	5b604c37c6c67e18e7c3e9aee6c88a8c22b9834
 # are package-manager installs that write nothing into the working directory,
 # so they no longer stand in for a creator, and the example row is the GAP it
 # was before 3bf2ed3. kibble built from 60a68ba reads 3,0,0 and the build with
-# the planner change reads 2,0,1. The change is 421f9da.
+# the planner change reads 2,0,1. The change is 86f0c79.
 rich-cli	https://github.com/Textualize/rich-cli.git	46f4d2469097be395558768714a5f07ebccf1412	2,0,1
