@@ -278,11 +278,12 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 		// lines, since the planner only leaves owned installs to the installer.
 		owned := ownedNames(p, repo)
 		seen := installRoutes(steps)
-		steps = slices.DeleteFunc(steps, func(s InstallStep) bool { return !owned.owns(s) })
+		steps = owned.keep(steps)
+		own := slices.DeleteFunc(slices.Clone(steps), func(s InstallStep) bool { return !owned.owns(s) })
 		if len(steps) == 0 {
 			problems = append(problems, noInstallRoute(repo, p, name, len(idocs)-1, seen))
 		}
-		bins, installs := sessionInstalls(p, steps)
+		bins, installs := sessionInstalls(p, own)
 		// Flags and subcommands are cited across the whole documentation set,
 		// not only the README, and a reference page drifts faster than a front
 		// page because nobody reads it on the way past. A flag cited on a

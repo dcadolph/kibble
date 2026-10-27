@@ -130,6 +130,13 @@ func TestCollectNoInstallRoute(t *testing.T) {
 		Files: map[string]string{"README.md": "# r\n\n```sh\nbrew install x\n```\n"},
 	}, { // Test 4: an apt route is reported on its own row as not run, so no row here.
 		Files: map[string]string{"README.md": "# r\n\n```sh\nsudo apt-get install x\n```\n"},
+	}, { // Test 5: a cargo install in a Python repository is foreign, so no route remains.
+		Files: map[string]string{
+			"pyproject.toml": "[project]\nname = \"tool\"\n",
+			"README.md":      "# r\n\n```sh\ncargo install x\n```\n",
+		},
+		WantRow:    true,
+		WantDetail: "no install route kibble runs in README.md and 0 install documents (routes seen: cargo-install)",
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
