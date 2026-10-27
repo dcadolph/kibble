@@ -213,7 +213,7 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Status = StatusBlocked
 		lr.Reason = ReasonNoDataExpected
 		lr.Detail = "its filters matched no file in this repository, so the example settled nothing"
-	case reNoData.MatchString(o.output) && !o.ownProject:
+	case reNoData.MatchString(o.output) && !o.resolver:
 		// A project manager that exits nonzero did not run a query that came
 		// back empty: its resolver says "No solution found" when it fails.
 		lr.Status = StatusSkipped
@@ -804,3 +804,7 @@ func namelessRegisteredNoun(output string) string {
 	}
 	return ""
 }
+
+// resolverTools names installers that are not project managers but resolve packages.
+// Their failures say "No solution found" in the words of uv, which pipx delegates to.
+var resolverTools = map[string]bool{"pipx": true, "uvx": true}

@@ -586,6 +586,19 @@ func TestClassifyExampleOwnProject(t *testing.T) {
 		"  cause: Hash-checking is required, but no trusted hash was provided for: `puccinialin`\n" +
 		"hint: If you want to add the package regardless of the failed resolution, " +
 		"provide the `--frozen` flag to skip locking and syncing"
+	const pipxInstall = "creating virtual environment...\n" +
+		"installing nope-zzz-pkg-kibble...\n" +
+		"Fatal error from uv prevented installation. Full uv output in file:\n" +
+		"    /root/.local/state/pipx/log/cmd_2026-10-27_02.18.11_uv_errors.log\n" +
+		"\n" +
+		"Some possibly relevant errors from uv install:\n" +
+		"    error: No solution found when resolving dependencies\n" +
+		"      cause: Because nope-zzz-pkg-kibble was not found in the package registry and " +
+		"you require nope-zzz-pkg-kibble, we can conclude that your requirements are unsatisfiable.\n" +
+		"Error installing nope-zzz-pkg-kibble."
+	const uvxRun = "error: No solution found when resolving tool dependencies\n" +
+		"  cause: Because nope-zzz-pkg-kibble was not found in the package registry and " +
+		"you require nope-zzz-pkg-kibble, we can conclude that your requirements are unsatisfiable."
 	tests := []struct {
 		Bin        string
 		Cmd        string
@@ -643,6 +656,18 @@ func TestClassifyExampleOwnProject(t *testing.T) {
 		Bin: "tool", Cmd: "tool query", Cwd: "/work/repo", Code: 4,
 		Output:     "no entries on 2026-07-11",
 		WantStatus: StatusSkipped, WantReason: ReasonNoDataExpected,
+	}, { // Test 12: An installer's resolver failure is never an empty query.
+		Bin: "pipx", Cmd: "pipx install nope-zzz-pkg-kibble", Cwd: "/work/repo", Code: 1,
+		Output:     pipxInstall,
+		WantStatus: StatusFail,
+	}, { // Test 13: pipx run fails the same way.
+		Bin: "pipx", Cmd: "pipx run nope-zzz-pkg-kibble", Cwd: "/work/repo", Code: 1,
+		Output:     uvxRun,
+		WantStatus: StatusFail,
+	}, { // Test 14: uvx fails the same way.
+		Bin: "uvx", Cmd: "uvx nope-zzz-pkg-kibble", Cwd: "/work/repo", Code: 1,
+		Output:     uvxRun,
+		WantStatus: StatusFail,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
