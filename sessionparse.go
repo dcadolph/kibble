@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +46,9 @@ type lineOutcome struct {
 	ownProject bool
 	// missing marks a line whose needed file did not exist just before it ran.
 	missing bool
+	// member marks a line that ran in a directory an earlier line's own words
+	// declared a member of the checkout's workspace.
+	member bool
 	// creators maps each path an earlier line of the same document was to
 	// create, and did not pass, to that line's command.
 	creators map[string]string
@@ -51,6 +56,15 @@ type lineOutcome struct {
 
 // sessionRepoDir is the directory every document's shell starts in.
 const sessionRepoDir = "/work/repo"
+
+var (
+	// reWorkspaceMember matches the line uv prints when a new project joins a
+	// workspace, capturing the project name and the workspace root.
+	reWorkspaceMember = regexp.MustCompile("Adding `([^`]+)` as member of workspace `([^`]+)`")
+	// reInitializedAt matches the line uv prints for a new project, capturing
+	// the project name and the directory it was created in.
+	reInitializedAt = regexp.MustCompile("Initialized project `([^`]+)` at `([^`]+)`")
+)
 
 // markerTail splits a line on a session marker, returning the output that
 // preceded the marker, the text that followed it, and whether the marker is
@@ -199,6 +213,9 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 	// pending holds, per document, the paths earlier lines were to create and
 	// did not, each with the first such line's command.
 	pending := map[string]map[string]string{}
+	// members holds the directories earlier lines declared members of the
+	// checkout's workspace.
+	members := map[string]bool{}
 	for _, s := range plan.Steps {
 		es := exampleStep{ID: s.ID, Doc: s.Doc, Heading: s.Heading}
 		section := s.Doc + "\x00" + s.Heading
@@ -258,6 +275,8 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 				if bin, _ := kplan.InvokedBinary(docblock.Flatten(l.Cmd), bins); bin != "" {
 					o.ownProject = kplan.CommandEcosystem[bin] != ""
 				}
+				o.member = members[o.cwd]
+				recordMembers(members, o)
 				lr = classifyLineResult(lr, l, o, wrapped[key], documented, lineBudget)
 			}
 			if changesDir(l.Cmd) {
@@ -272,6 +291,27 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 	resolveDependentFailures(run, plan)
 	status, detail := summarize(run)
 	return run, status, detail
+}
+
+// recordMembers adds to members each directory the line's output declared a
+// member of the checkout's workspace. The directory is the path uv reports
+// initializing, or the project name under the line's directory when it
+// reports none.
+func recordMembers(members map[string]bool, o lineOutcome) {
+	initialized := map[string]string{}
+	for _, m := range reInitializedAt.FindAllStringSubmatch(o.output, -1) {
+		initialized[m[1]] = m[2]
+	}
+	for _, m := range reWorkspaceMember.FindAllStringSubmatch(o.output, -1) {
+		if m[2] != sessionRepoDir {
+			continue
+		}
+		dir, ok := initialized[m[1]]
+		if !ok {
+			dir = path.Join(o.cwd, m[1])
+		}
+		members[dir] = true
+	}
 }
 
 // trackCreators records the paths a line was to create under its document. A

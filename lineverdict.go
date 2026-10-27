@@ -135,13 +135,13 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonOtherPlatform
 		lr.Detail = "needs an architecture the container does not have: " + tail
-	case undocumentedSetting(o.output, documented) != "":
+	case undocumentedSetting(settingLines(o.output), documented) != "":
 		// The tool named a setting the document never mentions, so the reader
 		// is not missing an account, they are missing a step nobody wrote down.
 		lr.Status = StatusGap
 		lr.Detail = fmt.Sprintf("needs %s, which no documented step sets: %s",
-			undocumentedSetting(o.output, documented), tail)
-	case reSettingName.MatchString(o.output) && reMissingPhrase.MatchString(o.output):
+			undocumentedSetting(settingLines(o.output), documented), tail)
+	case missingSettingLine(settingLines(o.output)):
 		// The document names this setting, so supplying it is the reader's
 		// job and the container simply cannot.
 		lr.Status = StatusSkipped
@@ -260,7 +260,7 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		// The tool named what it lacked and the command never passed it, so
 		// the tool reached for it on its own. See settleMissing.
 		lr = settleMissing(lr, reportedMissing(o.output), tail, o)
-	case o.cwd == sessionRepoDir && o.ownProject && !reUsageError.MatchString(o.output):
+	case (o.cwd == sessionRepoDir || o.member) && o.ownProject && !reUsageError.MatchString(o.output):
 		// A project manager run in the checkout read the checkout's own
 		// project, so it failed on what that project holds. Only a vocabulary
 		// error, a flag or subcommand the tool does not know, is the tool's
@@ -710,31 +710,64 @@ func documentedSettings(plan *kplan.Plan) map[string]bool {
 	return out
 }
 
-// undocumentedSetting returns the first setting a failure names that the
-// document never mentions, or empty when the output names none or the
-// document covers them all. A wildcard such as MYTOOL_BACKEND_* counts as
-// documented when the document names anything sharing its prefix.
-func undocumentedSetting(output string, documented map[string]bool) string {
-	if !reMissingPhrase.MatchString(output) {
-		return ""
-	}
-	for _, m := range reSettingName.FindAllString(output, -1) {
-		if documented[m] {
+// reAdvice matches an output line that advises rather than reports: a hint,
+// help, note, tip, or info line. A setting named only there is something the
+// tool suggests, not something it said was required.
+var reAdvice = regexp.MustCompile(
+	`(?i)^[\s│├╰─×=>*]*(hint|help|note|tip|info|warning|warn)\b\s*[:=]`)
+
+// settingLines returns the non-blank output lines that report rather than
+// advise. A required setting is named on the line that says it is missing, so
+// each line is read on its own and an advice line is never read at all.
+func settingLines(output string) []string {
+	var out []string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) == "" || reAdvice.MatchString(line) {
 			continue
 		}
-		if prefix := strings.TrimSuffix(m, "*"); prefix != m {
-			covered := false
-			for d := range documented {
-				if strings.HasPrefix(d, prefix) {
-					covered = true
-					break
-				}
-			}
-			if covered {
+		out = append(out, line)
+	}
+	return out
+}
+
+// missingSettingLine reports whether one line both names a setting and says
+// it is missing.
+func missingSettingLine(lines []string) bool {
+	for _, line := range lines {
+		if reSettingName.MatchString(line) && reMissingPhrase.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// undocumentedSetting returns the first setting a failure line names as
+// missing that the document never mentions, or empty when no line names one
+// or the document covers them all. A wildcard such as MYTOOL_BACKEND_* counts
+// as documented when the document names anything sharing its prefix.
+func undocumentedSetting(lines []string, documented map[string]bool) string {
+	for _, line := range lines {
+		if !reMissingPhrase.MatchString(line) {
+			continue
+		}
+		for _, m := range reSettingName.FindAllString(line, -1) {
+			if documented[m] {
 				continue
 			}
+			if prefix := strings.TrimSuffix(m, "*"); prefix != m {
+				covered := false
+				for d := range documented {
+					if strings.HasPrefix(d, prefix) {
+						covered = true
+						break
+					}
+				}
+				if covered {
+					continue
+				}
+			}
+			return m
 		}
-		return m
 	}
 	return ""
 }

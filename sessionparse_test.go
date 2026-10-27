@@ -682,6 +682,89 @@ func TestClassifyExampleOwnProject(t *testing.T) {
 	}
 }
 
+// TestClassifyExampleMember checks that a scaffold the checkout's workspace
+// absorbed is checkout-state, and that it is only when the line's own words
+// said so.
+func TestClassifyExampleMember(t *testing.T) {
+	t.Parallel()
+	const (
+		adding      = "Adding `example-ext` as member of workspace `%s`\n"
+		initialized = "Initialized project `example-ext` at `/work/repo/example-ext`"
+		hashFail    = "   Building example-ext @ file:///work/repo/example-ext\n" +
+			"error: Failed to build `example-ext @ file:///work/repo/example-ext`\n" +
+			"  cause: Failed to resolve requirements from `build-system.requires`\n" +
+			"  cause: No solution found when resolving: `maturin>=1.0, <2.0`, `puccinialin`\n" +
+			"  cause: Hash-checking is required, but no trusted hash was provided for: `puccinialin`"
+	)
+	const rustupFail = "   Building example-ext @ file:///work/repo/example-ext\n" +
+		"error: Failed to build `example-ext @ file:///work/repo/example-ext`\n" +
+		"  cause: The build backend returned an error\n" +
+		"  cause: Call to `maturin.build_wheel` failed (exit status: 1)\n" +
+		"\n" +
+		"      [stderr]\n" +
+		"      warn: the missing active toolchain `stable-aarch64-unknown-linux-gnu` " +
+		"has been auto-installed\n" +
+		"      warn: this might cause rustup commands to take longer time to finish " +
+		"than expected\n" +
+		"      info: you may opt out with `RUSTUP_AUTO_INSTALL=0` or " +
+		"`rustup set auto-install disable`\n" +
+		"\n" +
+		"      hint: This usually indicates a problem with the package or the build " +
+		"environment.\n" +
+		"hint: Build failures usually indicate a problem with the package or the " +
+		"build environment"
+	tests := []struct {
+		InitOutput string
+		RunOutput  string
+		WantStatus Status
+		WantReason Reason
+	}{{ // Test 0: The init output names the checkout as the workspace.
+		InitOutput: fmt.Sprintf(adding, "/work/repo") + initialized,
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 1: Without the Adding line nothing says the workspace absorbed it.
+		InitOutput: initialized,
+		WantStatus: StatusFail,
+	}, { // Test 2: A workspace root other than the checkout is the project's own.
+		InitOutput: fmt.Sprintf(adding, "/work/other") + initialized,
+		WantStatus: StatusFail,
+	}, { // Test 3: Advice lines naming a setting do not turn the failure into a gap.
+		InitOutput: fmt.Sprintf(adding, "/work/repo") + initialized,
+		RunOutput:  rustupFail,
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := &kplan.Plan{Repo: "uv", Binaries: []string{"uv"}, Steps: []kplan.PlanStep{{
+				ID: "b1", Doc: "README.md", Heading: "Usage", Lines: []kplan.PlanLine{
+					{Cmd: "uv init --build-backend maturin example-ext"},
+					{Cmd: "cd example-ext"},
+					{Cmd: "uv run example-ext"},
+				}}}}
+			runOutput := test.RunOutput
+			if runOutput == "" {
+				runOutput = hashFail
+			}
+			out := sessionOut(
+				"KIBBLE-BUILD CODE=0", "KIBBLE-STEP b1 START",
+				test.InitOutput, "KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo",
+				"KIBBLE-LINE b1:1 CODE=0 CWD=/work/repo/example-ext",
+				runOutput, "KIBBLE-LINE b1:2 CODE=1 CWD=/work/repo/example-ext", "KIBBLE-DONE")
+			res := classifyExample(InstallStep{Repo: "uv", Kind: "example"}, plan, out, nil, 0, lineTimeout, sessionEnd{})
+			if res.example == nil {
+				t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+			}
+			got := res.example.Steps[0].Lines[2]
+			if diff := cmp.Diff(test.WantStatus, got.Status); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s\ndetail: %s", diff, got.Detail)
+			}
+			if diff := cmp.Diff(test.WantReason, got.Reason); diff != "" {
+				t.Errorf("reason mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestClassifyExampleFile checks that a line writing a titled block says what
 // it wrote when it passes.
 func TestClassifyExampleFile(t *testing.T) {
