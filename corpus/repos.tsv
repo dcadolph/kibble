@@ -7,7 +7,8 @@
 # a SKIP and move a count for a week. A red corpus run whose only drift is one
 # fewer pass deserves a rerun before it deserves a bug hunt. A row expecting
 # 0,0,0 is not an empty check: it pins that kibble invents nothing on a
-# repository where there is nothing to find.
+# repository where there is nothing to find. Such a run exits 3, every row a
+# skip, and the job reads that as the verdict it is.
 # Every count below was re-pinned on 2026-09-08 after the job started working.
 # It had compared results whose status was PASS, which nothing has emitted
 # since the verdict taxonomy was rewritten, so every row read as drifted and a
@@ -24,8 +25,13 @@
 # ripgrep once expected 4,2,0. Both FAILs were kibble's, not the docs': one
 # was the FAQ's BSD-sed variant, scoped to macOS by its own prose and run on
 # Linux anyway, and one was the guide's some-utf16-file, a file the guide
-# calls "just an example". The gap that remains is that example file.
-ripgrep	https://github.com/BurntSushi/ripgrep.git	3fce3b5bb0236da2df6d99672afb8a719642eca7	2,0,1
+# calls "just an example". That example file was the one gap left until
+# 2026-10-26. Its two lines run in the directory an earlier section entered, so
+# since the missing-file check learned where a line ran they read BLOCKED rather
+# than GAP, and the example row is VERIFIED. kibble at 1ff130b reads 2,0,1 on
+# this commit and at 034d3c1 reads 3,0,0, and those two lines are the whole
+# difference. The change is 81ed0b7.
+ripgrep	https://github.com/BurntSushi/ripgrep.git	3fce3b5bb0236da2df6d99672afb8a719642eca7	3,0,0
 nodemon	https://github.com/remy/nodemon.git	5de021f6cd5c71814b6c2d1c60af3cc01fa2cc69	2,0,0
 # fd is the one row that moves on a quiet network. Its npm package fetches a
 # prebuilt binary, and when that fetch fails the two checks reading the
@@ -33,6 +39,13 @@ nodemon	https://github.com/remy/nodemon.git	5de021f6cd5c71814b6c2d1c60af3cc01fa2
 # ERROR naming the fetch rather than a FAIL naming the document, and a run
 # whose only drift is this deserves a rerun before it deserves a bug hunt.
 fd	https://github.com/sharkdp/fd.git	cdea7f56331ebc7bb799aa9f718a6eee9a4a1cfc	6,0,0
-glow	https://github.com/charmbracelet/glow.git	e3970c813d93da1ea84edfca90c289d9afb82242	4,0,1
+# glow and rich-cli each held one gap until 2026-10-26: example lines naming a
+# file the README never creates (glow's mystyle.json, rich-cli's loop.py and
+# its siblings). A missing file is now checked when the line runs, and when an
+# earlier code block kibble did not run might have made it, the line is BLOCKED
+# rather than GAP. kibble at 1ff130b and at 034d3c1 differ on exactly those
+# lines, so glow moved from 4,0,1 to 5,0,0 and rich-cli from 2,0,1 to 3,0,0.
+# The change is 3bf2ed3.
+glow	https://github.com/charmbracelet/glow.git	e3970c813d93da1ea84edfca90c289d9afb82242	5,0,0
 httpie	https://github.com/httpie/cli.git	5b604c37c6c67e18e7c3e9aee6c88a8c22b98345	0,0,0
-rich-cli	https://github.com/Textualize/rich-cli.git	46f4d2469097be395558768714a5f07ebccf1412	2,0,1
+rich-cli	https://github.com/Textualize/rich-cli.git	46f4d2469097be395558768714a5f07ebccf1412	3,0,0

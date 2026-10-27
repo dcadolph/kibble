@@ -284,12 +284,12 @@ mutated token. A count alone would not do, since a coincidence can produce a cou
 What the weekly job prints, with each repository's counts in VERIFIED, FAIL, GAP order:
 
 ```
-ripgrep: 2,0,1 as expected
+ripgrep: 3,0,0 as expected
 nodemon: 2,0,0 as expected
 fd: 6,0,0 as expected
-glow: 4,0,1 as expected
+glow: 5,0,0 as expected
 httpie: 0,0,0 as expected
-rich-cli: 2,0,1 as expected
+rich-cli: 3,0,0 as expected
 ripgrep: FAIL=1 naming ripgreppp as expected
 rich-cli: FAIL=1 naming richhh as expected
 ```
