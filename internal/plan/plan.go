@@ -359,12 +359,12 @@ func (pl *planner) addBlock(block docblock.Block) {
 		kept = append(kept, ln)
 	}
 	lines = kept
-	if len(lines) == 0 {
+	if len(lines) == 0 || !hasCommandLine(lines) {
 		return
 	}
 	if !pl.qualifies(lines) {
 		pl.plan.Excluded++
-		if pl.unplanned == "" {
+		if pl.unplanned == "" && !packageManagerOnly(lines) {
 			pl.unplanned = blockLocation(block)
 		}
 		return
@@ -657,4 +657,143 @@ func hasFixture(fs []config.Fixture, path string) bool {
 		}
 	}
 	return false
+}
+
+// hasCommandLine reports whether any line is a command rather than a comment
+// or blank, which is what remains of an install block once its installs are
+// set aside.
+func hasCommandLine(lines []string) bool {
+	for _, ln := range lines {
+		t := strings.TrimSpace(docblock.Flatten(ln))
+		if t != "" && !strings.HasPrefix(t, "#") {
+			return true
+		}
+	}
+	return false
+}
+
+// packageManagers maps each command that installs into the system or a
+// managed environment to the verbs that make it install. A verb that is a word
+// is the first word after the options, and one that is an option prefixes the
+// first word. An empty list means the command itself installs. Other verbs,
+// such as pipx run, brew bundle, or apt-get source, can write into the working
+// directory and are not installs.
+var packageManagers = map[string][]string{
+	"apt": {"install"}, "apt-get": {"install"}, "dnf": {"install"}, "yum": {"install"},
+	"zypper": {"install", "in"}, "apk": {"add"}, "pacman": {"-S"}, "emerge": {},
+	"xbps-install": {}, "eopkg": {"install", "it"}, "pkg": {"install"}, "brew": {"install"},
+	"port": {"install"}, "snap": {"install"}, "flatpak": {"install"},
+	"nix-env": {"-i", "--install"}, "choco": {"install"}, "scoop": {"install"},
+	"winget": {"install"}, "pipx": {"install"}, "conda": {"install"}, "mamba": {"install"},
+	"micromamba": {"install"},
+}
+
+// installWritesHere are package-manager options that name a directory or
+// file the install writes, which can be under the working directory.
+var installWritesHere = map[string]bool{
+	"-p": true, "--prefix": true, "-t": true, "--target": true, "--root": true,
+	"-o": true, "--output": true,
+}
+
+// pipFromIndex are the pip install options that change neither where pip
+// writes nor what it reads. Any other option keeps the install from counting
+// as one that writes nothing into the working directory.
+var pipFromIndex = map[string]bool{
+	"-U": true, "--upgrade": true, "--user": true, "-q": true, "--quiet": true, "-v": true,
+	"--verbose": true, "--pre": true, "--no-deps": true, "--no-cache-dir": true,
+	"--force-reinstall": true, "-I": true, "--ignore-installed": true,
+	"--break-system-packages": true, "--no-warn-script-location": true,
+	"--disable-pip-version-check": true,
+}
+
+// packageManagerOnly reports whether every command line of a block is a
+// single package-manager install with no pipe or redirect, so the block can
+// create no file in the working directory. Such a block left out of the plan
+// is not a possible creator of a file a later line reads.
+func packageManagerOnly(lines []string) bool {
+	for _, ln := range lines {
+		flat := strings.TrimSpace(docblock.Flatten(ln))
+		if flat == "" || strings.HasPrefix(flat, "#") {
+			continue
+		}
+		if strings.ContainsAny(flat, "|<>") {
+			return false
+		}
+		parsed, ok := shell.Parse(flat)
+		if !ok || parsed.Structured || len(parsed.Cmds) != 1 {
+			return false
+		}
+		c := shell.Invoked(parsed.Cmds[0])
+		if !managerInstall(c) && !pipInstallFromIndex(c) {
+			return false
+		}
+	}
+	return true
+}
+
+// managerInstall reports whether a command is a package manager's install
+// verb with no option that names where the install writes.
+func managerInstall(c shell.Cmd) bool {
+	verbs, ok := packageManagers[c.Name()]
+	if !ok {
+		return false
+	}
+	args := c.Words[1:]
+	for _, w := range args {
+		opt, _, _ := strings.Cut(w, "=")
+		if installWritesHere[opt] {
+			return false
+		}
+	}
+	if len(verbs) == 0 {
+		return true
+	}
+	for _, v := range verbs {
+		if strings.HasPrefix(v, "-") {
+			if len(args) > 0 && strings.HasPrefix(args[0], v) {
+				return true
+			}
+			continue
+		}
+		for _, w := range args {
+			if !strings.HasPrefix(w, "-") {
+				if w == v {
+					return true
+				}
+				break
+			}
+		}
+	}
+	return false
+}
+
+// pipInstallFromIndex reports whether a command is pip installing named
+// distributions from an index, which writes nothing into the working
+// directory. A local path or any option outside pipFromIndex makes it
+// something else.
+func pipInstallFromIndex(c shell.Cmd) bool {
+	words := c.Words
+	switch c.Name() {
+	case "pip", "pip3":
+		words = words[1:]
+	case "python", "python3":
+		if len(words) < 3 || words[1] != "-m" || words[2] != "pip" {
+			return false
+		}
+		words = words[3:]
+	default:
+		return false
+	}
+	if len(words) == 0 || words[0] != "install" {
+		return false
+	}
+	for _, w := range words[1:] {
+		if strings.HasPrefix(w, "-") && !pipFromIndex[w] {
+			return false
+		}
+		if w == "." || w == ".." || strings.Contains(w, "/") {
+			return false
+		}
+	}
+	return true
 }
