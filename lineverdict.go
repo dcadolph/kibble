@@ -213,7 +213,9 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Status = StatusBlocked
 		lr.Reason = ReasonNoDataExpected
 		lr.Detail = "its filters matched no file in this repository, so the example settled nothing"
-	case reNoData.MatchString(o.output):
+	case reNoData.MatchString(o.output) && !o.ownProject:
+		// A project manager that exits nonzero did not run a query that came
+		// back empty: its resolver says "No solution found" when it fails.
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonNoDataExpected
 		lr.Detail = "query found no data in the fresh session"
