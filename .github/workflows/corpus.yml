@@ -49,10 +49,13 @@ jobs:
               inconclusive=""
               rc=0
               /tmp/kibble -json "$dir" > "/tmp/${name}.json" || rc=$?
-              # Exit 1 is kibble reporting failures, which is a verdict. Any
-              # other nonzero is kibble unable to do its job, and blaming the
-              # corpus for that would be the same mistake as blaming the docs.
-              if [ "$rc" -gt 1 ] || ! jq -e 'type=="array"' "/tmp/${name}.json" >/dev/null 2>&1; then
+              # Exit 1 is kibble reporting failures and exit 3 is kibble
+              # reporting that every row is a skip. Both are verdicts with a
+              # JSON array behind them, and a 0,0,0 pin is exactly the shape
+              # that exits 3. Any other nonzero is kibble unable to do its job,
+              # and blaming the corpus for that would be the same mistake as
+              # blaming the docs.
+              if { [ "$rc" -gt 1 ] && [ "$rc" -ne 3 ]; } || ! jq -e 'type=="array"' "/tmp/${name}.json" >/dev/null 2>&1; then
                 inconclusive="kibble itself failed (exit ${rc})"
                 echo "${name}: attempt ${attempt} of ${attempts} was inconclusive: ${inconclusive}"
                 continue
@@ -143,12 +146,16 @@ jobs:
           MUTATE
             rc=0
             /tmp/kibble -json "$dir" > "/tmp/mutant-${row}.json" || rc=$?
-            if [ "$rc" -gt 1 ] || ! jq -e 'type=="array"' "/tmp/mutant-${row}.json" >/dev/null 2>&1; then
+            if { [ "$rc" -gt 1 ] && [ "$rc" -ne 3 ]; } || ! jq -e 'type=="array"' "/tmp/mutant-${row}.json" >/dev/null 2>&1; then
               echo "::error::${name}: kibble itself failed (exit ${rc}), no verdicts to compare"
               status=1
               echo "::endgroup::"
               continue
             fi
+            # A mutated tree that exits 3 ran nothing, so the status it must
+            # reach was never produced. The comparison below reports that as
+            # the count it is.
+            [ "$rc" -eq 3 ] && echo "${name}: exit 3, nothing was checked on the mutated tree"
             wantStatus="${want%%=*}"
             wantCount="${want##*=}"
             got=$(jq -r --arg s "$wantStatus" \
