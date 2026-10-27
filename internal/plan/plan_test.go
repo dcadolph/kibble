@@ -1170,3 +1170,115 @@ func TestPlanCreates(t *testing.T) {
 		})
 	}
 }
+
+// TestPackageManagerBlocksAreNotCreators checks that install blocks which can
+// create no file in the working directory are not named as a possible creator
+// of a file a later line reads, while blocks that can are.
+func TestPackageManagerBlocksAreNotCreators(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Markdown      string
+		Binary        string
+		WantCmd       string
+		WantNeed      string
+		WantUnplanned string
+	}{{ // Test 0: glow's shape names only the nix block.
+		Markdown: "# Glow\n\n```sh\n# macOS or Linux\nbrew install glow\n```\n\n" +
+			"```sh\nsudo port install glow\n```\n\n```sh\npacman -S glow\n```\n\n" +
+			"```sh\nnix-shell -p glow --command glow\n```\n\n```sh\nglow -s mystyle.json\n```\n",
+		Binary:        "glow",
+		WantCmd:       "glow -s mystyle.json",
+		WantNeed:      "mystyle.json",
+		WantUnplanned: "the code block at line 17",
+	}, { // Test 1: rich-cli's shape leaves no unplanned block.
+		Markdown: "# Rich\n\n```sh\npipx install rich-cli\n```\n\n```sh\nbrew install rich\n```\n\n" +
+			"```sh\npython -m pip install rich-cli\n```\n\n" +
+			"```sh\nmamba install -c conda-forge rich-cli\n```\n\n```sh\nrich loop.py\n```\n",
+		Binary:   "rich",
+		WantCmd:  "rich loop.py",
+		WantNeed: "loop.py",
+	}, { // Test 2: a redirect makes a block a possible creator.
+		Markdown: "# Tool\n\n```sh\nfancygen > out.json\n```\n\n```sh\ntool read out.json\n```\n",
+		Binary:   "tool", WantCmd: "tool read out.json", WantNeed: "out.json",
+		WantUnplanned: "the code block at line 4",
+	}, { // Test 3: an editable pip install makes a block a possible creator.
+		Markdown: "# Tool\n\n```sh\npip install -e .\n```\n\n```sh\ntool read out.json\n```\n",
+		Binary:   "tool", WantCmd: "tool read out.json", WantNeed: "out.json",
+		WantUnplanned: "the code block at line 4",
+	}, { // Test 4: a package manager's run verb can write anything.
+		Markdown: "# Tool\n\n```sh\npipx run fancygen\n```\n\n```sh\ntool read out.json\n```\n",
+		Binary:   "tool", WantCmd: "tool read out.json", WantNeed: "out.json",
+		WantUnplanned: "the code block at line 4",
+	}, { // Test 5: brew bundle dump writes a Brewfile into the working directory.
+		Markdown: "# Tool\n\n```sh\nbrew bundle dump\n```\n\n```sh\ntool read out.json\n```\n",
+		Binary:   "tool", WantCmd: "tool read out.json", WantNeed: "out.json",
+		WantUnplanned: "the code block at line 4",
+	}, { // Test 6: a pip option outside the index-only set can name a file pip writes.
+		Markdown: "# Tool\n\n```sh\npip install --report out.json rich\n```\n\n" +
+			"```sh\ntool read out.json\n```\n",
+		Binary: "tool", WantCmd: "tool read out.json", WantNeed: "out.json",
+		WantUnplanned: "the code block at line 4",
+	}, { // Test 7: a conda prefix can sit under the working directory.
+		Markdown: "# Tool\n\n```sh\nconda install -p env rich\n```\n\n" +
+			"```sh\ntool read out.json\n```\n",
+		Binary: "tool", WantCmd: "tool read out.json", WantNeed: "out.json",
+		WantUnplanned: "the code block at line 4",
+	}, { // Test 8: options before the install verb still read as an install.
+		Markdown: "# Tool\n\n```sh\nsudo apt-get -y install curl\n```\n\n" +
+			"```sh\nsudo pacman -Syu curl\n```\n\n```sh\ntool read out.json\n```\n",
+		Binary: "tool", WantCmd: "tool read out.json", WantNeed: "out.json",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := BuildPlan("repo", t.TempDir(), test.Markdown, []string{test.Binary},
+				nil, nil, testRecognizer())
+			var got *PlanLine
+			for _, s := range plan.Steps {
+				for i := range s.Lines {
+					if docblock.Flatten(s.Lines[i].Cmd) == test.WantCmd {
+						got = &s.Lines[i]
+					}
+				}
+			}
+			if got == nil {
+				t.Fatalf("line %q not planned", test.WantCmd)
+			}
+			if got.Need != test.WantNeed {
+				t.Errorf("need = %q, want %q", got.Need, test.WantNeed)
+			}
+			if !strings.HasPrefix(got.Unplanned, test.WantUnplanned) ||
+				(test.WantUnplanned == "" && got.Unplanned != "") {
+				t.Errorf("unplanned = %q, want prefix %q", got.Unplanned, test.WantUnplanned)
+			}
+		})
+	}
+}
+
+// TestCommentOnlyBlockStillPlans checks that a block whose remaining lines are
+// all comments is neither counted as excluded nor hides the step after it.
+func TestCommentOnlyBlockStillPlans(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Markdown string
+	}{{ // Test 0: A block of only a comment.
+		Markdown: "# Tool\n\n```sh\n# only a comment\n```\n\n```sh\ntool run\n```\n",
+	}, { // Test 1: A comment left once the recognizer sets the install aside.
+		Markdown: "# Tool\n\n```sh\n# macOS or Linux\nbrew install tool\n```\n\n" +
+			"```sh\ntool run\n```\n",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := BuildPlan("repo", t.TempDir(), test.Markdown, []string{"tool"}, nil, nil,
+				testRecognizer())
+			want := [][]planLine{{{Cmd: "tool run"}}}
+			if diff := cmp.Diff(want, projectPlan(plan)); diff != "" {
+				t.Errorf("steps mismatch (-want +got):\n%s", diff)
+			}
+			if plan.Excluded != 0 {
+				t.Errorf("excluded = %d, want 0", plan.Excluded)
+			}
+		})
+	}
+}
