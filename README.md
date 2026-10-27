@@ -239,6 +239,7 @@ verdict claims the documented step works:
 - An install whose product is a shell function the documented sourcing defines is
   `VERIFIED` with the version it reports, since a function leaves no binary to find.
 - `GAP` means the document is incomplete: a file, directory, or setting nothing creates.
+  A skipped block of package-manager installs alone cannot have made the missing file.
 - `DRIFT` means the docs cite a flag or subcommand the binary no longer has.
 - `TIMEOUT` and `ERROR` keep slow networks and kibble's own trouble out of your verdict.
 
