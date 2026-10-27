@@ -579,6 +579,13 @@ func TestClassifyExampleCreator(t *testing.T) {
 // of the command, and that a tool which is not a project manager still fails.
 func TestClassifyExampleOwnProject(t *testing.T) {
 	t.Parallel()
+	const uvBuildOwn = "error: Failed to add dependencies\n" +
+		"  cause: Failed to build `uv @ file:///work/repo`\n" +
+		"  cause: Failed to resolve requirements from `build-system.requires`\n" +
+		"  cause: No solution found when resolving: `maturin>=1.0, <2.0`, `puccinialin`\n" +
+		"  cause: Hash-checking is required, but no trusted hash was provided for: `puccinialin`\n" +
+		"hint: If you want to add the package regardless of the failed resolution, " +
+		"provide the `--frozen` flag to skip locking and syncing"
 	tests := []struct {
 		Bin        string
 		Cmd        string
@@ -608,6 +615,34 @@ func TestClassifyExampleOwnProject(t *testing.T) {
 		Bin: "rg", Cmd: "rg --foo x", Cwd: "/work/repo", Code: 2,
 		Output:     "error: something went wrong",
 		WantStatus: StatusFail,
+	}, { // Test 5: A resolver failure on the checkout's own project is not an empty query.
+		Bin: "uv", Cmd: "uv add --dev pytest", Cwd: "/work/repo", Code: 1,
+		Output:     uvBuildOwn,
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 6: The same failure at the end of a pipeline reads the same.
+		Bin: "uv", Cmd: "sed '/^-r /d' requirements-dev.in | uv add --dev -r - -c requirements-dev.txt",
+		Cwd: "/work/repo", Code: 1, Output: uvBuildOwn,
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 7: In a directory its own section entered, the failure is the tool's answer.
+		Bin: "uv", Cmd: "uv add --dev pytest", Cwd: "/work/repo/example", Code: 1, Enter: true,
+		Output:     uvBuildOwn,
+		WantStatus: StatusFail,
+	}, { // Test 8: pip's missing distribution in the checkout is not an empty query either.
+		Bin: "pip", Cmd: "pip install nope", Cwd: "/work/repo", Code: 1,
+		Output:     "ERROR: No matching distribution found for nope",
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 9: rclone with no remotes configured found no data.
+		Bin: "rclone", Cmd: "rclone config", Cwd: "/work/repo", Code: 1,
+		Output:     "No remotes found, make a new one?\nn) New remote\ns) Set configuration password\nq) Quit config",
+		WantStatus: StatusSkipped, WantReason: ReasonNoDataExpected,
+	}, { // Test 10: A replay with no recorded crash found no data.
+		Bin: "st", Cmd: "st replay Xt9Kp2", Cwd: "/work/repo", Code: 2,
+		Output:     "Error: no crash file found for case ID: Xt9Kp2",
+		WantStatus: StatusSkipped, WantReason: ReasonNoDataExpected,
+	}, { // Test 11: A query with nothing on that date found no data.
+		Bin: "tool", Cmd: "tool query", Cwd: "/work/repo", Code: 4,
+		Output:     "no entries on 2026-07-11",
+		WantStatus: StatusSkipped, WantReason: ReasonNoDataExpected,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
