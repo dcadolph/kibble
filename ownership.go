@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -22,6 +23,9 @@ type repoNames struct {
 	// modules holds the Go module paths the repository declares, without
 	// major-version suffixes, so a go install can be matched by prefix.
 	modules []string
+	// ecosystems holds the ecosystems whose manifests named anything, so an
+	// install can be told apart from one no manifest could have produced.
+	ecosystems map[string]bool
 	// declared reports whether any manifest named anything. Without one,
 	// ownership is unknown rather than absent, and every install is kept.
 	declared bool
@@ -52,7 +56,7 @@ var (
 // ownedNames reads the manifests under dir and returns the names the
 // repository declares for itself.
 func ownedNames(dir, repo string) repoNames {
-	rn := repoNames{names: map[string]bool{}}
+	rn := repoNames{names: map[string]bool{}, ecosystems: map[string]bool{}}
 	rn.add(repo)
 	if dir == "" {
 		return rn
@@ -80,6 +84,10 @@ func ownedNames(dir, repo string) repoNames {
 		if rerr != nil {
 			return nil
 		}
+		// A manifest declares its ecosystem even when every name it holds is
+		// already known, as ripgrep's Cargo.toml is in a checkout named ripgrep.
+		declared := rn.declared
+		rn.declared = false
 		switch d.Name() {
 		case "package.json":
 			rn.addPackageJSON(body)
@@ -103,6 +111,10 @@ func ownedNames(dir, repo string) repoNames {
 				rn.declare(path.Base(mod))
 			}
 		}
+		if eco := manifestEcosystem[d.Name()]; rn.declared && eco != "" {
+			rn.ecosystems[eco] = true
+		}
+		rn.declared = rn.declared || declared
 		return nil
 	})
 	return rn
@@ -235,4 +247,36 @@ func stripMajor(mod string) string {
 		mod = reMajorSuffix.ReplaceAllString(mod, "$1")
 	}
 	return strings.TrimSuffix(mod, "/")
+}
+
+// keep drops an install of something other than the repository's tool. A
+// name that matches nothing declared is a foreign tool when the repository's
+// own install in that ecosystem is in hand, as ruff is beside `pip install
+// uv`, or when no manifest of that ecosystem exists, as `pip install black` is
+// in a Go repository. Otherwise it is only a name kibble did not recognize:
+// `cargo install ripgreppp` is the one cargo route ripgrep's README offers,
+// and whether that crate exists is the registry's to say when the line runs.
+func (rn repoNames) keep(steps []InstallStep) []InstallStep {
+	known := map[string]bool{}
+	for _, s := range steps {
+		if s.Run && rn.owns(s) {
+			known[stepEcosystem(s)] = true
+		}
+	}
+	return slices.DeleteFunc(steps, func(s InstallStep) bool {
+		if rn.owns(s) {
+			return false
+		}
+		eco := stepEcosystem(s)
+		return known[eco] || !rn.ecosystems[eco]
+	})
+}
+
+// stepEcosystem is the ecosystem an install step runs in, empty for a kind
+// that is not a package install.
+func stepEcosystem(s InstallStep) string {
+	if s.Kind == "go-install" {
+		return "go"
+	}
+	return pkgKinds[s.Kind].Ecosystem
 }

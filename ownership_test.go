@@ -95,6 +95,36 @@ func TestCollectOwnedInstalls(t *testing.T) {
 		WantInstalls:    []string{"cargo-install ripgrep"},
 		WantSessionCmds: []string{"cargo install ripgrep"},
 		WantSessionBins: []string{"ripgrep", "dotfiles"},
+	}, { // Test 7: ripgrep's only cargo route misspelled is kept for the registry to answer,
+		// and never becomes the tool under test.
+		Name: "ripgrep",
+		Files: map[string]string{
+			"Cargo.toml": "[package]\nname = \"ripgrep\"\n",
+			"README.md": "# ripgrep\n\n```sh\nbrew install ripgrep\n```\n\n```sh\ncargo install ripgreppp\n```\n\n" +
+				"```sh\nrg --version\n```\n",
+		},
+		WantInstalls: []string{"cargo-install ripgreppp"},
+	}, { // Test 8: fd's owned npm route is the session install, and a misspelled cargo
+		// route beside it is kept as an install of its own.
+		Name: "fd",
+		Files: map[string]string{
+			"Cargo.toml": "[package]\nname = \"fd-find\"\n\n[[bin]]\nname = \"fd\"\n",
+			"README.md": "# fd\n\n```sh\nnpm install -g fd-find\n```\n\n" +
+				"```sh\ncargo install fd-findd\n```\n\n```sh\nfd --hidden x\n```\n",
+		},
+		WantInstalls:    []string{"npm-install fd-find", "cargo-install fd-findd"},
+		WantSessionCmds: []string{"npm install -g fd-find"},
+		WantSessionBins: []string{"fd-find", "fd"},
+	}, { // Test 9: an unowned pip install beside the owned one is a prerequisite and dropped.
+		Name: "mytool",
+		Files: map[string]string{
+			"pyproject.toml": "[project]\nname = \"mytool\"\n",
+			"README.md": "# mytool\n\n```sh\npip install dead-prereq\npip install mytool\n```\n\n" +
+				"```sh\nmytool --version\n```\n",
+		},
+		WantInstalls:    []string{"pip-install mytool"},
+		WantSessionCmds: []string{"pip install mytool"},
+		WantSessionBins: []string{"mytool"},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -132,6 +162,64 @@ func TestCollectOwnedInstalls(t *testing.T) {
 			}
 			if diff := cmp.Diff(test.WantSessionBins, plans[0].Binaries, cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("session binaries mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestRepoNamesKeep checks which unrecognized installs are dropped as foreign
+// tools and which are kept for the registry to answer.
+func TestRepoNamesKeep(t *testing.T) {
+	t.Parallel()
+	rust := repoNames{
+		names:      map[string]bool{"ripgrep": true},
+		ecosystems: map[string]bool{"rust": true},
+		declared:   true,
+	}
+	tests := []struct {
+		Names      repoNames
+		Steps      []InstallStep
+		WantResult []string
+	}{{ // Test 0: an unowned cargo install with rust declared and no owned cargo route is kept.
+		Names:      rust,
+		Steps:      []InstallStep{{Kind: "cargo-install", Module: "ripgreppp", Run: true}},
+		WantResult: []string{"cargo-install ripgreppp"},
+	}, { // Test 1: an unowned cargo install beside an owned runnable one is dropped.
+		Names: rust,
+		Steps: []InstallStep{
+			{Kind: "cargo-install", Module: "ripgrep", Run: true},
+			{Kind: "cargo-install", Module: "cargo-nextest", Run: true},
+		},
+		WantResult: []string{"cargo-install ripgrep"},
+	}, { // Test 2: an unowned pip install with no python manifest is dropped.
+		Names:      rust,
+		Steps:      []InstallStep{{Kind: "pip-install", Module: "black", Run: true}},
+		WantResult: nil,
+	}, { // Test 3: a repository that declares nothing keeps everything.
+		Names:      repoNames{names: map[string]bool{"dotfiles": true}, ecosystems: map[string]bool{}},
+		Steps:      []InstallStep{{Kind: "pip-install", Module: "black", Run: true}},
+		WantResult: []string{"pip-install black"},
+	}, { // Test 4: an owned placeholder that does not run is not the own install in hand.
+		Names: rust,
+		Steps: []InstallStep{
+			{Kind: "cargo-install", Module: "ripgrep", Run: false},
+			{Kind: "cargo-install", Module: "ripgreppp", Run: true},
+		},
+		WantResult: []string{"cargo-install ripgrep", "cargo-install ripgreppp"},
+	}, { // Test 5: a brew step is never dropped.
+		Names:      rust,
+		Steps:      []InstallStep{{Kind: "brew", Module: "something-else", Run: true}},
+		WantResult: []string{"brew something-else"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for _, s := range test.Names.keep(test.Steps) {
+				got = append(got, s.Kind+" "+s.Module)
+			}
+			if diff := cmp.Diff(test.WantResult, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("kept steps mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
