@@ -19,3 +19,9 @@ ripgrep	https://github.com/BurntSushi/ripgrep.git	3fce3b5bb0236da2df6d99672afb8a
 # the repos.tsv counts were: kibble built before and after the change that
 # uncovered it answers FAIL=1 naming richhh either way.
 rich-cli	https://github.com/Textualize/rich-cli.git	46f4d2469097be395558768714a5f07ebccf1412	README.md	brew install rich	brew install richhh	FAIL=1	richhh
+# The healthy rows pinned no GAP after 2026-10-26, so this row pins one. A
+# documented file that no step creates is reported as the document's gap. The
+# section entered its own directory and sits under no block the plan left out,
+# so the verdict rests on the file check alone. Earned by a real run: GAP=1
+# with the detail naming READMEE.md, counts 2,0,1, exit 0.
+ripgrep	https://github.com/BurntSushi/ripgrep.git	3fce3b5bb0236da2df6d99672afb8a719642eca7	GUIDE.md	rg fast README.md	rg fast READMEE.md	GAP=1	READMEE.md
