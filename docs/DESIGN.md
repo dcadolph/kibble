@@ -201,9 +201,10 @@ repository's own checkout, and whose output says the target "already exists" or 
 "already initialized", is `BLOCKED` with the reason `checkout-state`. The collision is
 with the checkout kibble chose, not with anything the document wrote. A project manager,
 a documented binary with a known ecosystem such as uv, that fails in the repository's own
-checkout is `checkout-state` as well, because it read the checkout's own project. Output
-that is a vocabulary error, an unknown or unexpected flag, option, argument, or subcommand,
-stays `FAIL`.
+checkout is `checkout-state` as well, because it read the checkout's own project. A
+project manager's failure is never read as a query that found no data, since its resolver
+says "No solution found" when it fails. Output that is a vocabulary error, an unknown or
+unexpected flag, option, argument, or subcommand, stays `FAIL`.
 
 A file a line reads that the planner sees no earlier line create no longer skips the line
 at plan time. The plan records it as the line's need, and the session checks whether the
