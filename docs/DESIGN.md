@@ -90,6 +90,19 @@ documented name preferred, and a package that owns none is `RAN`. The directory
 comparison remains for managers with no owned-binary lookup and for a `pip show` that
 failed.
 
+Only an install of the repository's own tool becomes the tool the examples run against.
+The manifests say what that is: the names in `Cargo.toml`, `package.json`,
+`pyproject.toml`, `setup.py`, and `setup.cfg`, and the module in `go.mod`. A package
+install that matches none of them is dropped as a foreign tool when the repository's own
+install in that ecosystem is already in hand, as `uv tool install ruff` is beside `pip
+install uv`, or when no manifest of that ecosystem exists, as `pip install black` is in a
+Go module. Otherwise it still runs, because a misspelled own package and a foreign one
+look alike until the registry answers. `cargo install ripgreppp` in ripgrep's README is
+the only cargo route the document offers, so it runs and fails in cargo's own words. A
+kept install like this is checked as the line it is and never becomes the tool the
+examples run against. With no manifest at all, ownership is unknown and every install is
+kept.
+
 A `VERIFIED` install row also carries `version` and `latest` when the version the binary
 reported is one of the repository's release tags. The table marks the row `behind` when
 that version is older than the newest tag. This changes no verdict, since registries lag
