@@ -196,7 +196,9 @@ a gap draws: a placeholder is your reader's job, a gap is yours. Because a docum
 also expect a reader to bring their own file, a gap reports and counts but does not fail
 a run unless `-strict` is set. A brew name that no index knows lands here too: the
 document may be fine and the lookup short, and the difference is settled by installing
-it, not by asserting one.
+it, not by asserting one. A setting is read on the line that says it is missing, and a
+line that advises (hint, help, note, tip, info, warning) never names one, so a tool that
+mentions how to opt out of something has not said the setting is required.
 
 A line that would otherwise be a plain `FAIL` is `BLOCKED` with the reason
 `inherited-state` when it ran in a directory an earlier section entered with `cd`,
@@ -214,9 +216,12 @@ repository's own checkout, and whose output says the target "already exists" or 
 "already initialized", is `BLOCKED` with the reason `checkout-state`. The collision is
 with the checkout kibble chose, not with anything the document wrote. A project manager,
 a documented binary with a known ecosystem such as uv, that fails in the repository's own
-checkout is `checkout-state` as well, because it read the checkout's own project. A
+checkout is `checkout-state` as well, because it read the checkout's own project. A project
+that a scaffold line reported adding to the checkout's workspace, in the tool's own words, is
+the checkout's project too, so a project manager failing inside it is `checkout-state`. A
 project manager's failure is never read as a query that found no data, since its resolver
-says "No solution found" when it fails. Output that is a vocabulary error, an unknown or
+says "No solution found" when it fails. The same holds for installers such as pipx and uvx,
+whose resolver speaks the same words. Output that is a vocabulary error, an unknown or
 unexpected flag, option, argument, or subcommand, stays `FAIL`.
 
 A file a line reads that the planner sees no earlier line create no longer skips the line
@@ -227,6 +232,14 @@ earlier line of the document passed and no earlier block was left out of the pla
 Otherwise it is `BLOCKED` with the reason `depends-on-skipped`, naming the first line or
 left-out block that could have created the file. A left-out block is named by its line and
 heading, since its first line could be output. A background step keeps the plan-time `GAP`.
+
+A left-out block stands in for a creator only if it could create a file, so a block whose
+command lines are all package-manager installs (e.g. `apt-get install`, `brew install`,
+`pipx install`, or `pip install` of named distributions) does not, nor does a block of
+comments alone. The list is closed and proves the negative: an install with an option that
+names where it writes, such as `--prefix` or `--target`, a pip install of a local path or
+with an option outside a short index-only set, and other verbs such as `pipx run` or
+`brew bundle` keep the block a possible creator.
 
 The same holds when a tool reports a file the line passed as missing. If an earlier line of
 the document was to write that file, through a redirect, an output flag such as
