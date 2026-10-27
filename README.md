@@ -278,9 +278,10 @@ hand. A scheduled run fails when any count moves, because a moved count means ki
 judgment changed and the repository did not.
 
 `corpus/mutations.tsv` runs the other direction. Each row corrupts exactly one documented
-line of a pinned repository, a crate name typo, a brew formula that no longer resolves,
-and requires kibble to reach a named verdict on the damage in a finding that quotes the
-mutated token. A count alone would not do, since a coincidence can produce a count.
+line of a pinned repository, a crate name typo, a brew formula that no longer resolves, a
+file name no step creates, and requires kibble to reach a named verdict on the damage in a
+finding that quotes the mutated token. A count alone would not do, since a coincidence can
+produce a count.
 
 What the weekly job prints, with each repository's counts in VERIFIED, FAIL, GAP order:
 
@@ -290,9 +291,10 @@ nodemon: 2,0,0 as expected
 fd: 6,0,0 as expected
 glow: 5,0,0 as expected
 httpie: 0,0,0 as expected
-rich-cli: 3,0,0 as expected
+rich-cli: 2,0,1 as expected
 ripgrep: FAIL=1 naming ripgreppp as expected
 rich-cli: FAIL=1 naming richhh as expected
+ripgrep: GAP=1 naming READMEE.md as expected
 ```
 
 Correct documentation passes and one edit of rot flips it. Both halves are the claim; a
