@@ -445,27 +445,6 @@ var ShellLangs = map[string]bool{
 	"console": true, "shell-session": true, "text": true, "plain": true,
 }
 
-// knownCommands are shell commands accepted in example blocks. A block
-// qualifies as a recipe only when every line starts with a known command, a
-// documented binary, a package tool, or a variable assignment, so prose and
-// non-shell snippets never reach the executor.
-var knownCommands = map[string]bool{
-	"echo": true, "printf": true, "export": true, "cd": true, "mkdir": true,
-	"cp": true, "mv": true, "rm": true, "cat": true, "tee": true,
-	"chmod": true, "touch": true, "ls": true, "pwd": true, "which": true,
-	"grep": true, "sed": true, "awk": true, "head": true, "tail": true,
-	"sort": true, "wc": true, "tar": true, "curl": true, "git": true,
-	"go": true, "make": true, "env": true, "sleep": true, "true": true,
-	"source": true, "sh": true, "bash": true, "test": true, "date": true,
-}
-
-// packageTools maps commands the docs may invoke to the Debian package that
-// provides them, for tools the golang base image lacks.
-var packageTools = map[string]string{
-	"age": "age", "age-keygen": "age", "jq": "jq", "rg": "ripgrep",
-	"sqlite3": "sqlite3", "unzip": "unzip", "tree": "tree",
-}
-
 var (
 	// reTwoColumn matches a usage line whose command is followed by a prose
 	// description column: at least three spaces, then a capitalized sentence.
@@ -508,26 +487,6 @@ var reShownError = regexp.MustCompile(
 		`|\b(is not allowed|not supported|cannot be|could not|unable to|` +
 		`failed to|invalid |unknown |no such |must be |not permitted|` +
 		`is required|not recognized)`)
-
-// shownFailures returns the commands of a prompted block whose displayed
-// output is an error. Docs sometimes show a command failing on purpose, to
-// teach why the corrected form that follows is needed, and the demonstrated
-// failure exiting nonzero is the document working as written.
-func shownFailures(block Block) map[string]bool {
-	out := map[string]bool{}
-	current := ""
-	for _, raw := range block.Lines {
-		t := strings.TrimSpace(raw)
-		if strings.HasPrefix(t, "$ ") {
-			current = strings.TrimSpace(strings.TrimPrefix(t, "$ "))
-			continue
-		}
-		if current != "" && reShownError.MatchString(t) {
-			out[current] = true
-		}
-	}
-	return out
-}
 
 // StripComment removes a trailing shell comment from a code line.
 func StripComment(line string) string {
