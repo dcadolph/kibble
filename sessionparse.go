@@ -44,6 +44,10 @@ type lineOutcome struct {
 	// ownProject marks a line that invoked a project manager, whose commands
 	// read the project in the directory they run in.
 	ownProject bool
+	// resolver marks a line that invoked a package resolver, a project manager or
+	// an installer such as pipx, whose nonzero exit is never a query that ran and
+	// found nothing.
+	resolver bool
 	// missing marks a line whose needed file did not exist just before it ran.
 	missing bool
 	// member marks a line that ran in a directory an earlier line's own words
@@ -274,6 +278,7 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 				o.creators = pending[s.Doc]
 				if bin, _ := kplan.InvokedBinary(docblock.Flatten(l.Cmd), bins); bin != "" {
 					o.ownProject = kplan.CommandEcosystem[bin] != ""
+					o.resolver = o.ownProject || resolverTools[bin]
 				}
 				o.member = members[o.cwd]
 				recordMembers(members, o)
