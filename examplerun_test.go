@@ -122,6 +122,32 @@ func TestClassifyExample(t *testing.T) {
 			"KIBBLE-DONE"),
 		WantStatus: StatusVerified,
 		WantLines:  []Status{StatusSkipped, StatusSkipped, StatusVerified},
+	}, { // Test 2d: a setting named only on a hint line is advice, so the
+		// failure stays a failure.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"error: build failed",
+			"hint: set MYTOOL_HOME=/tmp/x to move the cache",
+			"KIBBLE-LINE b1:1 CODE=1",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusFail,
+		WantLines:  []Status{StatusVerified, StatusFail, StatusVerified},
+	}, { // Test 2e: a missing phrase on one line and a setting on an info line
+		// do not combine into a missing setting.
+		Out: sessionOut(
+			"KIBBLE-BUILD CODE=0",
+			"KIBBLE-STEP b1 START",
+			"KIBBLE-LINE b1:0 CODE=0",
+			"mytool: cache is missing",
+			"info: see MYTOOL_CACHE_DIR in the manual",
+			"KIBBLE-LINE b1:1 CODE=1",
+			"KIBBLE-LINE b1:2 CODE=0",
+			"KIBBLE-DONE"),
+		WantStatus: StatusFail,
+		WantLines:  []Status{StatusVerified, StatusFail, StatusVerified},
 	}, { // Test 3: a named setting the document omits is a gap, so this
 		// fixture's key reports rather than disappearing into a skip.
 		Out: sessionOut(
