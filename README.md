@@ -19,7 +19,7 @@
     src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
 </p>
 
-<p align="center"><code>VERIFIED · FAIL · GAP · DRIFT · BLOCKED · SKIP</code></p>
+<p align="center"><sub><code>VERIFIED · FAIL · GAP · DRIFT · BLOCKED · SKIP</code></sub></p>
 
 <p align="center">
   <img src="assets/kibble-demo.gif" width="100%"
