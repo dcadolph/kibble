@@ -814,3 +814,98 @@ func TestClassifyExampleFile(t *testing.T) {
 		t.Errorf("detail mismatch (-want +got):\n%s", diff)
 	}
 }
+
+// TestClassifyExampleNestedMember checks that a scaffold declared a member of
+// a workspace rooted in a directory the checkout already absorbed is itself
+// checkout state, and that a root nobody declared a member stays the
+// project's own.
+func TestClassifyExampleNestedMember(t *testing.T) {
+	t.Parallel()
+	const (
+		appInit = "Adding `example-app` as member of workspace `/work/repo`\n" +
+			"Initialized project `example-app` at `/work/repo/example-app`"
+		libInit = "Adding `example-lib` as member of workspace `/work/repo`\n" +
+			"Initialized project `example-lib` at `/work/repo/example-app/example-lib`"
+		libInitBare = "Adding `example-lib` as member of workspace `/work/repo`"
+		libOwn      = "Initialized project `example-lib` at `/work/repo/example-app/example-lib`"
+		extInit     = "Adding `example-ext` as member of workspace `/work/repo/example-app/example-lib`\n" +
+			"Initialized project `example-ext` at `/work/repo/example-app/example-lib/example-ext`"
+		extForeign = "Adding `example-ext` as member of workspace `/work/other/example-lib`\n" +
+			"Initialized project `example-ext` at `/work/repo/example-app/example-lib/example-ext`"
+		cargoFail = "         error: current package believes it's in a workspace when it's not:\n" +
+			"         current:   /work/repo/example-app/example-lib/example-ext/Cargo.toml\n" +
+			"         workspace: /work/repo/Cargo.toml\n" +
+			"\n" +
+			"         this may be fixable by adding `example-app/example-lib/example-ext` to the " +
+			"`workspace.members` array of the manifest located at: /work/repo/Cargo.toml\n" +
+			"         Alternatively, to keep it out of the workspace, add the package to the " +
+			"`workspace.exclude` array, or add an empty `[workspace]` table to the package's manifest.\n" +
+			"         maturin failed\n" +
+			"           Caused by: Cargo metadata failed. Does your crate compile with `cargo build`?\n" +
+			"           Caused by: `cargo metadata` exited with an error: \n" +
+			"         Error: command ['maturin', 'pep517', 'build-wheel', '-i', " +
+			"'/root/.cache/uv/builds-v0/.tmpcydNZB/bin/python', '--compatibility', 'off', " +
+			"'--editable'] returned non-zero exit status 1\n" +
+			"\n" +
+			"hint: Build failures usually indicate a problem with the package or the build environment"
+	)
+	tests := []struct {
+		LibInit    string
+		ExtInit    string
+		WantStatus Status
+		WantReason Reason
+	}{{ // Test 0: The document's own chain in the checkout, as uv 0.13.6 prints it.
+		LibInit: libInit, ExtInit: extInit,
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 1: The member's directory comes from the Adding line alone.
+		LibInit: libInitBare, ExtInit: extInit,
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 2: A root the checkout never absorbed makes the nested project its own.
+		LibInit: libOwn, ExtInit: extInit,
+		WantStatus: StatusFail,
+	}, { // Test 3: A root outside the checkout is the project's own.
+		LibInit: libInit, ExtInit: extForeign,
+		WantStatus: StatusFail,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := &kplan.Plan{Repo: "uv", Binaries: []string{"uv"}, Steps: []kplan.PlanStep{{
+				ID: "b1", Doc: "docs/concepts/projects/init.md", Heading: "Projects with extension modules",
+				Lines: []kplan.PlanLine{
+					{Cmd: "uv init example-app"},
+					{Cmd: "cd example-app"},
+					{Cmd: "uv run example-app"},
+					{Cmd: "uv init --lib example-lib"},
+					{Cmd: "cd example-lib"},
+					{Cmd: "uv run python -c 'import example_lib; print(example_lib.hello())'"},
+					{Cmd: "uv init --build-backend maturin example-ext"},
+					{Cmd: "cd example-ext"},
+					{Cmd: "uv run example-ext"},
+				}}}}
+			out := sessionOut(
+				"KIBBLE-BUILD CODE=0", "KIBBLE-STEP b1 START",
+				appInit, "KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo",
+				"KIBBLE-LINE b1:1 CODE=0 CWD=/work/repo/example-app",
+				"Hello from example-app!", "KIBBLE-LINE b1:2 CODE=0 CWD=/work/repo/example-app",
+				test.LibInit, "KIBBLE-LINE b1:3 CODE=0 CWD=/work/repo/example-app",
+				"KIBBLE-LINE b1:4 CODE=0 CWD=/work/repo/example-app/example-lib",
+				"Hello from example-lib!", "KIBBLE-LINE b1:5 CODE=0 CWD=/work/repo/example-app/example-lib",
+				test.ExtInit, "KIBBLE-LINE b1:6 CODE=0 CWD=/work/repo/example-app/example-lib",
+				"KIBBLE-LINE b1:7 CODE=0 CWD=/work/repo/example-app/example-lib/example-ext",
+				cargoFail, "KIBBLE-LINE b1:8 CODE=1 CWD=/work/repo/example-app/example-lib/example-ext",
+				"KIBBLE-DONE")
+			res := classifyExample(InstallStep{Repo: "uv", Kind: "example"}, plan, out, nil, 0, lineTimeout, sessionEnd{})
+			if res.example == nil {
+				t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+			}
+			got := res.example.Steps[0].Lines[8]
+			if diff := cmp.Diff(test.WantStatus, got.Status); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s\ndetail: %s", diff, got.Detail)
+			}
+			if diff := cmp.Diff(test.WantReason, got.Reason); diff != "" {
+				t.Errorf("reason mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

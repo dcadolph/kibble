@@ -299,7 +299,8 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 }
 
 // recordMembers adds to members each directory the line's output declared a
-// member of the checkout's workspace. The directory is the path uv reports
+// member of the checkout's workspace, or of a workspace rooted in a directory
+// already recorded as a member. The directory is the path uv reports
 // initializing, or the project name under the line's directory when it
 // reports none.
 func recordMembers(members map[string]bool, o lineOutcome) {
@@ -308,7 +309,7 @@ func recordMembers(members map[string]bool, o lineOutcome) {
 		initialized[m[1]] = m[2]
 	}
 	for _, m := range reWorkspaceMember.FindAllStringSubmatch(o.output, -1) {
-		if m[2] != sessionRepoDir {
+		if m[2] != sessionRepoDir && !members[m[2]] {
 			continue
 		}
 		dir, ok := initialized[m[1]]

@@ -218,7 +218,12 @@ with the checkout kibble chose, not with anything the document wrote. A project 
 a documented binary with a known ecosystem such as uv, that fails in the repository's own
 checkout is `checkout-state` as well, because it read the checkout's own project. A project
 that a scaffold line reported adding to the checkout's workspace, in the tool's own words, is
-the checkout's project too, so a project manager failing inside it is `checkout-state`. A
+the checkout's project too, so a project manager failing inside it is `checkout-state`.
+The same holds down the chain: a project the tool reports adding to a workspace rooted in
+such a member is the checkout's as well. uv's init guide scaffolds a library inside an
+app and an extension inside the library, and the extension joins the library's workspace,
+which joined the checkout's. Only the tool's words count, so a project scaffolded under a
+member that the tool never reports adding stays its own. A
 project manager's failure is never read as a query that found no data, since its resolver
 says "No solution found" when it fails. The same holds for installers such as pipx and uvx,
 whose resolver speaks the same words. Output that is a vocabulary error, an unknown or
