@@ -1372,3 +1372,58 @@ func TestDescribedAsLinter(t *testing.T) {
 		})
 	}
 }
+
+// TestLostDirectorySpansBlocks checks that a skipped cd loses the directory for
+// the rest of its section, and that a later cd the session can make restores it.
+func TestLostDirectorySpansBlocks(t *testing.T) {
+	t.Parallel()
+	const lost = "follows a skipped cd"
+	tests := []struct {
+		Markdown string
+		WantLost []bool
+	}{{ // Test 0: A skipped cd in one block skips the next block's lines.
+		Markdown: "```sh\ntool init\ncd <your-repo>\n```\n\n```sh\ngit add .gitmodules\ntool sync\n```\n",
+		WantLost: []bool{false, false, true, true},
+	}, { // Test 1: A later cd into a directory the tree holds clears it.
+		Markdown: "```sh\ntool init\ncd <your-repo>\n```\n\n```sh\ntool sync\n```\n\n" +
+			"```sh\ncd examples\ntool run\n```\n",
+		WantLost: []bool{false, false, true, false, false},
+	}, { // Test 2: A skipped cd still skips the rest of its own block.
+		Markdown: "```sh\ncd <your-repo>\ntool sync\n```\n",
+		WantLost: []bool{false, true},
+	}, { // Test 3: A cd after a skipped cd in the same block reads from the lost
+		// directory, so it does not clear it.
+		Markdown: "```sh\ncd <your-repo>\ncd examples\ntool sync\n```\n",
+		WantLost: []bool{false, true, true},
+	}, { // Test 4: A document without a skipped cd loses nothing.
+		Markdown: "```sh\ncd examples\ntool sync\n```\n\n```sh\ntool run\n```\n",
+		WantLost: []bool{false, false, false},
+	}, { // Test 5: A new section ends the lost directory.
+		Markdown: "## Build\n\n```sh\ncd <your-repo>\n```\n\n```sh\ntool sync\n```\n\n" +
+			"## Install\n\n```sh\ntool run\n```\n",
+		WantLost: []bool{false, true, false},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, "examples"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			plan := BuildPlan("repo", dir, test.Markdown, []string{"tool"}, nil, nil, testRecognizer())
+			var got []bool
+			for _, s := range plan.Steps {
+				for _, l := range s.Lines {
+					isLost := strings.Contains(l.Skip, lost)
+					if isLost && l.SkipReason != verdict.ReasonDependsOnSkipped {
+						t.Errorf("%q: reason %q, want %q", l.Cmd, l.SkipReason, verdict.ReasonDependsOnSkipped)
+					}
+					got = append(got, isLost)
+				}
+			}
+			if diff := cmp.Diff(test.WantLost, got); diff != "" {
+				t.Errorf("lost mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
