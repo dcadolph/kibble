@@ -335,6 +335,14 @@ type planner struct {
 	// moved marks a document that has run a cd, after which a relative path
 	// is read from a directory the planner does not track.
 	moved bool
+	// lostDir marks a section whose last cd was skipped. The document keeps
+	// one shell, so every later line in the section would run in the wrong
+	// directory until a cd the session can make runs.
+	lostDir bool
+	// lostDirHeading is the heading of the block whose skipped cd set
+	// lostDir. A block under another heading starts a new procedure, so the
+	// lost directory ends there.
+	lostDirHeading string
 	// synthetic collects the fixtures fabricated while classifying the line
 	// currently being planned, and is drained onto that line. A line that
 	// reads a file kibble invented was not tested against the document's own
@@ -390,8 +398,11 @@ func (pl *planner) addBlock(block docblock.Block) {
 	lineIn := docblock.SourceLineIndex(block)
 	shownErr := docblock.ShownFailures(block)
 	nonzero := false
-	lostDir := false
+	lostHere := false
 	showing := false
+	if pl.lostDir && block.Heading != pl.lostDirHeading {
+		pl.lostDir = false
+	}
 	for _, ln := range lines {
 		ln = pl.substituted(ln)
 		flat := docblock.Flatten(ln)
@@ -431,7 +442,7 @@ func (pl *planner) addBlock(block docblock.Block) {
 			line.Skip = fmt.Sprintf("documented for %s rather than this container", scopedTo)
 			line.SkipReason = verdict.ReasonOtherPlatform
 		}
-		if line.Skip == "" && lostDir {
+		if line.Skip == "" && (lostHere || pl.lostDir && !pl.restoresDir(flat)) {
 			line.Skip = "follows a skipped cd, so it would run in the wrong directory"
 			line.SkipReason = verdict.ReasonDependsOnSkipped
 		}
@@ -442,8 +453,10 @@ func (pl *planner) addBlock(block docblock.Block) {
 		if line.Need != "" {
 			line.Unplanned = pl.unplanned
 		}
-		if line.Skip != "" && strings.HasPrefix(strings.TrimSpace(flat), "cd ") {
-			lostDir = true
+		if reRunsCd.MatchString(flat) {
+			pl.lostDir = line.Skip != ""
+			pl.lostDirHeading = block.Heading
+			lostHere = lostHere || pl.lostDir
 		}
 		if m := reAssignPrefix.FindStringSubmatch(flat); m != nil {
 			if line.Skip == "" {
@@ -479,6 +492,30 @@ func (pl *planner) addBlock(block docblock.Block) {
 		}
 	}
 	pl.plan.Steps = append(pl.plan.Steps, step)
+}
+
+// restoresDir reports whether a line in a later block than a skipped cd opens
+// with a cd the session can make without the lost directory: home, an absolute
+// path, or a directory the checkout holds while no earlier cd has moved the
+// session. Within the skipped cd's own block a relative cd reads from the lost
+// directory, so the block stays lost.
+func (pl *planner) restoresDir(flat string) bool {
+	fields := strings.Fields(flat)
+	if len(fields) == 0 || fields[0] != "cd" {
+		return false
+	}
+	if len(fields) == 1 || fields[1] == "&&" || fields[1] == ";" {
+		return true
+	}
+	target := strings.TrimSuffix(fields[1], ";")
+	switch {
+	case target == "~" || target == "$HOME" || strings.HasPrefix(target, "/"):
+		return true
+	case pl.moved:
+		return false
+	}
+	target = strings.TrimSuffix(strings.TrimPrefix(target, "./"), "/")
+	return target != "" && pl.tree[target]
 }
 
 // blockLocation names a code block by its line and heading, for a block the
