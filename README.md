@@ -55,6 +55,23 @@ repositories proves correct documentation passes, and deliberate one-line corrup
 those same documents prove rot gets caught. A verifier that only ever agrees with you is
 worse than no verifier, so kibble is tested against its own willingness to say yes.
 
+## Contents
+
+- [What rots, and who reads it](#what-rots-and-who-reads-it)
+- [Install](#install)
+- [Usage](#usage)
+- [Use it in CI](#use-it-in-ci)
+- [What it has found](#what-it-has-found)
+- [Flags](#flags)
+- [What the verdicts mean](#what-the-verdicts-mean)
+- [Why believe any of it](#why-believe-any-of-it)
+- [What kibble does not check](#what-kibble-does-not-check)
+- [Security](#security)
+- [Configuration](#configuration)
+- [Roadmap](#roadmap)
+- [Why "kibble"](#why-kibble)
+- [License](#license)
+
 ## What rots, and who reads it
 
 The stranger is not always a person now. Coding agents install tools by doing what the
