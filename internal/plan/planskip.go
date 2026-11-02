@@ -3,6 +3,7 @@ package plan
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/dcadolph/kibble/internal/docblock"
@@ -485,6 +486,30 @@ func watcherInvocation(sub, flat string) bool {
 		return true
 	}
 	return reWatcherFlag.MatchString(flat)
+}
+
+// reLinterSub matches prose that introduces a subcommand as one that lints or
+// checks for problems, capturing the subcommand's name.
+var reLinterSub = regexp.MustCompile("(?i)\\b`?([a-z][a-z0-9-]+)`? (?:sub)?command " +
+	"(?:lints?|checks?|validates?|audits?)\\b[^.\\n]{0,60}\\b(?:for|finds?|reports?|flags?)\\b" +
+	"[^.\\n]{0,40}\\b(?:problems|errors|issues|violations|warnings|findings)\\b")
+
+// describedAsLinter returns the subcommands a document introduces as linting
+// for problems, which exit nonzero when they find some. Only the subcommand is
+// the claim: a linter binary exits nonzero on a configuration error too, so
+// blessing the binary would turn that into a pass.
+func describedAsLinter(markdown string) []string {
+	head := docblock.ProseOnly(markdown)
+	if len(head) > 1500 {
+		head = head[:1500]
+	}
+	var subs []string
+	for _, m := range reLinterSub.FindAllStringSubmatch(head, -1) {
+		if sub := strings.ToLower(m[1]); !slices.Contains(subs, sub) {
+			subs = append(subs, sub)
+		}
+	}
+	return subs
 }
 
 // describedAsWatcher reports whether a document introduces a binary as a tool

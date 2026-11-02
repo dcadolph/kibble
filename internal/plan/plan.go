@@ -6,6 +6,7 @@ import (
 	"github.com/dcadolph/kibble/internal/docblock"
 	"github.com/dcadolph/kibble/internal/shell"
 	"github.com/dcadolph/kibble/internal/verdict"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -219,6 +220,10 @@ func BuildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 		}
 	}
 	pl.plan.Settings = DocumentedSettingNames(markdown)
+	pl.findingSubs = maps.Clone(findingSubs)
+	for _, sub := range describedAsLinter(markdown) {
+		pl.findingSubs[sub] = true
+	}
 	for b := range pl.binaries {
 		if describedAsWatcher(markdown, b) {
 			pl.watcher = true
@@ -319,6 +324,10 @@ type planner struct {
 	packages map[string]bool
 	// fixed tracks fixture paths already fabricated, to avoid duplicates.
 	fixed map[string]bool
+	// findingSubs holds the subcommands whose nonzero exit is a finding for
+	// this document: the package-level ones and those its prose introduces as
+	// linting.
+	findingSubs map[string]bool
 	// staged marks a document that has run git add on a line that is not
 	// skipped. It is the only repository state the planner tracks, because a
 	// commit is the only allowed git form that needs any.
@@ -406,7 +415,7 @@ func (pl *planner) addBlock(block docblock.Block) {
 			line.NonzeroOK = true
 			nonzero = false
 		}
-		if _, sub := InvokedBinary(flat, pl.binaries); findingSubs[sub] {
+		if _, sub := InvokedBinary(flat, pl.binaries); pl.findingSubs[sub] {
 			line.NonzeroOK = true
 		}
 		if shownErr[strings.TrimSpace(flat)] {

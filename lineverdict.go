@@ -73,7 +73,8 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 			lr.Detail = "ran against " + strings.Join(lr.Synthetic, ", ") +
 				", which kibble fabricated because no documented step creates it"
 		}
-	case l.NonzeroOK && documentedNonzeroCode(o.code):
+	case l.NonzeroOK && documentedNonzeroCode(o.code) && !reCrash.MatchString(o.output):
+		// A crash stays a failure even where the document blesses a nonzero exit.
 		lr.Status = StatusVerified
 		lr.Detail = fmt.Sprintf("exit %d is documented behavior", o.code)
 	case documentedNonzeroCode(o.code) && shownInOutput(l.Shown, o.output):
