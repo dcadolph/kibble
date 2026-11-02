@@ -76,6 +76,12 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 	case l.NonzeroOK && documentedNonzeroCode(o.code):
 		lr.Status = StatusVerified
 		lr.Detail = fmt.Sprintf("exit %d is documented behavior", o.code)
+	case documentedNonzeroCode(o.code) && shownInOutput(l.Shown, o.output):
+		// The document shows the output under the command and the tool printed
+		// it, so the nonzero exit is the outcome the document describes.
+		lr.Status = StatusVerified
+		lr.Detail = fmt.Sprintf("exit %d is documented behavior: the document shows this output",
+			o.code)
 	case reCrash.MatchString(o.output) && crashWantsInput(o.output):
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonInteractive
@@ -836,6 +842,36 @@ func bareOperandAfterSub(cmd string) string {
 		return ""
 	}
 	return ""
+}
+
+// reProgramPrefix matches the program name a tool writes before its message,
+// which a document showing the output may spell differently.
+var reProgramPrefix = regexp.MustCompile(`^[\w.-]+: `)
+
+// minShownLen is the shortest shown line that counts as evidence, so a word
+// such as "error" that any failure prints proves nothing.
+const minShownLen = 12
+
+// shownInOutput reports whether the output contains a line the document
+// shows under the command, whole or without its leading program name. Without
+// the name, the output must print a program name of its own right before the
+// rest, since a label such as "Or: " in front of a command the tool echoes is
+// not a program name.
+func shownInOutput(shown []string, output string) bool {
+	for _, s := range shown {
+		s = strings.TrimSpace(s)
+		if len(s) >= minShownLen && strings.Contains(output, s) {
+			return true
+		}
+		rest := reProgramPrefix.ReplaceAllString(s, "")
+		if rest == s || len(rest) < minShownLen {
+			continue
+		}
+		if regexp.MustCompile(`(?m)(^|\s)[\w.-]+: ` + regexp.QuoteMeta(rest)).MatchString(output) {
+			return true
+		}
+	}
+	return false
 }
 
 // registeredDetail returns the verdict detail, without the output tail, for a

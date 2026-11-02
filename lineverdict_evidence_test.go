@@ -194,3 +194,57 @@ Require stack:
 		})
 	}
 }
+
+// TestClassifyShownOutput checks that a nonzero exit is documented behavior
+// only when the tool printed the output the document shows under the command.
+func TestClassifyShownOutput(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		WantStatus Status
+		WantDetail string
+		Shown      []string
+		Output     string
+		Code       int
+	}{{ // Test 0: The refusal the document shows, printed under the tool's own name.
+		Shown:      []string{"rm: target '/' skipped, unsafe directory scope"},
+		Output:     "safe-rm: target '/' skipped, unsafe directory scope\n",
+		Code:       1,
+		WantStatus: StatusVerified,
+		WantDetail: "exit 1 is documented behavior: the document shows this output",
+	}, { // Test 1: A shown line that the tool did not print leaves the failure.
+		Shown:      []string{"all done"},
+		Output:     "safe-rm: target '/' skipped, unsafe directory scope\n",
+		Code:       1,
+		WantStatus: StatusFail,
+	}, { // Test 2: A matching line on exit 127 is not an ordinary exit.
+		Shown:      []string{"rm: target '/' skipped, unsafe directory scope"},
+		Output:     "safe-rm: target '/' skipped, unsafe directory scope\n",
+		Code:       127,
+		WantStatus: StatusSkipped,
+	}, { // Test 3: A shown line under 12 characters is too short to be evidence.
+		Shown:      []string{"error"},
+		Output:     "error\n",
+		Code:       1,
+		WantStatus: StatusFail,
+	}, { // Test 4: A prose label is not a program name, so an echoed command proves nothing.
+		Shown:      []string{"Or: tool schema generate"},
+		Output:     "tool schema generate\nmake: *** [schema] Error 1\n",
+		Code:       2,
+		WantStatus: StatusFail,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			lr := classifyLineResult(lineResult{Cmd: `SAFE_RM_SCOPE="$HOME" safe-rm -rf /`},
+				kplan.PlanLine{Shown: test.Shown},
+				lineOutcome{code: test.Code, output: test.Output}, false, nil, lineTimeout)
+			if lr.Status != test.WantStatus {
+				t.Errorf("verdict = %s %q, want %s (detail %q)",
+					lr.Status, lr.Reason, test.WantStatus, lr.Detail)
+			}
+			if !strings.Contains(lr.Detail, test.WantDetail) {
+				t.Errorf("detail = %q, want it to contain %q", lr.Detail, test.WantDetail)
+			}
+		})
+	}
+}
