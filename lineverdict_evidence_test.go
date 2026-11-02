@@ -106,6 +106,47 @@ Require stack:
 		Cmd:    "tool run",
 		Output: "Error: unknown profile: dev\n",
 		Code:   1, WantStatus: StatusFail,
+	}, { // Test 13: Told to define an API in the config, the reader writes that first.
+		Cmd: "redocly bundle",
+		Output: "No APIs were provided. Specify an API via the command argument " +
+			"or define one in your config.\n",
+		Code: 1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "points to a configuration entry the reader writes first",
+	}, { // Test 14: An entry told to be added under a key is configuration the reader writes.
+		Cmd: "redocly generate-client",
+		Output: "No API to generate. Add a `client` block or `clientOutput` under an " +
+			"`apis:` entry, or pass <api>\n",
+		Code: 1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "points to a configuration entry the reader writes first",
+	}, { // Test 15: A bare word where a path was wanted is a name defined in configuration.
+		Cmd:    "redocly stats core@v1",
+		Output: "Please provide a valid path.\n",
+		Code:   1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "passed core@v1 where the tool wanted a path",
+	}, { // Test 16: A file-shaped operand that is refused stays a failure.
+		Cmd:    "redocly stats spec.yaml",
+		Output: "Please provide a valid path.\n",
+		Code:   1, WantStatus: StatusFail,
+	}, { // Test 17: No operand at all stays a failure.
+		Cmd:    "redocly stats",
+		Output: "Please provide a valid path.\n",
+		Code:   1, WantStatus: StatusFail,
+	}, { // Test 18: A configuration file that will not import is the reader's project to supply.
+		Cmd: `mdlint "**/*.md"`,
+		Output: "Error: Unable to use configuration file '/work/repo/test/x/.lintrc.cjs'; " +
+			"Unable to import module\n",
+		Code: 2, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "could not load a configuration",
+	}, { // Test 19: A relative path the tool says does not exist is a file the reader lacks.
+		Cmd: "redocly eject-generator php --update",
+		Output: "Nothing to update: generators/php/index.ts does not exist. " +
+			"Eject first.\n",
+		Code: 1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "generators/php/index.ts",
+	}, { // Test 20: An unknown flag named config is the document's defect.
+		Cmd:    "redocly bundle --config",
+		Output: "Unknown argument: --config\n",
+		Code:   1, WantStatus: StatusFail,
 	}}
 
 	for testNum, test := range tests {
