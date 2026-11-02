@@ -211,6 +211,15 @@ directory the document meant. Resetting the working directory at every heading w
 rejected, because it would break every document that changes directory once in setup and
 invent failures.
 
+A `cd` the planner skips, because its target is a placeholder or a name the reader fills
+in, loses the directory for the rest of its section. A document keeps one shell, so every
+later line under the same heading would run in the wrong directory, and each is a `SKIP`
+with the reason `depends-on-skipped` until a `cd` the session can make runs: home, an
+absolute path, or a directory the checkout holds while no earlier `cd` has moved the
+session. A relative `cd` inside the skipped line's own block reads from the lost directory
+and clears nothing. The next heading ends the loss, since a new section starts a new
+procedure, which is the same boundary `inherited-state` reads.
+
 The same holds for the checkout itself. A would-be plain `FAIL` that ran in the
 repository's own checkout, and whose output says the target "already exists" or is
 "already initialized", is `BLOCKED` with the reason `checkout-state`. The collision is
@@ -252,6 +261,15 @@ the document was to write that file, through a redirect, an output flag such as
 verdict is `BLOCKED` with the reason `depends-on-skipped`, naming that line. Only a file no
 earlier line was to write is a `GAP`.
 
+A failing line that names a file-shaped operand, one with a dot or a slash that is not a
+flag or a URL, which an earlier line of the same document also named and which was skipped,
+blocked, or a gap, is `BLOCKED` with the reason `depends-on-skipped`, naming that earlier
+line. A database three queries read after the insert that fills it was blocked is one
+break, not four. An earlier `FAIL` does not pair, so one real break repeated on several
+lines stays several reports, and an operand ending in a script extension such as `.py` or
+`.sh` is the program an interpreter runs rather than data, so two runs of one script never
+pair. Like the other causal downgrades it suppresses the cascade without claiming cause.
+
 A titled fence whose title is a plain relative file path is a file the document writes. The
 planner turns it into a line that writes the block's content, so a later line reading that
 file does not need it, and a path the checkout already holds is never overwritten. A caption
@@ -292,14 +310,31 @@ the classifier cannot tell which. A program the tool tried to run, or one the sh
 could not find, is a `SKIP` for a missing dependency. Git's own report that the
 repository has no history is `BLOCKED`, since the session's repository is one kibble
 made with none. A preset, plugin, or other name the reader is meant to define first, and
-a configuration the tool could not load, are `BLOCKED` as well. Both are resemblances
-rather than names, so neither can ever be a `SKIP` or a pass. The list of nouns is fixed
-on purpose: an unknown flag, argument, option, or command is the tool's own complaint
-and still fails. The refusal counts when the tool names the kind and not the name, as in
-`unknown registry` with nothing after it, and that is `BLOCKED` too. The nouns are the
-same: preset, profile, alias, plugin, group, context, workspace, project, remote,
-registry, template, and theme. A traceback that ends in a missing-file error naming a
-thing is read this way, and one that ends any other way still fails.
+a configuration the tool could not load, use, parse, import, find, or open, are `BLOCKED`
+as well. Both are resemblances rather than names, so neither can ever be a `SKIP` or a
+pass. The list of nouns is fixed on purpose: an unknown flag, argument, option, or command
+is the tool's own complaint and still fails. The refusal counts when the tool names the
+kind and not the name, as in `unknown registry` with nothing after it, and that is
+`BLOCKED` too. The wordings are `unknown <noun>`, `no such <noun>` with or without a name
+after it, `for this <noun>` as in "no dotfile to install for this profile", and `no
+<noun>s are currently installed`. A name the tool reports that the command never passed
+is `BLOCKED` as well, with a detail that says the command never named it, since a name
+the command did not pass came from the tool's default, its environment, or the reader's
+configuration, none of which is the document's claim. The nouns are the same: preset,
+profile, alias, plugin, group, context, workspace, project, remote, registry, template,
+and theme. A tool that tells the reader to define, add, or specify something in or under
+their configuration, as in "define one in your config" or "add a `client` block under an
+`apis:` entry", is pointing at a configuration entry the reader writes first, and is
+`BLOCKED` with the reason `missing-fixture`. So is a tool that asked for a valid path when
+the command passed it a bare word after its subcommand, with no dot and no slash, since a
+name written where a path goes is an alias from the reader's configuration. The same
+message with a file-shaped operand, or with none, still fails. An unquoted path followed
+by "does not exist", as in "generators/php/index.ts does not exist", names a missing file
+the way a quoted one does. A traceback that ends in a missing-file error naming a thing
+is read this way, and one that ends any other way still fails, with two readings of the
+traceback itself: its header counts when other text precedes it on the same line, as a
+progress line without a newline leaves it, and a traceback ending in `EOFError` is a tool
+that waited for an answer on a closed stdin, which is a `SKIP` as interactive.
 
 An operand written as a stand-in name is a placeholder the reader fills in, and the line
 is a `SKIP`. The class is a `my`-prefixed name such as `my-project` or `my_package`, and a
@@ -312,12 +347,28 @@ line runs and does what the document says. A reserved example host is a placehol
 is left to the file rule. A name the repository or an earlier line provides is real, and so
 is a value given to an output flag, since the line writes it. A value written after a
 space cannot be told from an operand without the flag's arity, so it is read as an operand.
+The stand-in class is read on the documented binary's operands and on those of the
+file-reading commands `cd`, `ls`, `tree`, and `cat`, whatever reads the name, and not on
+every command: `git commit -m my-message` is not reading a path. A numbered slot such as
+`{0}` or `{1}` written as its own shell word is a tool's template left for the reader to
+fill, and a placeholder. The same slot inside a quoted argument is the tool's own, as in
+fzf's field bindings, and the line runs.
 
 Check mode is documented behavior. A subcommand such as `check`, `lint`, or `audit`
 exits nonzero when it finds something, and so does a documented tool given a flag that
 says report only: `--fix=false`, `--no-fix`, `--check`, `--dry-run`, or `--diff`. The
-subcommands are `check`, `lint`, `audit`, `vet`, `diff`, `format`, and `fmt`. A nonzero
-exit from either is the tool working. A crash stays a failure. A check-mode flag applies
+subcommands are `check`, `lint`, `audit`, `vet`, `diff`, `format`, and `fmt`, and a
+subcommand the page itself introduces as linting, checking, or validating for problems,
+as in "The `recheck` command lints Markdown files for structure and prose problems", is
+check mode for that document. The inference is by subcommand, never by binary, since a
+linter run over a bad configuration exits nonzero too and blessing the binary would turn
+that into a hollow pass. A nonzero exit from either is the tool working. A crash stays a
+failure, and the classifier now enforces it: a check-mode line whose output holds a
+traceback or a panic falls through to the crash rules. Output the document shows under a
+command as a comment, which the tool then printed, is documented behavior as well: a
+nonzero ordinary exit whose output contains a shown line of at least twelve characters,
+with or without its leading program prefix, is `VERIFIED`, and the match needs the tool to
+have said it, not a resemblance. A check-mode flag applies
 to its own line, while a documented note such as "exits non-zero if it finds any"
 describes the command, so the note reaches every line with the same binary and subcommand
 and the flag does not.
