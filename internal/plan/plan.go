@@ -106,6 +106,10 @@ type PlanLine struct {
 	Unplanned string `json:"unplanned,omitempty"`
 	// NonzeroOK accepts a nonzero exit as documented behavior.
 	NonzeroOK bool `json:"nonzeroOk,omitempty"`
+	// Shown is the output the document shows for this line, as the comment
+	// lines directly under it in its block, without the leading #. The verdict
+	// accepts a nonzero exit only when the tool printed one of them.
+	Shown []string `json:"shown,omitempty"`
 	// Synthetic names the files kibble fabricated so this line had something
 	// to read. The document referenced them and never created them, so a pass
 	// here proves the command accepts kibble's invented input, which is a
@@ -378,6 +382,7 @@ func (pl *planner) addBlock(block docblock.Block) {
 	shownErr := docblock.ShownFailures(block)
 	nonzero := false
 	lostDir := false
+	showing := false
 	for _, ln := range lines {
 		ln = pl.substituted(ln)
 		flat := docblock.Flatten(ln)
@@ -386,6 +391,11 @@ func (pl *planner) addBlock(block docblock.Block) {
 				nonzero = true
 			} else if trimmed != "" {
 				nonzero = false
+			}
+			showing = showing && trimmed != ""
+			if showing {
+				last := &step.Lines[len(step.Lines)-1]
+				last.Shown = append(last.Shown, strings.TrimSpace(strings.TrimLeft(trimmed, "#")))
 			}
 			continue
 		}
@@ -443,6 +453,7 @@ func (pl *planner) addBlock(block docblock.Block) {
 			}
 		}
 		step.Lines = append(step.Lines, line)
+		showing = true
 	}
 	if len(step.Lines) == 0 {
 		return

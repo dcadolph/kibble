@@ -1282,3 +1282,49 @@ func TestCommentOnlyBlockStillPlans(t *testing.T) {
 		})
 	}
 }
+
+// TestPlanShown checks that comment lines directly under a command are kept
+// as the output the document shows for it.
+func TestPlanShown(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Markdown  string
+		WantShown [][]string
+	}{{ // Test 0: A refusal shown as a comment under the command.
+		Markdown: "```sh\nSAFE_RM_SCOPE=\"$HOME\" tool -rf /\n" +
+			"# rm: target '/' skipped, unsafe directory scope\n```\n",
+		WantShown: [][]string{{"rm: target '/' skipped, unsafe directory scope"}},
+	}, { // Test 1: A note comment is collected too, and only by the line above it.
+		Markdown:  "```sh\ntool check .\n# exits 1 when it finds a problem\ntool fmt .\n```\n",
+		WantShown: [][]string{{"exits 1 when it finds a problem"}, nil},
+	}, { // Test 2: Several comment lines in a row all belong to the command.
+		Markdown:  "```sh\ntool list\n#  alpha one\n# beta two\n```\n",
+		WantShown: [][]string{{"alpha one", "beta two"}},
+	}, { // Test 3: A comment before the first command belongs to no line.
+		Markdown:  "```sh\n# first install it\ntool list\n```\n",
+		WantShown: [][]string{nil},
+	}, { // Test 4: A blank line ends what the command shows.
+		Markdown:  "```sh\ntool list\n\n# now build it\ntool build\n```\n",
+		WantShown: [][]string{nil, nil},
+	}, { // Test 5: A skipped line keeps what the document shows for it.
+		Markdown: "```sh\ntool get https://api.example.com/v1\n" +
+			"# {\"ok\": true}\n```\n",
+		WantShown: [][]string{{"{\"ok\": true}"}},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := BuildPlan("tool", "", test.Markdown, []string{"tool"}, nil, nil, testRecognizer())
+			if len(plan.Steps) != 1 {
+				t.Fatalf("steps = %d, want 1", len(plan.Steps))
+			}
+			var got [][]string
+			for _, l := range plan.Steps[0].Lines {
+				got = append(got, l.Shown)
+			}
+			if diff := cmp.Diff(test.WantShown, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("shown mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
