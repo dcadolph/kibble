@@ -76,6 +76,10 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 	case l.NonzeroOK && documentedNonzeroCode(o.code):
 		lr.Status = StatusVerified
 		lr.Detail = fmt.Sprintf("exit %d is documented behavior", o.code)
+	case reCrash.MatchString(o.output) && crashWantsInput(o.output):
+		lr.Status = StatusSkipped
+		lr.Reason = ReasonInteractive
+		lr.Detail = "waited for input, and the session's stdin is closed: " + tail
 	case reCrash.MatchString(o.output) && crashMissingName(o.output) != "":
 		// The one crash that is not unexplained. A traceback whose last line
 		// names the file or program that was missing is the tool saying what
@@ -443,7 +447,7 @@ var (
 	// rule that excuses a line: a tool that panicked after printing "no
 	// results" did not find no results, it broke.
 	reCrash = regexp.MustCompile(
-		`(?im)^(panic|fatal error|traceback \(most recent call last\)):` +
+		`(?im)(^(panic|fatal error):|(^|\s)traceback \(most recent call last\):)` +
 			`|\bsegmentation fault\b|\bassertion failed\b|\bstack overflow\b` +
 			`|\bunhandled exception\b|\bthread '.*' panicked at\b`)
 	// reGitNoHistory matches git reporting that the repository it was handed
@@ -579,6 +583,13 @@ func crashMissingName(output string) string {
 		}
 	}
 	return ""
+}
+
+// crashWantsInput reports whether a crash's last line is an EOFError, which is
+// a program reading a prompt from a stdin that is closed.
+func crashWantsInput(output string) bool {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	return strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "EOFError")
 }
 
 // namedInCommand reports whether the command passed name. Words are compared

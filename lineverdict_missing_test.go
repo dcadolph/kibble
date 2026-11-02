@@ -232,6 +232,35 @@ FileNotFoundError: [Errno 2] No such file or directory: 'patfile'
 		WantStatus: StatusBlocked, WantReason: ReasonDependsOnSkipped,
 		WantDetail: "references patfile, which an earlier line that did not pass may create: " +
 			"make-patterns > patfile",
+	}, { // Test 22: A traceback header after a progress line still reads as the crash it is.
+		Cmd: "MMD_CLI_JOBS=1 python3 scripts/bench_compare.py",
+		Output: "   flowchart_small... Traceback (most recent call last):\n" +
+			"  File \"/work/repo/scripts/bench_compare.py\", line 10, in <module>\n" +
+			"    main()\n" +
+			"  File \"/usr/lib/python3.13/subprocess.py\", line 1972, in _execute_child\n" +
+			"FileNotFoundError: [Errno 2] No such file or directory: 'npx'\n",
+		Code: 1, WantStatus: StatusSkipped, WantReason: ReasonMissingDependency,
+		WantDetail: "reported by the tool that invoked it",
+	}, { // Test 23: A traceback ending at a closed stdin is interactive.
+		Cmd: "dotdrop import ~/.zshrc",
+		Output: "Apply these changes? [y/N] ? Traceback (most recent call last):\n" +
+			"  File \"/usr/bin/dotdrop\", line 8, in <module>\n" +
+			"    sys.exit(main())\n" +
+			"  File \"/usr/lib/python3/dotdrop/dotdrop.py\", line 90, in ask\n" +
+			"    resp = input(qmsg)\n" +
+			"EOFError: EOF when reading a line\n",
+		Code: 1, WantStatus: StatusSkipped, WantReason: ReasonInteractive,
+		WantDetail: "waited for input",
+	}, { // Test 24: A line-start traceback ending in another error stays a failure.
+		Cmd: "python3 tool.py",
+		Output: "Traceback (most recent call last):\n" +
+			"  File \"tool.py\", line 3, in <module>\n" +
+			"KeyError: 'x'\n",
+		Code: 1, WantStatus: StatusFail, WantDetail: "crashed with exit 1",
+	}, { // Test 25: A Node module error with no traceback stays a failure.
+		Cmd:    "nve 18 node app.js",
+		Output: "Error: Cannot find module 'node:path'\n",
+		Code:   1, WantStatus: StatusFail,
 	}}
 
 	for testNum, test := range tests {
