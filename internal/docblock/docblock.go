@@ -477,7 +477,24 @@ var rePlaceholder = regexp.MustCompile(
 // before running it. The planner asks it of an example line and the extractor
 // asks it of an install line, so both read placeholders the same way.
 func HasPlaceholder(s string) bool {
-	return rePlaceholder.MatchString(s)
+	return rePlaceholder.MatchString(s) || hasNumberedSlot(s)
+}
+
+// reNumberedSlot matches a whole shell word that is a numbered template slot
+// such as {0} or {1}, the shape a tool's own command template leaves for the
+// reader to fill.
+var reNumberedSlot = regexp.MustCompile(`^\{[0-9]+\}$`)
+
+// hasNumberedSlot reports whether one of the line's shell words is a numbered
+// slot. It reads parsed words rather than flat text so that a slot inside a
+// quoted argument, which the tool itself fills, is not a placeholder.
+func hasNumberedSlot(s string) bool {
+	for _, w := range shell.ArgWordsOrFields(s) {
+		if reNumberedSlot.MatchString(w) {
+			return true
+		}
+	}
+	return false
 }
 
 // reShownError matches output a doc displays under a command to demonstrate

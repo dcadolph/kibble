@@ -86,6 +86,18 @@ func TestHasPlaceholder(t *testing.T) {
 		Want: false,
 	}, { // Test 15: A your-github-username owner is a stand-in.
 		In: `git clone https://github.com/your-github-username/repo`, Want: true,
+	}, { // Test 16: A numbered slot as its own word is a stand-in.
+		In: `tar -cf {1} -C {0} .`, Want: true,
+	}, { // Test 17: Empty braces are find's own token.
+		In: `find . -exec rm {} \;`, Want: false,
+	}, { // Test 18: A brace range is the shell's.
+		In: `echo {1..5}`, Want: false,
+	}, { // Test 19: A repetition count inside a quoted pattern is not a slot.
+		In: `grep -E 'a{2}' f`, Want: false,
+	}, { // Test 20: A numbered slot inside a quoted argument is the tool's own.
+		In: `fzf --delimiter : --nth 3.. --bind 'enter:become(vim {1} +{2})'`, Want: false,
+	}, { // Test 21: A named slot still is.
+		In: `tool {name}`, Want: true,
 	}}
 
 	for testNum, test := range tests {
