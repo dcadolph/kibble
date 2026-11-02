@@ -1427,3 +1427,52 @@ func TestLostDirectorySpansBlocks(t *testing.T) {
 		})
 	}
 }
+
+// TestImpliedFindingFlag checks that a flag the document says implies a
+// check-mode flag puts a line in check mode for that document only.
+func TestImpliedFindingFlag(t *testing.T) {
+	t.Parallel()
+	sarif := "# SARIF\n\n`--format sarif` implies `--fix=false`, so files are not modified.\n\n"
+	tests := []struct {
+		Markdown    string
+		WantFlags   []string
+		WantNonzero []bool
+	}{{ // Test 0: The implied flag, with its value as a separate word or joined.
+		Markdown: sarif + "```sh\ntool run --format sarif\n```\n\n" +
+			"```sh\ntool run --format=sarif > out.json\n```\n",
+		WantFlags: []string{"--format sarif"}, WantNonzero: []bool{true, true},
+	}, { // Test 1: The implied flag must be one of the fixed set.
+		Markdown:    "# Text\n\n`--fix` implies `--format text`.\n\n```sh\ntool run --fix\n```\n",
+		WantNonzero: []bool{false},
+	}, { // Test 2: Another value of the same flag is not check mode.
+		Markdown:    sarif + "```sh\ntool run --format json\n```\n",
+		WantFlags:   []string{"--format sarif"},
+		WantNonzero: []bool{false},
+	}, { // Test 3: The sentence on another page does not carry over.
+		Markdown:    "# Run\n\n```sh\ntool run --format sarif\n```\n",
+		WantNonzero: []bool{false},
+	}, { // Test 4: An explicit --fix beside the implied flag turns fixing back on.
+		Markdown:    sarif + "```sh\ntool run --format sarif --fix\n```\n",
+		WantFlags:   []string{"--format sarif"},
+		WantNonzero: []bool{false},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(test.WantFlags, impliedFindingFlags(test.Markdown),
+				cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("impliedFindingFlags mismatch (-want +got):\n%s", diff)
+			}
+			plan := BuildPlan("repo", "", test.Markdown, []string{"tool"}, nil, nil, testRecognizer())
+			var got []bool
+			for _, l := range projectPlan(plan) {
+				for _, pl := range l {
+					got = append(got, pl.NonzeroOK)
+				}
+			}
+			if diff := cmp.Diff(test.WantNonzero, got); diff != "" {
+				t.Errorf("NonzeroOK mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

@@ -431,14 +431,52 @@ var findingFlags = map[string]bool{
 	"--dry-run": true, "--diff": true,
 }
 
-// findingFlagged reports whether a line carries a check-mode flag.
-func findingFlagged(flat string) bool {
-	for _, f := range shell.WordsOrFields(docblock.StripComment(flat)) {
+// findingFlagged reports whether a line carries a check-mode flag, one of the
+// fixed set or one the document says implies a member of it. A flag written
+// with a separate value, such as --format sarif, is read as that pair, and an
+// explicit --fix beside an implied flag turns fixing back on.
+func (pl *planner) findingFlagged(flat string) bool {
+	words := shell.WordsOrFields(docblock.StripComment(flat))
+	implied := false
+	for i, f := range words {
 		if findingFlags[f] {
 			return true
 		}
+		if fixFlags[f] {
+			return false
+		}
+		switch {
+		case pl.findingFlags[strings.Replace(f, "=", " ", 1)]:
+			implied = true
+		case i+1 < len(words) && pl.findingFlags[f+" "+words[i+1]]:
+			implied = true
+		}
 	}
-	return false
+	return implied
+}
+
+// fixFlags are flags that turn fixing back on, so a line carrying one next to
+// a flag the document says implies check mode is not check mode after all.
+var fixFlags = map[string]bool{"--fix": true, "--fix=true": true}
+
+// reImpliesFinding matches a sentence that says one flag implies a check-mode
+// flag, as in "`--format sarif` implies `--fix=false`, so files are not
+// modified". The implied flag must be one of the fixed set, so the document
+// extends check mode only by naming a flag kibble already reads that way.
+var reImpliesFinding = regexp.MustCompile(
+	"`(--[a-z][\\w-]*(?:[= ][\\w.-]+)?)`[^.\\n]{0,40}\\bimplies\\b[^.\\n]{0,40}" +
+		"`(--fix=false|--no-fix|--check|--dry-run|--diff)`")
+
+// impliedFindingFlags returns the flags a document says imply a check-mode
+// flag, so a line carrying one is check mode for that document.
+func impliedFindingFlags(markdown string) []string {
+	var flags []string
+	for _, m := range reImpliesFinding.FindAllStringSubmatch(docblock.ProseOnly(markdown), -1) {
+		if f := strings.ReplaceAll(m[1], "=", " "); !slices.Contains(flags, f) {
+			flags = append(flags, f)
+		}
+	}
+	return flags
 }
 
 // interactiveFlag reports whether a line asks a binary to run interactively.
