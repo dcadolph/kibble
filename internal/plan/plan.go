@@ -224,6 +224,10 @@ func BuildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 	for _, sub := range describedAsLinter(markdown) {
 		pl.findingSubs[sub] = true
 	}
+	pl.findingFlags = maps.Clone(findingFlags)
+	for _, f := range impliedFindingFlags(markdown) {
+		pl.findingFlags[f] = true
+	}
 	for b := range pl.binaries {
 		if describedAsWatcher(markdown, b) {
 			pl.watcher = true
@@ -258,7 +262,7 @@ func (pl *planner) flagNonzeroOK() {
 		for li := range pl.plan.Steps[si].Lines {
 			l := &pl.plan.Steps[si].Lines[li]
 			flat := docblock.Flatten(l.Cmd)
-			if bin, _ := InvokedBinary(flat, pl.binaries); bin != "" && findingFlagged(flat) {
+			if bin, _ := InvokedBinary(flat, pl.binaries); bin != "" && pl.findingFlagged(flat) {
 				l.NonzeroOK = true
 			}
 		}
@@ -328,6 +332,9 @@ type planner struct {
 	// this document: the package-level ones and those its prose introduces as
 	// linting.
 	findingSubs map[string]bool
+	// findingFlags holds the flags that put a line in check mode for this
+	// document: the fixed set plus any the document says imply one of them.
+	findingFlags map[string]bool
 	// staged marks a document that has run git add on a line that is not
 	// skipped. It is the only repository state the planner tracks, because a
 	// commit is the only allowed git form that needs any.

@@ -362,7 +362,10 @@ subcommand the page itself introduces as linting, checking, or validating for pr
 as in "The `recheck` command lints Markdown files for structure and prose problems", is
 check mode for that document. The inference is by subcommand, never by binary, since a
 linter run over a bad configuration exits nonzero too and blessing the binary would turn
-that into a hollow pass. A nonzero exit from either is the tool working. A crash stays a
+that into a hollow pass. A flag the page says implies one of the check-mode flags, as in
+"`--format sarif` implies `--fix=false`", is a check-mode flag for that document, read with
+its value as written, and an explicit `--fix` beside it turns fixing back on. A nonzero
+exit from either is the tool working. A crash stays a
 failure, and the classifier now enforces it: a check-mode line whose output holds a
 traceback or a panic falls through to the crash rules. Output the document shows under a
 command as a comment, which the tool then printed, is documented behavior as well: a
