@@ -103,7 +103,7 @@ Require stack:
 		Cmd:    "tool frob",
 		Output: "unknown command \"frob\"\n",
 		Code:   1, WantStatus: StatusFail,
-	}, { // Test 12: A name after a colon is a name, so only the named form decides.
+	}, { // Test 12: No named form reads a name after a colon, so the line falls through to FAIL.
 		Cmd:    "tool run",
 		Output: "Error: unknown profile: dev\n",
 		Code:   1, WantStatus: StatusFail,

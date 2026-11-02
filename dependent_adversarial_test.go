@@ -2,8 +2,11 @@ package main
 
 import (
 	"fmt"
-	kplan "github.com/dcadolph/kibble/internal/plan"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+
+	kplan "github.com/dcadolph/kibble/internal/plan"
 )
 
 // TestSuppressionNeedsMoreThanAMention feeds resolveDependentFailures the
@@ -85,5 +88,96 @@ func TestRepeatedSubcommandIsIndependent(t *testing.T) {
 	resolveDependentFailures(run, &kplan.Plan{Binaries: []string{"tool"}})
 	if got := run.Steps[0].Lines[1].Status; got != StatusFail {
 		t.Errorf("status = %s, want FAIL (detail %q)", got, run.Steps[0].Lines[1].Detail)
+	}
+}
+
+// TestSharedOperandAfterLineNotPassed checks the shared-operand rule. A query
+// on a file an earlier line of the same document named and did not pass is
+// blocked behind that line, and nothing weaker than a shared file pairs them.
+func TestSharedOperandAfterLineNotPassed(t *testing.T) {
+	t.Parallel()
+	const query = "Error: no such table: dogs"
+	tests := []struct {
+		Steps      []exampleStep
+		WantStatus []Status
+		WantDetail string
+	}{{ // Test 0: Queries after a blocked insert on the same database are blocked.
+		Steps: []exampleStep{{ID: "b1", Doc: "README.md", Lines: []lineResult{
+			{Cmd: "dbtool insert dogs.db dogs dogs.csv --csv", Status: StatusBlocked},
+			{Cmd: `dbtool dogs.db "select id, name from dogs"`, Status: StatusFail, output: query},
+			{Cmd: `dbtool dogs.db "select * from dogs" --csv`, Status: StatusFail, output: query},
+			{Cmd: `dbtool dogs.db "select * from dogs" --table`, Status: StatusFail, output: query},
+		}}},
+		WantStatus: []Status{StatusBlocked, StatusBlocked, StatusBlocked, StatusBlocked},
+		WantDetail: "names dogs.db, which `dbtool insert dogs.db dogs dogs.csv --csv` also named and did not pass",
+	}, { // Test 1: The same queries after a verified insert stay failures.
+		Steps: []exampleStep{{ID: "b1", Doc: "README.md", Lines: []lineResult{
+			{Cmd: "dbtool insert dogs.db dogs dogs.csv --csv", Status: StatusVerified},
+			{Cmd: `dbtool dogs.db "select id, name from dogs"`, Status: StatusFail, output: query},
+			{Cmd: `dbtool dogs.db "select * from dogs" --csv`, Status: StatusFail, output: query},
+		}}},
+		WantStatus: []Status{StatusVerified, StatusFail, StatusFail},
+	}, { // Test 2: A shared bare word is not a file, so it does not pair.
+		Steps: []exampleStep{{ID: "b1", Doc: "README.md", Lines: []lineResult{
+			{Cmd: "dbtool build release", Status: StatusBlocked},
+			{Cmd: "dbtool test release", Status: StatusFail, output: "error: test failed"},
+		}}},
+		WantStatus: []Status{StatusBlocked, StatusFail},
+	}, { // Test 3: A shared file in a different document does not pair.
+		Steps: []exampleStep{
+			{ID: "b1", Doc: "docs/load.md", Lines: []lineResult{
+				{Cmd: "dbtool insert dogs.db dogs dogs.csv --csv", Status: StatusBlocked},
+			}},
+			{ID: "b2", Doc: "README.md", Lines: []lineResult{
+				{Cmd: `dbtool dogs.db "select * from dogs"`, Status: StatusFail, output: query},
+			}},
+		},
+		WantStatus: []Status{StatusBlocked, StatusFail},
+	}, { // Test 4: A flag's value counts, and a step earlier in the document pairs.
+		Steps: []exampleStep{
+			{ID: "b1", Doc: "README.md", Lines: []lineResult{
+				{Cmd: "dbtool load --file=data/dogs.db", Status: StatusSkipped},
+			}},
+			{ID: "b2", Doc: "README.md", Lines: []lineResult{
+				{Cmd: "dbtool query --db data/dogs.db", Status: StatusFail, output: query},
+			}},
+		},
+		WantStatus: []Status{StatusSkipped, StatusBlocked},
+		WantDetail: "names data/dogs.db, which `dbtool load --file=data/dogs.db` also named and did not pass",
+	}, { // Test 5: A URL and a query string holding a dot are not files.
+		Steps: []exampleStep{{ID: "b1", Doc: "README.md", Lines: []lineResult{
+			{Cmd: `dbtool fetch https://example.com/x "select a.b from t"`, Status: StatusBlocked},
+			{Cmd: `dbtool show https://example.com/x "select a.b from t"`, Status: StatusFail, output: "error"},
+		}}},
+		WantStatus: []Status{StatusBlocked, StatusFail},
+	}, { // Test 6: Two runs of one script with different arguments are separate.
+		Steps: []exampleStep{{ID: "b1", Doc: "README.md", Lines: []lineResult{
+			{Cmd: "python3 scripts/bench.py --engine both", Status: StatusBlocked},
+			{Cmd: "python3 scripts/bench.py --engine one", Status: StatusFail, output: "error"},
+		}}},
+		WantStatus: []Status{StatusBlocked, StatusFail},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			run := &exampleRun{Steps: test.Steps}
+			resolveDependentFailures(run, &kplan.Plan{Binaries: []string{"dbtool"}})
+			var got []Status
+			last := ""
+			for _, s := range run.Steps {
+				for _, l := range s.Lines {
+					got = append(got, l.Status)
+					if l.Reason == ReasonDependsOnSkipped {
+						last = l.Detail
+					}
+				}
+			}
+			if diff := cmp.Diff(test.WantStatus, got); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s", diff)
+			}
+			if test.WantDetail != "" && last != test.WantDetail {
+				t.Errorf("detail = %q, want %q", last, test.WantDetail)
+			}
+		})
 	}
 }

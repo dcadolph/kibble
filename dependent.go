@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
-	"github.com/dcadolph/kibble/internal/docblock"
-	kplan "github.com/dcadolph/kibble/internal/plan"
 	"regexp"
 	"strings"
+
+	"github.com/dcadolph/kibble/internal/docblock"
+	kplan "github.com/dcadolph/kibble/internal/plan"
+	"github.com/dcadolph/kibble/internal/shell"
 )
 
 // Failures that may follow from lines which never ran. None of these
@@ -80,11 +82,15 @@ func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 			}
 		}
 	}
+	// Earlier line results per document, for the shared-operand rule, which
+	// reads across the document's steps rather than within one.
+	prior := map[string][]lineResult{}
 	for si := range run.Steps {
 		s := &run.Steps[si]
 		for li := range s.Lines {
 			l := &s.Lines[li]
 			if l.Status != StatusFail {
+				prior[s.Doc] = append(prior[s.Doc], *l)
 				continue
 			}
 			if cited := citedSkipped(l.output, skippedCmds); cited != "" {
@@ -103,9 +109,73 @@ func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 				l.Status = StatusBlocked
 				l.Reason = ReasonDependsOnSkipped
 				l.Detail = fmt.Sprintf("says to run `%s` first, which did not run", need)
+			} else if op, earlier := sharedOperandNotPassed(prior[s.Doc], l.Cmd); op != "" {
+				l.Status = StatusBlocked
+				l.Reason = ReasonDependsOnSkipped
+				l.Detail = fmt.Sprintf("names %s, which `%s` also named and did not pass", op, earlier)
+			}
+			prior[s.Doc] = append(prior[s.Doc], *l)
+		}
+	}
+}
+
+// sharedOperandNotPassed returns a file-shaped operand of a failing line and
+// the first earlier line of the same document that also named it and was
+// skipped, blocked, or stopped by a gap. A query on a database whose load was
+// blocked is the same hole surfacing again. An earlier failure does not count,
+// since a break repeated on several lines of one file is still several
+// reports. Like the other rules here it is not causal: the earlier line still
+// reports, and the later ones stop counting as separate breaks.
+func sharedOperandNotPassed(prior []lineResult, cmd string) (operand, earlier string) {
+	for _, op := range fileOperands(cmd) {
+		for _, p := range prior {
+			if p.Status == StatusVerified || p.Status == StatusFail {
+				continue
+			}
+			for _, pop := range fileOperands(p.Cmd) {
+				if pop == op {
+					return op, docblock.Flatten(p.Cmd)
+				}
 			}
 		}
 	}
+	return "", ""
+}
+
+// reScriptFile matches a source file an interpreter runs, which is the program
+// of a line such as python3 scripts/bench.py rather than data it reads.
+var reScriptFile = regexp.MustCompile(`\.(py|js|mjs|cjs|ts|sh|bash|rb|pl|php|lua)$`)
+
+// fileOperands returns the operands of a line shaped like files: a dot or a
+// slash, no whitespace, not a flag, not a URL and not a script. A flag written
+// as --flag=value contributes its value. The program is not an operand, whether
+// it is the command name or a script handed to an interpreter, so two runs of
+// the same program with different arguments never pair.
+func fileOperands(cmd string) []string {
+	words := shell.Operands(cmd)
+	if words == nil {
+		if fields := strings.Fields(cmd); len(fields) > 1 {
+			words = fields[1:]
+		}
+	}
+	var out []string
+	for _, w := range words {
+		if strings.HasPrefix(w, "-") {
+			_, v, ok := strings.Cut(w, "=")
+			if !ok {
+				continue
+			}
+			w = v
+		}
+		switch {
+		case w == "" || strings.ContainsAny(w, " \t\n"):
+		case strings.HasPrefix(w, "http://"), strings.HasPrefix(w, "https://"), strings.HasPrefix(w, "ftp://"):
+		case reScriptFile.MatchString(w):
+		case strings.ContainsAny(w, "./"):
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 // rePrerequisiteNear matches the phrasings a tool uses to say that something
