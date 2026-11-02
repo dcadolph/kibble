@@ -33,10 +33,11 @@ func TestClassifyRegisteredAndEnvironment(t *testing.T) {
 		Output: "\n✗ Plugin Error\n\n  Plugin 'my_plugin' not found\n\n",
 		Code:   1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
 		WantDetail: "names a plugin the reader defines first",
-	}, { // Test 2: The same preset text for a command that never names it is a failure.
+	}, { // Test 2: A preset the command never named came from defaults or configuration.
 		Cmd:    "lla --preset other",
 		Output: "Error: Filter(\"Unknown preset 'source-files'\")\n",
-		Code:   1, WantStatus: StatusFail,
+		Code:   1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "reached for a preset the reader defines first, which the command never named",
 	}, { // Test 3: A configuration that would not resolve is the reader's project to supply.
 		Cmd: "cspell .",
 		Output: `Failed to process "/work/repo/packages/cspell-trie-lib/api/README.md" Configuration Loader Error: Failed to resolve configuration file: "@cspell/dict-es-es/cspell-ext.json" referenced from "./packages/cspell-trie-lib/cspell.json"
@@ -146,6 +147,35 @@ Require stack:
 	}, { // Test 20: An unknown flag named config is the document's defect.
 		Cmd:    "redocly bundle --config",
 		Output: "Unknown argument: --config\n",
+		Code:   1, WantStatus: StatusFail,
+	}, { // Test 21: Nothing to do for this profile is a profile the reader defines first.
+		Cmd:    "dotdrop install",
+		Output: "[WARN] no dotfile to install for this profile (\"87271e6263ea\")\n",
+		Code:   1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "reached for a profile the reader defines first",
+	}, { // Test 22: A profile only the tool names is one the reader defines first.
+		Cmd:    "dotdrop update --key f_vimrc",
+		Output: "[ERR] no such profile \"87271e6263ea\"\n",
+		Code:   1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "reached for a profile the reader defines first, which the command never named",
+	}, { // Test 23: No such profile the command passed names one the reader defines first.
+		Cmd:    "dotdrop install -p work",
+		Output: "[ERR] no such profile \"work\"\n",
+		Code:   1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "names a profile the reader defines first",
+	}, { // Test 24: No plugins installed is a plugin the reader installs first.
+		Cmd:    "lla update",
+		Output: "\n  No plugins are currently installed. Run 'lla install' to add one.\n",
+		Code:   1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "reached for a plugin the reader defines first",
+	}, { // Test 25: A missing file is not a registered name.
+		Cmd:    "tool load config.yaml",
+		Output: "Error: open config.yaml: no such file or directory\n",
+		Code:   1, WantStatus: StatusGap,
+		WantDetail: "references config.yaml, which no documented step creates",
+	}, { // Test 26: An unknown flag named profile is the document's defect.
+		Cmd:    "tool run --profile dev",
+		Output: "Error: unknown flag: --profile\n",
 		Code:   1, WantStatus: StatusFail,
 	}}
 

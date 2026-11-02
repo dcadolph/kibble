@@ -191,18 +191,14 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Reason = ReasonMissingFixture
 		lr.Detail = "names a git ref this repository does not have, which a document writes " +
 			"both as a placeholder the reader replaces and as a ref that moved: " + tail
-	case registeredNoun(lr.Cmd, o.output) != "" || namelessRegisteredNoun(o.output) != "":
-		// The tool named a preset, plugin, or similar that the command passed,
-		// or said it has none without naming one. The reader defines those
-		// first, and the tool says only that it has none.
+	case registeredDetail(lr.Cmd, o.output) != "":
+		// The tool said it has no preset, plugin, or similar by that name, or
+		// none at all. The reader defines those first. A name the command never
+		// passed came from the tool's defaults, its environment, or the reader's
+		// configuration, none of which is the document's claim.
 		lr.Status = StatusBlocked
 		lr.Reason = ReasonMissingFixture
-		if noun := registeredNoun(lr.Cmd, o.output); noun != "" {
-			lr.Detail = fmt.Sprintf("names a %s the reader defines first: %s", noun, tail)
-		} else {
-			lr.Detail = fmt.Sprintf("reached for a %s the reader defines first: %s",
-				namelessRegisteredNoun(o.output), tail)
-		}
+		lr.Detail = registeredDetail(lr.Cmd, o.output) + ": " + tail
 	case reRemoteConfig.MatchString(o.output):
 		lr.Status = StatusBlocked
 		lr.Reason = ReasonMissingFixture
@@ -306,6 +302,13 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 	return lr
 }
 
+// registeredNouns is the closed list of names a reader defines before a tool
+// can use them. It is closed on purpose: argument, flag, option, command, and
+// subcommand name a tool's own vocabulary, so a document using one wrongly is
+// broken.
+const registeredNouns = "preset|profile|alias|plugin|group|context|workspace|project|remote" +
+	"|registry|template|theme"
+
 var (
 	// reUsageError matches a tool rejecting the words of the command itself.
 	reUsageError = regexp.MustCompile(`(?i)\b(unexpected|unrecognized|unknown|invalid) ` +
@@ -371,25 +374,32 @@ var (
 			`|could not find remote (branch|ref) '?([^\s']+)'?` +
 			`|(?:remote )?ref '?([^\s']+)'? not found`)
 	// reUnknownRegistered matches a tool saying it has no preset, profile,
-	// plugin, or similar of the name given. The noun list is closed on purpose:
-	// argument, flag, option, command, and subcommand name a tool's own
-	// vocabulary, so a document using one wrongly is broken.
+	// plugin, or similar of the name given.
 	reUnknownRegistered = regexp.MustCompile(
-		`(?i)unknown (preset|profile|alias|plugin|group|context|workspace|project|remote` +
-			`|registry|template|theme) '?([^\s'"]+)'?`)
+		`(?i)unknown (` + registeredNouns + `) '?([^\s'"]+)'?`)
 	// reUnknownNameless matches the same refusal over the same closed noun list,
 	// with an optional group that captures a name written after the noun and a
 	// space or a colon. The nameless form applies only when that group is empty,
 	// i.e. the noun is at the end of the text or is followed by a closing quote
-	// or punctuation. When a name follows, only the named form decides, because
-	// it deliberately returns FAIL for a name the command never passed.
+	// or punctuation. When a name follows, only the named forms decide, and a
+	// name after a colon is not one they read.
 	reUnknownNameless = regexp.MustCompile(
-		`(?i)\bunknown (preset|profile|alias|plugin|group|context|workspace|project|remote` +
-			`|registry|template|theme)\b( +'?[^\s'"]|\s*:\s*'?[^\s'"])?`)
+		`(?i)\bunknown (` + registeredNouns + `)\b( +'?[^\s'"]|\s*:\s*'?[^\s'"])?`)
 	// reRegisteredNotFound matches the same refusal worded as a name not found.
 	reRegisteredNotFound = regexp.MustCompile(
-		`(?i)\b(preset|profile|alias|plugin|group|context|workspace|project|remote|registry` +
-			`|template|theme) '([^']+)' not found`)
+		`(?i)\b(` + registeredNouns + `) '([^']+)' not found`)
+	// reNoSuchRegistered matches the same refusal worded as no such noun, with
+	// the name after it optional and optionally quoted.
+	reNoSuchRegistered = regexp.MustCompile(
+		`(?i)\bno such (` + registeredNouns + `)\b(?: +["']?([^\s"']+)["']?)?`)
+	// reForThisRegistered matches a tool reporting nothing to do for the
+	// current noun, which names no name.
+	reForThisRegistered = regexp.MustCompile(
+		`(?i)\bfor (?:this|the current) (` + registeredNouns + `)\b`)
+	// reNoneRegistered matches a tool saying it has none of the noun at all.
+	reNoneRegistered = regexp.MustCompile(
+		`(?i)\bno (` + registeredNouns + `)s? (?:are|is) (?:currently )?` +
+			`(?:installed|configured|registered|defined|loaded|enabled)\b`)
 	// reRemoteConfig matches a tool naming a remote or configuration section
 	// that the reader configures first, in rclone's family of wordings.
 	reRemoteConfig = regexp.MustCompile(
@@ -828,33 +838,64 @@ func bareOperandAfterSub(cmd string) string {
 	return ""
 }
 
-// registeredNoun returns the lowercase noun of a registered name the tool
-// reported missing when the command passed that name as a word, or empty. A
-// name the command never passed is the tool's own business, so it convicts
-// nothing here.
-func registeredNoun(cmd, output string) string {
-	words := shell.ArgWordsOrFields(cmd)
-	for _, re := range []*regexp.Regexp{reUnknownRegistered, reRegisteredNotFound} {
-		for _, m := range re.FindAllStringSubmatch(output, -1) {
-			for _, tok := range words {
-				if _, val, ok := strings.Cut(tok, "="); ok && val == m[2] {
-					return strings.ToLower(m[1])
-				}
-				if tok == m[2] {
-					return strings.ToLower(m[1])
-				}
-			}
-		}
+// registeredDetail returns the verdict detail, without the output tail, for a
+// tool reporting a registered name it does not have, or empty when the output
+// reports none. A name the command passed is preferred over one it did not.
+func registeredDetail(cmd, output string) string {
+	noun, passed := registeredNoun(cmd, output)
+	switch {
+	case passed:
+		return fmt.Sprintf("names a %s the reader defines first", noun)
+	case noun != "":
+		return fmt.Sprintf("reached for a %s the reader defines first, which the command never named",
+			noun)
+	}
+	if noun := namelessRegisteredNoun(output); noun != "" {
+		return fmt.Sprintf("reached for a %s the reader defines first", noun)
 	}
 	return ""
 }
 
+// registeredNoun returns the lowercase noun of the first registered name the
+// tool reported missing and whether the command passed that name as a word. A
+// name the command passed is returned before one it did not.
+func registeredNoun(cmd, output string) (noun string, passed bool) {
+	words := shell.ArgWordsOrFields(cmd)
+	named := []*regexp.Regexp{reUnknownRegistered, reRegisteredNotFound, reNoSuchRegistered}
+	for _, re := range named {
+		for _, m := range re.FindAllStringSubmatch(output, -1) {
+			if m[2] == "" {
+				continue
+			}
+			if noun == "" {
+				noun = strings.ToLower(m[1])
+			}
+			for _, tok := range words {
+				if _, val, ok := strings.Cut(tok, "="); ok && val == m[2] {
+					return strings.ToLower(m[1]), true
+				}
+				if tok == m[2] {
+					return strings.ToLower(m[1]), true
+				}
+			}
+		}
+	}
+	return noun, false
+}
+
 // namelessRegisteredNoun returns the lowercase noun of a registered name the
-// tool said it does not know without naming one, or empty. A noun followed by
+// tool said it does not have without naming one, or empty. A noun followed by
 // a space and a name is left to registeredNoun.
 func namelessRegisteredNoun(output string) string {
-	for _, m := range reUnknownNameless.FindAllStringSubmatch(output, -1) {
-		if m[2] == "" {
+	for _, re := range []*regexp.Regexp{reUnknownNameless, reNoSuchRegistered} {
+		for _, m := range re.FindAllStringSubmatch(output, -1) {
+			if m[2] == "" {
+				return strings.ToLower(m[1])
+			}
+		}
+	}
+	for _, re := range []*regexp.Regexp{reForThisRegistered, reNoneRegistered} {
+		if m := re.FindStringSubmatch(output); m != nil {
 			return strings.ToLower(m[1])
 		}
 	}
