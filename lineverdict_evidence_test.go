@@ -248,3 +248,31 @@ func TestClassifyShownOutput(t *testing.T) {
 		})
 	}
 }
+
+// TestClassifyCheckModeCrash checks that a check-mode line which crashed is
+// not a documented finding, while one that reported findings is.
+func TestClassifyCheckModeCrash(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		WantStatus Status
+		Output     string
+	}{{ // Test 0: A traceback on a check-mode line stays a failure.
+		Output: "Traceback (most recent call last):\n  File \"/usr/bin/tool\", line 8, in <module>\n" +
+			"    sys.exit(main())\nKeyError: 'rules'\n",
+		WantStatus: StatusFail,
+	}, { // Test 1: A plain finding report is the documented exit.
+		Output:     "docs/a.md:3: MD001 heading levels should only increment by one\n1 problem\n",
+		WantStatus: StatusVerified,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			lr := classifyLineResult(lineResult{Cmd: "tool lint ."}, kplan.PlanLine{NonzeroOK: true},
+				lineOutcome{code: 1, output: test.Output}, false, nil, lineTimeout)
+			if lr.Status != test.WantStatus {
+				t.Errorf("verdict = %s %q, want %s (detail %q)",
+					lr.Status, lr.Reason, test.WantStatus, lr.Detail)
+			}
+		})
+	}
+}

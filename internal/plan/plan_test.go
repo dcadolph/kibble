@@ -1328,3 +1328,47 @@ func TestPlanShown(t *testing.T) {
 		})
 	}
 }
+
+// TestDescribedAsLinter checks that a subcommand the page introduces as
+// linting for problems is check mode for that page, and that a subcommand
+// described as checking something else is not.
+func TestDescribedAsLinter(t *testing.T) {
+	t.Parallel()
+	recheck := "# recheck\n\nThe `recheck` command lints Markdown files for structure and " +
+		"prose problems.\n\n"
+	tests := []struct {
+		Markdown    string
+		WantSubs    []string
+		WantNonzero []bool
+	}{{ // Test 0: Both a plain run and one whose stdout goes to a file are check mode.
+		Markdown: recheck + "```sh\ntool recheck docs\n```\n\n" +
+			"```sh\ntool recheck docs --format=json > out.json\n```\n",
+		WantSubs: []string{"recheck"}, WantNonzero: []bool{true, true},
+	}, { // Test 1: Checking whether something exists is not linting.
+		Markdown: "# init\n\nThe `init` command checks whether a project exists.\n\n" +
+			"```sh\ntool init\n```\n",
+		WantNonzero: []bool{false},
+	}, { // Test 2: A linter subcommand of another page does not carry over.
+		Markdown:    "# build\n\nThe `build` command bundles files.\n\n```sh\ntool recheck docs\n```\n",
+		WantNonzero: []bool{false},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(test.WantSubs, describedAsLinter(test.Markdown),
+				cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("describedAsLinter mismatch (-want +got):\n%s", diff)
+			}
+			plan := BuildPlan("repo", "", test.Markdown, []string{"tool"}, nil, nil, testRecognizer())
+			var got []bool
+			for _, l := range projectPlan(plan) {
+				for _, pl := range l {
+					got = append(got, pl.NonzeroOK)
+				}
+			}
+			if diff := cmp.Diff(test.WantNonzero, got); diff != "" {
+				t.Errorf("NonzeroOK mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
