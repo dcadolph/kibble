@@ -3,6 +3,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to smoke, such as v1.0.0.
+        required: true
+        type: string
 jobs:
   smoke:
     runs-on: ubuntu-latest
@@ -13,7 +18,7 @@ jobs:
       - name: Wait for release assets
         shell: bash
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           set -euo pipefail
           asset="kibble_${TAG#v}_linux_amd64.tar.gz"
@@ -28,4 +33,4 @@ jobs:
         uses: ./
         with:
           repo: .
-          version: ${{ github.event.release.tag_name }}
+          version: ${{ github.event.release.tag_name || inputs.tag }}
