@@ -136,7 +136,7 @@ func (pl *planner) skipReason(cmd, flat string) (string, verdict.Reason, bool) {
 		return fmt.Sprintf("docs use %q as a placeholder the reader must fill in",
 			bareWordPlaceholder(flat)), verdict.ReasonPlaceholder, false
 	}
-	if bin != "" {
+	if bin != "" || readsPathCommands[firstWord(flat)] {
 		if op := pl.readerNamedOperand(flat); op != "" {
 			return fmt.Sprintf("docs use %q as a placeholder the reader must fill in", op),
 				verdict.ReasonPlaceholder, false
@@ -357,6 +357,19 @@ func bareWordPlaceholder(flat string) string {
 		}
 	}
 	return ""
+}
+
+// readsPathCommands are the commands whose operands name paths they read, so
+// a reader-named operand of one is a path the reader must supply.
+var readsPathCommands = map[string]bool{"cd": true, "ls": true, "tree": true, "cat": true}
+
+// firstWord returns the first whitespace-separated word of a line.
+func firstWord(flat string) string {
+	fields := strings.Fields(flat)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 // reReaderNamed matches an operand docs use as a stand-in name the reader
