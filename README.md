@@ -180,6 +180,14 @@ The exit code tells a script what happened:
   could run either. The action fails on purpose, since a check that ran nothing must not pass.
 - `130` means the run was interrupted.
 
+## What it has found
+
+kibble's first sweeps ran it on open source projects it had never seen, and some of the
+documented commands it ran failed in a clean container. Each failure was replayed by hand,
+and the fixes were filed upstream and merged by each project's maintainers.
+[docs/FINDS.md](docs/FINDS.md) lists every merged fix with the documented line, what the
+command printed and its exit code, and the merged pull request.
+
 ## Flags
 
 | Flag        | Default       | What                                     &nbsp; |
