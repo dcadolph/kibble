@@ -211,6 +211,15 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Status = StatusBlocked
 		lr.Reason = ReasonMissingFixture
 		lr.Detail = "could not load a configuration, which the reader's project supplies: " + tail
+	case reReaderConfig.MatchString(o.output):
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonMissingFixture
+		lr.Detail = "points to a configuration entry the reader writes first: " + tail
+	case reWantsPath.MatchString(o.output) && bareOperandAfterSub(lr.Cmd) != "":
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonMissingFixture
+		lr.Detail = "passed " + bareOperandAfterSub(lr.Cmd) +
+			" where the tool wanted a path, a name the reader defines in configuration: " + tail
 	case reNothingSearched.MatchString(o.output):
 		// Not a skip: the line ran. Not a failure either, since a search that
 		// was handed nothing to read has not tested what the document claims.
@@ -389,7 +398,20 @@ var (
 	// reConfigLoad matches a tool that could not load a configuration, which
 	// the reader's project supplies and a fresh session does not have.
 	reConfigLoad = regexp.MustCompile(
-		`(?i)(failed|unable|could not) to (load|resolve|read) (the )?config(uration)?( file)?`)
+		`(?i)(failed|unable|could not) to (load|resolve|read|use|parse|import|find|open) ` +
+			`(the )?config(uration)?( file)?`)
+	// reReaderConfig matches output telling the reader to define, add, or set
+	// something in or under their configuration.
+	reReaderConfig = regexp.MustCompile(
+		`(?i)\b(define|configure|declare|add|set|specify|list)\b[^.\n]{0,80}` +
+			`\b(in|under|to) (your|the|an?) (` +
+			"`" + `?[\w.-]*config(uration)?[\w.-]*` + "`" + `?( file)?` +
+			`|` + "`" + `?[\w.-]+\.(ya?ml|toml|json|ini)` + "`" + `?` +
+			`|` + "`" + `[\w-]+:?` + "`" + ` (entry|section|block|key))`)
+	// reWantsPath matches a tool asking for a valid path, file, or directory.
+	reWantsPath = regexp.MustCompile(
+		`(?i)\b(provide|specify|expected|requires?|needs?) (a )?valid ` +
+			`(path|file ?name|file|directory)\b`)
 	// reNothingSearched matches a search reporting that its filters left it
 	// nothing to look at. The command ran and worked; what it says is that
 	// this repository holds no file of the kind the example targets, as
@@ -529,6 +551,9 @@ var reNodeEnoent = regexp.MustCompile(`ENOENT: no such file or directory, \w+ '(
 // tach says "The path 'my_package' does not exist."
 var reNotExist = regexp.MustCompile(`(?i)\b(?:path|file|directory) '([^']+)' does not exist`)
 
+// rePathNotExist matches a slash-bearing path a tool says does not exist.
+var rePathNotExist = regexp.MustCompile(`(?:^|\s)([\w./-]*/[\w.-]+) does not exist`)
+
 // reFileNotFound matches uv's sentence for a missing input, as in
 // "error: File not found: requirements.in".
 var reFileNotFound = regexp.MustCompile(`(?i)\bfile not found: '?"?([^\s'"]+)`)
@@ -548,7 +573,8 @@ var reErrnoName = regexp.MustCompile(`^E[A-Z]+$`)
 // generic shape, which would otherwise capture ENOENT itself.
 func reportedNames(output string) []string {
 	var out []string
-	for _, re := range []*regexp.Regexp{reNodeEnoent, reNotExist, reFileNotFound, reEnoent} {
+	shapes := []*regexp.Regexp{reNodeEnoent, reNotExist, rePathNotExist, reFileNotFound, reEnoent}
+	for _, re := range shapes {
 		m := re.FindStringSubmatch(output)
 		if m == nil {
 			continue
@@ -779,6 +805,25 @@ func undocumentedSetting(lines []string, documented map[string]bool) string {
 			}
 			return m
 		}
+	}
+	return ""
+}
+
+// bareOperandAfterSub returns the first operand after the command word that is
+// not a flag, is not the subcommand, and holds no dot and no slash, or empty.
+func bareOperandAfterSub(cmd string) string {
+	words := shell.ArgWordsOrFields(cmd)
+	if len(words) < 2 {
+		return ""
+	}
+	for i, w := range words[1:] {
+		if strings.HasPrefix(w, "-") || (i == 0 && shell.IsSubcommandName(w)) {
+			continue
+		}
+		if !strings.ContainsAny(w, "./") {
+			return w
+		}
+		return ""
 	}
 	return ""
 }
