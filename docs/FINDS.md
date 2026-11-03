@@ -2,57 +2,35 @@
 
 This page lists merged fixes for documented commands that failed when kibble ran them, in repositories kibble had never run on before. Each failure was replayed in a clean container, and each fix was filed by kibble's author after reading the project's contributing rules. Most fixes change the documentation. Two change the code so the documented command works. Open reports join the list when they merge.
 
-Entries are ordered by merge date, newest first.
+Entries are ordered by the project's GitHub stars, most first. Star counts are as of the refresh date below.
 
-## dundee/gdu
+## Contents
 
-- Project: [dundee/gdu](https://github.com/dundee/gdu)
-- Documented at: [`README.md`, line 382](https://github.com/dundee/gdu/blob/14907d977e7682b82d1e2f5811d5ded1f01cbc91/README.md#L382) and [`CONTRIBUTING.md`, line 16](https://github.com/dundee/gdu/blob/14907d977e7682b82d1e2f5811d5ded1f01cbc91/CONTRIBUTING.md#L16), tested at `14907d9`
-- Command as written: `make install-dev-dependencies`
-- In a clean container: exit 2 with `GOBIN` exported, `cannot install, GOBIN must be an absolute path`, and exit 2 without it, a gotraceui build error on Go 1.24 and later
-- Fix: Renames the Makefile's go command variable from `GOBIN` to `GO` and drops the gotraceui install, which no `go install` form can build today.
-- Merged PR: [dundee/gdu#704](https://github.com/dundee/gdu/pull/704)
-- Merged: 2026-11-03
+| Project                                                                | Stars | What failed                                          | Merged     |
+|------------------------------------------------------------------------|-------|------------------------------------------------------|------------|
+| [pyenv/pyenv](#pyenvpyenv)                                             | 45.2k | Three README lines ran a command that does not exist | 2026-10-23 |
+| [jqlang/jq](#jqlangjq)                                                 | 36.0k | Source build left `jq` unable to load its library    | 2026-10-24 |
+| [goreleaser/goreleaser](#goreleasergoreleaser)                         | 16.1k | Quick start build failed before the first tag        | 2026-11-01 |
+| [pypa/pipx](#pypapipx)                                                 | 13.0k | Pinned install example failed on Python 3.15         | 2026-10-28 |
+| [johnkerl/miller (library setup)](#johnkerlmiller-library-setup)       | 10.1k | Setup steps had a doubled `cd`                       | 2026-10-23 |
+| [johnkerl/miller (prepipe examples)](#johnkerlmiller-prepipe-examples) | 10.1k | Unquoted prepipe examples broke on their own flags   | 2026-10-23 |
+| [ducaale/xh](#ducaalexh)                                               | 8.2k  | Example host had a stray `I`                         | 2026-10-23 |
+| [mufeedvh/code2prompt](#mufeedvhcode2prompt)                           | 7.7k  | Tutorial ran a removed flag                          | 2026-11-03 |
+| [dundee/gdu](#dundeegdu)                                               | 6.2k  | `make install-dev-dependencies` failed               | 2026-11-03 |
+| [tach-org/tach](#tach-orgtach)                                         | 2.9k  | Install command used a flag where a target belongs   | 2026-10-29 |
+| [nosarthur/gita](#nosarthurgita)                                       | 2.0k  | `gita context auto` crashed on a fresh install       | 2026-10-21 |
+| [wait4x/wait4x](#wait4xwait4x)                                         | 1.4k  | Examples used flags that do not exist                | 2026-10-23 |
+| [ehmicky/nve](#ehmickynve)                                             | 0.7k  | `nve 12 npm test` failed on Node 12                  | 2026-10-21 |
 
-## mufeedvh/code2prompt
+## pyenv/pyenv
 
-- Project: [mufeedvh/code2prompt](https://github.com/mufeedvh/code2prompt)
-- Documented at: [`website/src/content/docs/docs/tutorials/learn_filters.mdx`, line 188](https://github.com/mufeedvh/code2prompt/blob/66585136062c04275ddd5a01c5518a4d78c4aa76/website/src/content/docs/docs/tutorials/learn_filters.mdx#L188), tested at `6658513`
-- Command as written: `code2prompt test_dir --include="*.py" --exclude="**/uppercase/*" --include-priority=true`
-- In a clean container: exit 2, the removed `--include-priority` flag is rejected as an unexpected argument
-- Fix: Drops the removed flag from the filter tutorial in all seven languages. Without it the command already includes the three files the tutorial describes.
-- Merged PR: [mufeedvh/code2prompt#346](https://github.com/mufeedvh/code2prompt/pull/346)
-- Merged: 2026-11-03
-
-## goreleaser/goreleaser
-
-- Project: [goreleaser/goreleaser](https://github.com/goreleaser/goreleaser)
-- Documented at: [`www/content/getting-started/quick-start.md`, line 138](https://github.com/goreleaser/goreleaser/blob/a9fb415389a2e55906ae457d9f76bb77b3cb6056/www/content/getting-started/quick-start.md#L138) ([lines 135 to 196](https://github.com/goreleaser/goreleaser/blob/a9fb415389a2e55906ae457d9f76bb77b3cb6056/www/content/getting-started/quick-start.md#L135-L196)), tested at `a9fb415`
-- Command as written: `goreleaser build --single-target --clean`
-- In a clean container: exit 1, `git doesn't contain any tags - either add a tag or use --snapshot`
-- Fix: Adds `--snapshot` to the quick start's single-target build lines, which run before the guide creates a tag.
-- Merged PR: [goreleaser/goreleaser#7232](https://github.com/goreleaser/goreleaser/pull/7232)
-- Merged: 2026-11-01
-
-## tach-org/tach
-
-- Project: [tach-org/tach](https://github.com/tach-org/tach)
-- Documented at: [`docs/getting-started/getting-started.md`, line 76](https://github.com/tach-org/tach/blob/bc92d71520a1acdb9aacd1f2362ca49b58259dda/docs/getting-started/getting-started.md#L76), swept at `bc92d71`
-- Command as written: `tach install --pre-commit`
-- In a clean container: exit 2, `tach install: error: the following arguments are required: target`
-- Fix: Changes the command to `tach install pre-commit`, matching the commands reference.
-- Merged PR: [tach-org/tach#961](https://github.com/tach-org/tach/pull/961)
-- Merged: 2026-10-29
-
-## pypa/pipx
-
-- Project: [pypa/pipx](https://github.com/pypa/pipx)
-- Documented at: [`docs/how-to/install-pipx.rst`, line 198](https://github.com/pypa/pipx/blob/9a49f1957fad930860189421f2cd29d5a5604fd4/docs/how-to/install-pipx.rst#L198), swept at `9a49f19`
-- Command as written: `pipx install git+https://github.com/psf/black.git@ce14fa8b497bae2b50ec48b3bd7022573a59cdb1`
-- In a clean container: exit 1 on Python 3.15.0, `error: unknown type name 'PyFutureFeatures'` (a typed-ast build failure)
-- Fix: Replaces the pinned commit with the commit of a current black release, which installs on Python 3.15.
-- Merged PR: [pypa/pipx#2181](https://github.com/pypa/pipx/pull/2181)
-- Merged: 2026-10-28
+- Project: [pyenv/pyenv](https://github.com/pyenv/pyenv)
+- Documented at: `README.md`, lines [187](https://github.com/pyenv/pyenv/blob/7d65a4683c91b29f7501da4c8737d4e786f8cad2/README.md#L187), [725](https://github.com/pyenv/pyenv/blob/7d65a4683c91b29f7501da4c8737d4e786f8cad2/README.md#L725) and [728](https://github.com/pyenv/pyenv/blob/7d65a4683c91b29f7501da4c8737d4e786f8cad2/README.md#L728), swept at `7d65a46`
+- Command as written: `path/to/pyenv --install <shell executable name>`
+- In a clean container: exit 1, ``pyenv: no such command `--install'``
+- Fix: Changes the three lines to `pyenv init --install`, the form the neighboring lines already use.
+- Merged PR: [pyenv/pyenv#3603](https://github.com/pyenv/pyenv/pull/3603)
+- Merged: 2026-10-23
 
 ## jqlang/jq
 
@@ -64,14 +42,34 @@ Entries are ordered by merge date, newest first.
 - Merged PR: [jqlang/jq#3692](https://github.com/jqlang/jq/pull/3692)
 - Merged: 2026-10-24
 
-## wait4x/wait4x
+## goreleaser/goreleaser
 
-- Project: [wait4x/wait4x](https://github.com/wait4x/wait4x)
-- Documented at: [`README.md`, lines 253 to 274](https://github.com/wait4x/wait4x/blob/6e9c8413fd45da50b4ec65e97effb7e27550708a/README.md#L253-L274), swept at `6e9c841`
-- Command as written: `wait4x dns A example.com --expected-ip 93.184.216.34`
-- In a clean container: exit 1, `Error: unknown flag: --expected-ip`
-- Fix: Renames the `--expected-*` flags to the `--expect-*` flags the commands define and moves the examples to hosts that resolve today.
-- Merged PR: [wait4x/wait4x#577](https://github.com/wait4x/wait4x/pull/577)
+- Project: [goreleaser/goreleaser](https://github.com/goreleaser/goreleaser)
+- Documented at: [`www/content/getting-started/quick-start.md`, line 138](https://github.com/goreleaser/goreleaser/blob/a9fb415389a2e55906ae457d9f76bb77b3cb6056/www/content/getting-started/quick-start.md#L138) ([lines 135 to 196](https://github.com/goreleaser/goreleaser/blob/a9fb415389a2e55906ae457d9f76bb77b3cb6056/www/content/getting-started/quick-start.md#L135-L196)), tested at `a9fb415`
+- Command as written: `goreleaser build --single-target --clean`
+- In a clean container: exit 1, `git doesn't contain any tags - either add a tag or use --snapshot`
+- Fix: Adds `--snapshot` to the quick start's single-target build lines, which run before the guide creates a tag.
+- Merged PR: [goreleaser/goreleaser#7232](https://github.com/goreleaser/goreleaser/pull/7232)
+- Merged: 2026-11-01
+
+## pypa/pipx
+
+- Project: [pypa/pipx](https://github.com/pypa/pipx)
+- Documented at: [`docs/how-to/install-pipx.rst`, line 198](https://github.com/pypa/pipx/blob/9a49f1957fad930860189421f2cd29d5a5604fd4/docs/how-to/install-pipx.rst#L198), swept at `9a49f19`
+- Command as written: `pipx install git+https://github.com/psf/black.git@ce14fa8b497bae2b50ec48b3bd7022573a59cdb1`
+- In a clean container: exit 1 on Python 3.15.0, `error: unknown type name 'PyFutureFeatures'` (a typed-ast build failure)
+- Fix: Replaces the pinned commit with the commit of a current black release, which installs on Python 3.15.
+- Merged PR: [pypa/pipx#2181](https://github.com/pypa/pipx/pull/2181)
+- Merged: 2026-10-28
+
+## johnkerl/miller (library setup)
+
+- Project: [johnkerl/miller](https://github.com/johnkerl/miller)
+- Documented at: [`docs/src/miller-as-library.md.in`, line 16](https://github.com/johnkerl/miller/blob/cb7f080a734c72a80b86244df65bdc5375a57bae/docs/src/miller-as-library.md.in#L16) (generated [`docs/src/miller-as-library.md`, line 32](https://github.com/johnkerl/miller/blob/cb7f080a734c72a80b86244df65bdc5375a57bae/docs/src/miller-as-library.md#L32)), checked at `cb7f080`
+- Command as written: `cd cd use-mlr`
+- In a clean container: exit 1, `bash: cd: too many arguments`
+- Fix: Removes the doubled `cd` in the setup steps.
+- Merged PR: [johnkerl/miller#2276](https://github.com/johnkerl/miller/pull/2276)
 - Merged: 2026-10-23
 
 ## johnkerl/miller (prepipe examples)
@@ -84,16 +82,6 @@ Entries are ordered by merge date, newest first.
 - Merged PR: [johnkerl/miller#2275](https://github.com/johnkerl/miller/pull/2275)
 - Merged: 2026-10-23
 
-## johnkerl/miller (library setup)
-
-- Project: [johnkerl/miller](https://github.com/johnkerl/miller)
-- Documented at: [`docs/src/miller-as-library.md.in`, line 16](https://github.com/johnkerl/miller/blob/cb7f080a734c72a80b86244df65bdc5375a57bae/docs/src/miller-as-library.md.in#L16) (generated [`docs/src/miller-as-library.md`, line 32](https://github.com/johnkerl/miller/blob/cb7f080a734c72a80b86244df65bdc5375a57bae/docs/src/miller-as-library.md#L32)), checked at `cb7f080`
-- Command as written: `cd cd use-mlr`
-- In a clean container: exit 1, `bash: cd: too many arguments`
-- Fix: Removes the doubled `cd` in the setup steps.
-- Merged PR: [johnkerl/miller#2276](https://github.com/johnkerl/miller/pull/2276)
-- Merged: 2026-10-23
-
 ## ducaale/xh
 
 - Project: [ducaale/xh](https://github.com/ducaale/xh)
@@ -104,14 +92,54 @@ Entries are ordered by merge date, newest first.
 - Merged PR: [ducaale/xh#497](https://github.com/ducaale/xh/pull/497)
 - Merged: 2026-10-23
 
-## pyenv/pyenv
+## mufeedvh/code2prompt
 
-- Project: [pyenv/pyenv](https://github.com/pyenv/pyenv)
-- Documented at: `README.md`, lines [187](https://github.com/pyenv/pyenv/blob/7d65a4683c91b29f7501da4c8737d4e786f8cad2/README.md#L187), [725](https://github.com/pyenv/pyenv/blob/7d65a4683c91b29f7501da4c8737d4e786f8cad2/README.md#L725) and [728](https://github.com/pyenv/pyenv/blob/7d65a4683c91b29f7501da4c8737d4e786f8cad2/README.md#L728), swept at `7d65a46`
-- Command as written: `path/to/pyenv --install <shell executable name>`
-- In a clean container: exit 1, ``pyenv: no such command `--install'``
-- Fix: Changes the three lines to `pyenv init --install`, the form the neighboring lines already use.
-- Merged PR: [pyenv/pyenv#3603](https://github.com/pyenv/pyenv/pull/3603)
+- Project: [mufeedvh/code2prompt](https://github.com/mufeedvh/code2prompt)
+- Documented at: [`website/src/content/docs/docs/tutorials/learn_filters.mdx`, line 188](https://github.com/mufeedvh/code2prompt/blob/66585136062c04275ddd5a01c5518a4d78c4aa76/website/src/content/docs/docs/tutorials/learn_filters.mdx#L188), tested at `6658513`
+- Command as written: `code2prompt test_dir --include="*.py" --exclude="**/uppercase/*" --include-priority=true`
+- In a clean container: exit 2, the removed `--include-priority` flag is rejected as an unexpected argument
+- Fix: Drops the removed flag from the filter tutorial in all seven languages. Without it the command already includes the three files the tutorial describes.
+- Merged PR: [mufeedvh/code2prompt#346](https://github.com/mufeedvh/code2prompt/pull/346)
+- Merged: 2026-11-03
+
+## dundee/gdu
+
+- Project: [dundee/gdu](https://github.com/dundee/gdu)
+- Documented at: [`README.md`, line 382](https://github.com/dundee/gdu/blob/14907d977e7682b82d1e2f5811d5ded1f01cbc91/README.md#L382) and [`CONTRIBUTING.md`, line 16](https://github.com/dundee/gdu/blob/14907d977e7682b82d1e2f5811d5ded1f01cbc91/CONTRIBUTING.md#L16), tested at `14907d9`
+- Command as written: `make install-dev-dependencies`
+- In a clean container: exit 2 with `GOBIN` exported, `cannot install, GOBIN must be an absolute path`, and exit 2 without it, a gotraceui build error on Go 1.24 and later
+- Fix: Renames the Makefile's go command variable from `GOBIN` to `GO` and drops the gotraceui install, which no `go install` form can build today.
+- Merged PR: [dundee/gdu#704](https://github.com/dundee/gdu/pull/704)
+- Merged: 2026-11-03
+
+## tach-org/tach
+
+- Project: [tach-org/tach](https://github.com/tach-org/tach)
+- Documented at: [`docs/getting-started/getting-started.md`, line 76](https://github.com/tach-org/tach/blob/bc92d71520a1acdb9aacd1f2362ca49b58259dda/docs/getting-started/getting-started.md#L76), swept at `bc92d71`
+- Command as written: `tach install --pre-commit`
+- In a clean container: exit 2, `tach install: error: the following arguments are required: target`
+- Fix: Changes the command to `tach install pre-commit`, matching the commands reference.
+- Merged PR: [tach-org/tach#961](https://github.com/tach-org/tach/pull/961)
+- Merged: 2026-10-29
+
+## nosarthur/gita
+
+- Project: [nosarthur/gita](https://github.com/nosarthur/gita)
+- Documented at: [`README.md`, line 258](https://github.com/nosarthur/gita/blob/062a5e1ed56cad9b5f81c63791cd4ab130f175d9/README.md#L258), swept at `062a5e1`
+- Command as written: `gita context auto`
+- In a clean container: exit 1, `FileNotFoundError: [Errno 2] No such file or directory: '/root/.config/gita/auto.context'`
+- Fix: Makes gita create its config directory before it writes a context file, with a test.
+- Merged PR: [nosarthur/gita#316](https://github.com/nosarthur/gita/pull/316)
+- Merged: 2026-10-21
+
+## wait4x/wait4x
+
+- Project: [wait4x/wait4x](https://github.com/wait4x/wait4x)
+- Documented at: [`README.md`, lines 253 to 274](https://github.com/wait4x/wait4x/blob/6e9c8413fd45da50b4ec65e97effb7e27550708a/README.md#L253-L274), swept at `6e9c841`
+- Command as written: `wait4x dns A example.com --expected-ip 93.184.216.34`
+- In a clean container: exit 1, `Error: unknown flag: --expected-ip`
+- Fix: Renames the `--expected-*` flags to the `--expect-*` flags the commands define and moves the examples to hosts that resolve today.
+- Merged PR: [wait4x/wait4x#577](https://github.com/wait4x/wait4x/pull/577)
 - Merged: 2026-10-23
 
 ## ehmicky/nve
@@ -124,15 +152,4 @@ Entries are ordered by merge date, newest first.
 - Merged PR: [ehmicky/nve#82](https://github.com/ehmicky/nve/pull/82)
 - Merged: 2026-10-21
 
-## nosarthur/gita
-
-- Project: [nosarthur/gita](https://github.com/nosarthur/gita)
-- Documented at: [`README.md`, line 258](https://github.com/nosarthur/gita/blob/062a5e1ed56cad9b5f81c63791cd4ab130f175d9/README.md#L258), swept at `062a5e1`
-- Command as written: `gita context auto`
-- In a clean container: exit 1, `FileNotFoundError: [Errno 2] No such file or directory: '/root/.config/gita/auto.context'`
-- Fix: Makes gita create its config directory before it writes a context file, with a test.
-- Merged PR: [nosarthur/gita#316](https://github.com/nosarthur/gita/pull/316)
-- Merged: 2026-10-21
-
-Last refreshed: 2026-11-01.
-
+Last refreshed: 2026-11-03.
