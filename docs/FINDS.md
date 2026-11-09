@@ -1,6 +1,6 @@
-# Fixes found by kibble
+# Fixes found while testing kibble
 
-This page lists merged fixes for documented commands that failed when kibble ran them, in repositories kibble had never run on before. Each failure was replayed in a clean container, and each fix was filed by kibble's author after reading the project's contributing rules. Most fixes change the documentation. Two change the code so the documented command works. Open reports join the list when they merge.
+This page lists merged fixes for documented commands and examples that did not do what the docs said. Ten came from running kibble on repositories it had never run on before. Four came from a separate hand check, and kibble missed them. Each entry says how it was found. Each failure was replayed in a clean container, and each fix was filed by kibble's author after reading the project's contributing rules. Most fixes change the documentation. Two change the code so the documented command works. Open reports join the list when they merge.
 
 Entries are ordered by the project's GitHub stars, most first. Star counts are as of the refresh date below.
 
@@ -9,13 +9,14 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 | Project                                                                | Stars | What failed                                          | Merged     |
 |------------------------------------------------------------------------|-------|------------------------------------------------------|------------|
 | [pyenv/pyenv](#pyenvpyenv)                                             | 45.2k | Three README lines ran a command that does not exist | 2026-10-23 |
-| [jqlang/jq](#jqlangjq)                                                 | 36.0k | Source build left `jq` unable to load its library    | 2026-10-24 |
+| [koalaman/shellcheck](#koalamanshellcheck)                             | 40.3k | Two gallery lines drew no warning                    | 2026-11-09 |
+| [jqlang/jq](#jqlangjq)                                                 | 36.1k | Source build left `jq` unable to load its library    | 2026-10-24 |
 | [goreleaser/goreleaser](#goreleasergoreleaser)                         | 16.1k | Quick start build failed before the first tag        | 2026-11-01 |
 | [pypa/pipx](#pypapipx)                                                 | 13.0k | Pinned install example failed on Python 3.15         | 2026-10-28 |
 | [johnkerl/miller (library setup)](#johnkerlmiller-library-setup)       | 10.1k | Setup steps had a doubled `cd`                       | 2026-10-23 |
 | [johnkerl/miller (prepipe examples)](#johnkerlmiller-prepipe-examples) | 10.1k | Unquoted prepipe examples broke on their own flags   | 2026-10-23 |
 | [ducaale/xh](#ducaalexh)                                               | 8.2k  | Example host had a stray `I`                         | 2026-10-23 |
-| [mufeedvh/code2prompt](#mufeedvhcode2prompt)                           | 7.7k  | Tutorial ran a removed flag                          | 2026-11-03 |
+| [mufeedvh/code2prompt](#mufeedvhcode2prompt)                           | 7.8k  | Tutorial ran a removed flag                          | 2026-11-03 |
 | [dundee/gdu](#dundeegdu)                                               | 6.2k  | `make install-dev-dependencies` failed               | 2026-11-03 |
 | [tach-org/tach](#tach-orgtach)                                         | 2.9k  | Install command used a flag where a target belongs   | 2026-10-29 |
 | [nosarthur/gita](#nosarthurgita)                                       | 2.0k  | `gita context auto` crashed on a fresh install       | 2026-10-21 |
@@ -25,6 +26,7 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 ## pyenv/pyenv
 
 - Project: [pyenv/pyenv](https://github.com/pyenv/pyenv)
+- Found by: Hand check, which kibble missed
 - Documented at: `README.md`, lines [187](https://github.com/pyenv/pyenv/blob/7d65a4683c91b29f7501da4c8737d4e786f8cad2/README.md#L187), [725](https://github.com/pyenv/pyenv/blob/7d65a4683c91b29f7501da4c8737d4e786f8cad2/README.md#L725) and [728](https://github.com/pyenv/pyenv/blob/7d65a4683c91b29f7501da4c8737d4e786f8cad2/README.md#L728), swept at `7d65a46`
 - Command as written: `path/to/pyenv --install <shell executable name>`
 - In a clean container: exit 1, ``pyenv: no such command `--install'``
@@ -32,9 +34,21 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 - Merged PR: [pyenv/pyenv#3603](https://github.com/pyenv/pyenv/pull/3603)
 - Merged: 2026-10-23
 
+## koalaman/shellcheck
+
+- Project: [koalaman/shellcheck](https://github.com/koalaman/shellcheck)
+- Found by: Hand check, which kibble missed
+- Documented at: `README.md`, lines [412](https://github.com/koalaman/shellcheck/blob/cd9072643932ee2008e454e2cd990e25c1dc9d49/README.md#L412) and [451](https://github.com/koalaman/shellcheck/blob/cd9072643932ee2008e454e2cd990e25c1dc9d49/README.md#L451), tested at `cd90726`
+- Command as written: `exec foo; echo "Done!"` and `cat file | grep foo`, each listed as a line ShellCheck warns on
+- In a clean container: no warning on either line at default settings, on 0.11.0 and at the tested commit
+- Fix: Changes the `exec` example to `exec foo; bar`, which draws the warning, and marks the `cat` example as an optional check.
+- Merged PR: [koalaman/shellcheck#3595](https://github.com/koalaman/shellcheck/pull/3595)
+- Merged: 2026-11-09
+
 ## jqlang/jq
 
 - Project: [jqlang/jq](https://github.com/jqlang/jq)
+- Found by: Hand check, which kibble missed
 - Documented at: [`README.md`, line 56](https://github.com/jqlang/jq/blob/94b00aa807a51a8f97bc9345c03e32982e344678/README.md#L56) ([lines 47 to 61](https://github.com/jqlang/jq/blob/94b00aa807a51a8f97bc9345c03e32982e344678/README.md#L47-L61)), swept at `94b00aa`
 - Command as written: `sudo make install`
 - In a clean container: exit 127 from `jq --version` afterward, `jq: error while loading shared libraries: libjq.so.1`
@@ -45,6 +59,7 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 ## goreleaser/goreleaser
 
 - Project: [goreleaser/goreleaser](https://github.com/goreleaser/goreleaser)
+- Found by: Hand check, which kibble missed
 - Documented at: [`www/content/getting-started/quick-start.md`, line 138](https://github.com/goreleaser/goreleaser/blob/a9fb415389a2e55906ae457d9f76bb77b3cb6056/www/content/getting-started/quick-start.md#L138) ([lines 135 to 196](https://github.com/goreleaser/goreleaser/blob/a9fb415389a2e55906ae457d9f76bb77b3cb6056/www/content/getting-started/quick-start.md#L135-L196)), tested at `a9fb415`
 - Command as written: `goreleaser build --single-target --clean`
 - In a clean container: exit 1, `git doesn't contain any tags - either add a tag or use --snapshot`
@@ -55,6 +70,7 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 ## pypa/pipx
 
 - Project: [pypa/pipx](https://github.com/pypa/pipx)
+- Found by: kibble run
 - Documented at: [`docs/how-to/install-pipx.rst`, line 198](https://github.com/pypa/pipx/blob/9a49f1957fad930860189421f2cd29d5a5604fd4/docs/how-to/install-pipx.rst#L198), swept at `9a49f19`
 - Command as written: `pipx install git+https://github.com/psf/black.git@ce14fa8b497bae2b50ec48b3bd7022573a59cdb1`
 - In a clean container: exit 1 on Python 3.15.0, `error: unknown type name 'PyFutureFeatures'` (a typed-ast build failure)
@@ -65,6 +81,7 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 ## johnkerl/miller (library setup)
 
 - Project: [johnkerl/miller](https://github.com/johnkerl/miller)
+- Found by: kibble run
 - Documented at: [`docs/src/miller-as-library.md.in`, line 16](https://github.com/johnkerl/miller/blob/cb7f080a734c72a80b86244df65bdc5375a57bae/docs/src/miller-as-library.md.in#L16) (generated [`docs/src/miller-as-library.md`, line 32](https://github.com/johnkerl/miller/blob/cb7f080a734c72a80b86244df65bdc5375a57bae/docs/src/miller-as-library.md#L32)), checked at `cb7f080`
 - Command as written: `cd cd use-mlr`
 - In a clean container: exit 1, `bash: cd: too many arguments`
@@ -75,6 +92,7 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 ## johnkerl/miller (prepipe examples)
 
 - Project: [johnkerl/miller](https://github.com/johnkerl/miller)
+- Found by: kibble run
 - Documented at: [`pkg/cli/option_parse.go`, lines 3522 and 3523](https://github.com/johnkerl/miller/blob/cb7f080a734c72a80b86244df65bdc5375a57bae/pkg/cli/option_parse.go#L3522-L3523) (the `mlr help flags` text), swept at `cb7f080`
 - Command as written: `mlr --prepipe xz -cd`
 - In a clean container: exit 1, `option "-d" not recognized` (the `zcat -cf` form exits 0 and prints the function list instead of the data)
@@ -85,6 +103,7 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 ## ducaale/xh
 
 - Project: [ducaale/xh](https://github.com/ducaale/xh)
+- Found by: kibble run
 - Documented at: [`doc/md-template.md`, line 128](https://github.com/ducaale/xh/blob/319d39c2561d2a8697acb3eb9800abcc33bbad98/doc/md-template.md#L128) (generated [`doc/xh.1.md`, line 372](https://github.com/ducaale/xh/blob/319d39c2561d2a8697acb3eb9800abcc33bbad98/doc/xh.1.md#L372)), swept at `319d39c`
 - Command as written: `xh get Ihttpbin.org/json x-api-key:12345`
 - In a clean container: exit 1, `dns error ... http://ihttpbin.org/json`
@@ -95,6 +114,7 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 ## mufeedvh/code2prompt
 
 - Project: [mufeedvh/code2prompt](https://github.com/mufeedvh/code2prompt)
+- Found by: kibble's flag check
 - Documented at: [`website/src/content/docs/docs/tutorials/learn_filters.mdx`, line 188](https://github.com/mufeedvh/code2prompt/blob/66585136062c04275ddd5a01c5518a4d78c4aa76/website/src/content/docs/docs/tutorials/learn_filters.mdx#L188), tested at `6658513`
 - Command as written: `code2prompt test_dir --include="*.py" --exclude="**/uppercase/*" --include-priority=true`
 - In a clean container: exit 2, the removed `--include-priority` flag is rejected as an unexpected argument
@@ -105,6 +125,7 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 ## dundee/gdu
 
 - Project: [dundee/gdu](https://github.com/dundee/gdu)
+- Found by: kibble run
 - Documented at: [`README.md`, line 382](https://github.com/dundee/gdu/blob/14907d977e7682b82d1e2f5811d5ded1f01cbc91/README.md#L382) and [`CONTRIBUTING.md`, line 16](https://github.com/dundee/gdu/blob/14907d977e7682b82d1e2f5811d5ded1f01cbc91/CONTRIBUTING.md#L16), tested at `14907d9`
 - Command as written: `make install-dev-dependencies`
 - In a clean container: exit 2 with `GOBIN` exported, `cannot install, GOBIN must be an absolute path`, and exit 2 without it, a gotraceui build error on Go 1.24 and later
@@ -115,6 +136,7 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 ## tach-org/tach
 
 - Project: [tach-org/tach](https://github.com/tach-org/tach)
+- Found by: kibble run
 - Documented at: [`docs/getting-started/getting-started.md`, line 76](https://github.com/tach-org/tach/blob/bc92d71520a1acdb9aacd1f2362ca49b58259dda/docs/getting-started/getting-started.md#L76), swept at `bc92d71`
 - Command as written: `tach install --pre-commit`
 - In a clean container: exit 2, `tach install: error: the following arguments are required: target`
@@ -125,6 +147,7 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 ## nosarthur/gita
 
 - Project: [nosarthur/gita](https://github.com/nosarthur/gita)
+- Found by: kibble run
 - Documented at: [`README.md`, line 258](https://github.com/nosarthur/gita/blob/062a5e1ed56cad9b5f81c63791cd4ab130f175d9/README.md#L258), swept at `062a5e1`
 - Command as written: `gita context auto`
 - In a clean container: exit 1, `FileNotFoundError: [Errno 2] No such file or directory: '/root/.config/gita/auto.context'`
@@ -135,6 +158,7 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 ## wait4x/wait4x
 
 - Project: [wait4x/wait4x](https://github.com/wait4x/wait4x)
+- Found by: kibble run
 - Documented at: [`README.md`, lines 253 to 274](https://github.com/wait4x/wait4x/blob/6e9c8413fd45da50b4ec65e97effb7e27550708a/README.md#L253-L274), swept at `6e9c841`
 - Command as written: `wait4x dns A example.com --expected-ip 93.184.216.34`
 - In a clean container: exit 1, `Error: unknown flag: --expected-ip`
@@ -145,6 +169,7 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 ## ehmicky/nve
 
 - Project: [ehmicky/nve](https://github.com/ehmicky/nve)
+- Found by: kibble run
 - Documented at: [`README.md`, line 47](https://github.com/ehmicky/nve/blob/269ad0e6665f81c9ed2f7d2edae5973b3ebe904b/README.md#L47), with the related compatibility note at [lines 193 to 194](https://github.com/ehmicky/nve/blob/269ad0e6665f81c9ed2f7d2edae5973b3ebe904b/README.md#L193-L194), swept at `269ad0e`
 - Command as written: `nve 12 npm test`
 - In a clean container: exit 1, `Error: Cannot find module 'node:path'`
@@ -152,4 +177,4 @@ Entries are ordered by the project's GitHub stars, most first. Star counts are a
 - Merged PR: [ehmicky/nve#82](https://github.com/ehmicky/nve/pull/82)
 - Merged: 2026-10-21
 
-Last refreshed: 2026-11-03.
+Last refreshed: 2026-11-09.
