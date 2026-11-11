@@ -242,6 +242,11 @@ func BuildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 		if block.Span || !docblock.ShellLangs[block.Lang] {
 			continue
 		}
+		if path, body := fileBodyBlock(block); path != "" {
+			block.Lines = body
+			pl.addFileBlock(block, path)
+			continue
+		}
 		pl.addBlock(block)
 	}
 	for pkg := range pl.packages {
@@ -562,6 +567,45 @@ func fileTitle(title string) string {
 		}
 	}
 	return strings.TrimPrefix(title, "./")
+}
+
+// reFileComment matches a comment line that is nothing but a file path with
+// an extension, the way a document captions a block holding a file's body.
+var reFileComment = regexp.MustCompile(`^#\s*([\w./-]+\.[A-Za-z]{1,8})\s*$`)
+
+// fileBodyBlock returns the path and body of a shell block whose first line
+// is a comment naming one file, such as asdf's "# test/some_tests.bats" above
+// the test it shows. The body is the lines after that comment, without the
+// blank lines that follow it. A block with nothing after the comment, a path
+// that is a placeholder, or a path fileTitle rejects is not a file body, and
+// the result is empty.
+func fileBodyBlock(block docblock.Block) (string, []string) {
+	first := -1
+	for i, ln := range block.Lines {
+		if strings.TrimSpace(ln) != "" {
+			first = i
+			break
+		}
+	}
+	if first < 0 {
+		return "", nil
+	}
+	m := reFileComment.FindStringSubmatch(strings.TrimSpace(block.Lines[first]))
+	if m == nil || docblock.HasPlaceholder(m[1]) {
+		return "", nil
+	}
+	path := fileTitle(m[1])
+	if path == "" {
+		return "", nil
+	}
+	body := block.Lines[first+1:]
+	for len(body) > 0 && strings.TrimSpace(body[0]) == "" {
+		body = body[1:]
+	}
+	if len(body) == 0 {
+		return "", nil
+	}
+	return path, body
 }
 
 // addFileBlock plans a titled block as the document writing the file it names.
