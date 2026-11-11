@@ -71,6 +71,16 @@ func TestClassifyLine(t *testing.T) {
 	}, { // Test 16: Python extras are not a placeholder, so the install runs.
 		In:       "pip install 'httpie[socks]'",
 		WantKind: "pip-install", WantMod: "httpie", WantRun: true, WantOK: true,
+	}, { // Test 17: A quoted flag value before the module is skipped.
+		In:       "go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest",
+		WantKind: "go-install", WantMod: "github.com/golang-migrate/migrate/v4/cmd/migrate@latest",
+		WantRun: true, WantOK: true,
+	}, { // Test 18: A double-quoted multiword flag value is skipped.
+		In:       `go install -ldflags "-s -w" example.com/mod@v1.2.3`,
+		WantKind: "go-install", WantMod: "example.com/mod@v1.2.3", WantRun: true, WantOK: true,
+	}, { // Test 19: A bare flag value is skipped.
+		In:       "go install -tags postgres example.com/mod@v1.0.0",
+		WantKind: "go-install", WantMod: "example.com/mod@v1.0.0", WantRun: true, WantOK: true,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

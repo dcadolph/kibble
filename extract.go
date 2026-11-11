@@ -68,8 +68,9 @@ func (f ExtractorFunc) Extract(repo, markdown string) []InstallStep {
 
 var (
 	// reGoInstall matches a `go install <module>@<version>` invocation, allowing
-	// leading flags such as `-v` before the module path.
-	reGoInstall = regexp.MustCompile(`\bgo\s+install\s+(?:-\S+\s+)*(\S+@\S+)`)
+	// leading flags such as `-v` or `-tags 'postgres'` before the module path.
+	reGoInstall = regexp.MustCompile(
+		`\bgo\s+install\s+(?:-\S+(?:\s+(?:'[^']*'|"[^"]*"|[^-\s@][^\s@]*))?\s+)*(\S+@\S+)`)
 	// reBrew matches a `brew install <target>` invocation.
 	// reBrew captures the flags and the first target of a brew install. Flags
 	// come first so `brew install --cask alacritty` names alacritty, not
