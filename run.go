@@ -147,7 +147,10 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	ctx, cancel := context.WithTimeout(ctx, d.Timeout+60*time.Second)
 	defer cancel()
 
-	image := d.imageFor(step)
+	image, blocked := d.imageFor(step)
+	if blocked != "" {
+		return Result{Step: step, Status: StatusBlocked, Reason: ReasonMissingDependency, Detail: blocked}
+	}
 	start := time.Now()
 	name := sandbox.Name()
 	// The official Go images pin GOTOOLCHAIN=local, so a module asking for a
@@ -226,19 +229,29 @@ var reNetworkError = regexp.MustCompile(
 // the image that provides the toolchain its commands assume, so a Rust or Node
 // project builds with the tools its docs were written for. Everything else runs
 // in the configured default.
-func (d *DockerRunner) imageFor(step InstallStep) string {
+func (d *DockerRunner) imageFor(step InstallStep) (image, blocked string) {
 	if pk, ok := pkgKinds[step.Kind]; ok {
 		if tc, known := toolchains[pk.Ecosystem]; known && tc.Image != "" {
-			return tc.Image
+			return toolchainImage(tc, step.dir)
 		}
-		return d.Image
+		return d.Image, ""
 	}
 	if step.Kind != "git-clone" {
-		return d.Image
+		return d.Image, ""
 	}
 	tc, ok := detectToolchain(step.Block, step.dir)
 	if !ok || tc.Image == "" {
-		return d.Image
+		return d.Image, ""
 	}
-	return tc.Image
+	return toolchainImage(tc, step.dir)
+}
+
+// toolchainImage returns the image a toolchain's step runs in for the checkout
+// at dir. Only Python narrows it, to the newest release the project states it
+// supports, and blocked is set when the stated range allows no image at all.
+func toolchainImage(tc toolchain, dir string) (image, blocked string) {
+	if tc.Name == "python" {
+		return pythonImage(dir)
+	}
+	return tc.Image, ""
 }
