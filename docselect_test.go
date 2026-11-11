@@ -76,6 +76,10 @@ func TestReplayDocs(t *testing.T) {
 		Files: map[string]string{"README.md": shell, "docs/2023/a.md": shell,
 			"docs/2024/a.md": shell},
 		Want: []string{"README.md", "docs/2023/a.md", "docs/2024/a.md"},
+	}, { // Test 13: a guide kept for a retired version is not replayed.
+		Files: map[string]string{"README.md": shell, "docs/guide/getting-started.md": shell,
+			"docs/guide/getting-started-legacy.md": shell, "docs/Deprecated-API.md": shell},
+		Want: []string{"README.md", "docs/guide/getting-started.md"},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

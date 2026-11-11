@@ -111,7 +111,7 @@ func readDocSet(dir, readme string) docSet {
 		// it is a false drift, so those documents are left out of the set the
 		// flag check and doc coverage read.
 		base := strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name)))
-		if skipNames[base] || hasSkipPrefix(base) || isHistoryDoc(base) {
+		if skippedDoc(base) || isHistoryDoc(base) {
 			return nil
 		}
 		body, err := os.ReadFile(path)
