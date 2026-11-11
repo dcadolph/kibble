@@ -212,13 +212,6 @@ var reErrorDeclaration = regexp.MustCompile(
 		// line printed, which npm reserves for the path of a debug log.
 		`^npm error\b`)
 
-// failureLine returns the most informative line of a failure. Reporting a
-// wrapper's summary hides the error a reader needs, so the summary is skipped
-// in favor of the last line that says what actually broke. A tool that answers
-// a bad argument by printing its whole usage screen is the other direction of
-// the same mistake: the last line there is the final flag's description, which
-// tells a reader nothing, so an error the parser declared above the screen
-// wins over anything below it.
 // buildFailLine picks the line that best explains a failed build. A real error
 // declaration, such as cargo's "error[E0432]: unresolved import", is preferred
 // over a build tool's trailing summary, since the summary names the target
@@ -234,6 +227,15 @@ func buildFailLine(lines []string) string {
 	return failureLine(lines)
 }
 
+// failureLine returns the most informative line of a failure. Reporting a
+// wrapper's summary hides the error a reader needs, so the summary is skipped
+// in favor of the last line that says what actually broke. A tool that answers
+// a bad argument by printing its whole usage screen is the other direction of
+// the same mistake: the last line there is the final flag's description, which
+// tells a reader nothing, so an error the parser declared above the screen
+// wins over anything below it. A tail that is only a location, a stack frame
+// or a path, gives way to the line that says what went wrong: lux ends a Go
+// panic on runtime/asm_arm64.s:1447, and rtk ends on the path it looked in.
 func failureLine(lines []string) string {
 	for i, line := range lines {
 		line = strings.TrimSpace(line)
@@ -254,7 +256,52 @@ func failureLine(lines []string) string {
 		if line == "" || reWrapperSummary.MatchString(line) {
 			continue
 		}
+		if reLocationLine.MatchString(line) {
+			if first := explainingLine(lines); first != "" {
+				return first
+			}
+		}
 		return line
 	}
 	return lastLine(lines)
+}
+
+// reLocationLine matches a line that only says where something happened: a
+// source location with nothing after it, a stack frame, a traceback header, or
+// a bare path. A log line that opens with a location and goes on to say what
+// failed, as Go tests print them, is not one.
+var reLocationLine = regexp.MustCompile(
+	`^\S+\.(go|s|rs|py|c|cc|cpp):\d+(:\d+)?( \+0x[0-9a-f]+)?$|^goroutine \d+|^at .+\(.+:\d+\)$` +
+		`|^Traceback|^/[^\s:]+$`)
+
+// explainingLine returns the first error declaration in lines, or failing
+// that the first line that is not itself a location, empty when there is none.
+// A line that ends in a colon introduces the next one, as lux prints
+// "Downloading <url> error:" above the cause, so the two are joined.
+func explainingLine(lines []string) string {
+	first := -1
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if reErrorDeclaration.MatchString(line) {
+			return line
+		}
+		if first < 0 && line != "" && !reLocationLine.MatchString(line) {
+			first = i
+		}
+	}
+	if first < 0 {
+		return ""
+	}
+	out := strings.TrimSpace(lines[first])
+	if strings.HasSuffix(out, ":") {
+		for _, next := range lines[first+1:] {
+			if next = strings.TrimSpace(next); next != "" {
+				if !reLocationLine.MatchString(next) {
+					out += " " + next
+				}
+				break
+			}
+		}
+	}
+	return out
 }
