@@ -183,7 +183,7 @@ func replayDocs(dir, readme string, cfg *config.ExamplesConfig) []string {
 			return nil
 		}
 		base := strings.ToLower(strings.TrimSuffix(d.Name(), filepath.Ext(d.Name())))
-		if skipNames[base] || hasSkipPrefix(base) {
+		if skippedDoc(base) {
 			return nil
 		}
 		top := strings.Split(filepath.ToSlash(rel), "/")[0]
@@ -268,7 +268,7 @@ func installDocs(dir, readme string) []string {
 		}
 		base := strings.ToLower(strings.TrimSuffix(d.Name(), filepath.Ext(d.Name())))
 		install := isInstallDoc(base) || isInstallIndex(base, filepath.Base(filepath.Dir(rel)))
-		if skipNames[base] || hasSkipPrefix(base) || !install {
+		if skippedDoc(base) || !install {
 			return nil
 		}
 		found = append(found, rel)
@@ -329,6 +329,29 @@ func hasShellBlock(path string) bool {
 		}
 	}
 	return false
+}
+
+// legacyWords mark a document kept for an older or retired form of the tool.
+// asdf's getting-started-legacy.md documents the shell version it replaced,
+// and its commands were reported as drift against the current binary.
+var legacyWords = []string{"legacy", "deprecated", "archived"}
+
+// isLegacyDoc reports whether a document base name marks it as kept for an
+// older or retired form of the tool.
+func isLegacyDoc(base string) bool {
+	for _, w := range legacyWords {
+		if strings.Contains(base, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// skippedDoc reports whether a document base name marks it as one no reader
+// is asked to follow: a project record, a document for an agent or a
+// maintainer, or a guide kept for a retired version.
+func skippedDoc(base string) bool {
+	return skipNames[base] || hasSkipPrefix(base) || isLegacyDoc(base)
 }
 
 // hasSkipPrefix reports whether a document's name marks it as written for an
