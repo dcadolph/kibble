@@ -244,6 +244,10 @@ func BuildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 			pl.addFileBlock(block, path)
 			continue
 		}
+		if path := proseFile(block); path != "" && !block.Span {
+			pl.addFileBlock(block, path)
+			continue
+		}
 		if block.Span || !docblock.ShellLangs[block.Lang] {
 			continue
 		}
@@ -572,6 +576,80 @@ func fileTitle(title string) string {
 		}
 	}
 	return strings.TrimPrefix(title, "./")
+}
+
+// proseExts maps a fence language to the file extensions a block in it can
+// hold. A named file has to agree with its fence, which is what separates the
+// tutorial's "save this as `app.py`" from a paragraph that mentions a file in
+// passing above an unrelated example.
+var proseExts = map[string][]string{
+	"py": {"py"}, "python": {"py"}, "go": {"go"},
+	"yaml": {"yaml", "yml"}, "yml": {"yaml", "yml"}, "toml": {"toml"}, "json": {"json"},
+	"js": {"js", "mjs", "cjs"}, "javascript": {"js", "mjs", "cjs"},
+	"ts": {"ts", "mts"}, "typescript": {"ts", "mts"}, "rs": {"rs"}, "rust": {"rs"},
+	"sql": {"sql"}, "api": {"api"}, "ini": {"ini", "cfg"},
+}
+
+var (
+	// reBacktickPath matches a backticked token shaped like a file path with
+	// an extension, and captures the path and the extension.
+	reBacktickPath = regexp.MustCompile("`([\\w./-]*[\\w-]\\.([A-Za-z0-9]{1,8}))`")
+	// reFileVerb matches the words a sentence uses to tell the reader to put
+	// a block into a file.
+	reFileVerb = regexp.MustCompile(`(?i)\b(create|creating|save|write|add|put|name|named|called|open|edit|file|into)\b`)
+)
+
+// proseFile returns the path a fenced block's lead paragraph tells the reader
+// to put it in, or empty when the paragraph does not. gin, flask, sqlc, and
+// typer show a file in one block and run it in the next, naming it only in the
+// sentence above: "create a file `app.py`". The block needs a language other
+// than a shell, no title, and a body. The paragraph must name exactly one
+// file, backticked, with an extension the fence language allows, in a sentence
+// that tells the reader to create, save, or edit it. A placeholder path or one
+// fileTitle rejects is never written, and addFileBlock still refuses a path
+// the checkout holds.
+func proseFile(block docblock.Block) string {
+	exts := proseExts[strings.ToLower(block.Lang)]
+	if block.Lead == "" || block.Title != "" || exts == nil || !hasCommandLine(block.Lines) {
+		return ""
+	}
+	ms := reBacktickPath.FindAllStringSubmatchIndex(block.Lead, -1)
+	var path string
+	var at int
+	for _, m := range ms {
+		p, ext := block.Lead[m[2]:m[3]], strings.ToLower(block.Lead[m[4]:m[5]])
+		if !slices.Contains(exts, ext) {
+			continue
+		}
+		if path != "" && path != p {
+			return ""
+		}
+		path, at = p, m[0]
+	}
+	if path == "" || docblock.HasPlaceholder(path) {
+		return ""
+	}
+	if !reFileVerb.MatchString(sentenceAt(block.Lead, at)) {
+		return ""
+	}
+	return fileTitle(path)
+}
+
+// sentenceAt returns the sentence of text that holds the byte offset at.
+func sentenceAt(text string, at int) string {
+	start := 0
+	for _, sep := range []string{". ", "! ", "? "} {
+		if i := strings.LastIndex(text[:at], sep); i >= 0 && i+len(sep) > start {
+			start = i + len(sep)
+		}
+	}
+	end := len(text)
+	for _, sep := range []string{". ", "! ", "? "} {
+		if i := strings.Index(text[at:], sep); i >= 0 && at+i < end {
+			end = at + i
+		}
+	}
+	return text[start:end]
 }
 
 // reFileComment matches a comment line that is nothing but a file path with

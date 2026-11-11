@@ -1096,7 +1096,26 @@ func TestPlanFile(t *testing.T) {
 	}, { // Test 8: a comment naming a placeholder path is not a file either.
 		Markdown:  "```sh\n# path/to/run.sh\nuv sync\n```\n",
 		WantLines: []string{"uv sync file= need= line=3"},
-	}, { // Test 9: a file comment the checkout already holds writes nothing.
+	}, { // Test 9: flask's quickstart names the file in the sentence above it.
+		Markdown: "Create a file named `app.py`:\n\n```python\nfrom flask import Flask\n```\n\n" +
+			"```sh\nuv run app.py\n```\n",
+		WantLines: []string{
+			"cat > 'app.py' <<'KIBBLE_FILE_END'\nfrom flask import Flask\nKIBBLE_FILE_END file=app.py need= line=4",
+			"uv run app.py file= need= line=8",
+		},
+	}, { // Test 10: two named files leave the block unwritten.
+		Markdown:  "Copy `a.py` into `b.py`:\n\n```python\nx = 1\n```\n",
+		WantLines: nil,
+	}, { // Test 11: a file the fence language cannot hold is not this block.
+		Markdown:  "Edit `config.yaml` and add:\n\n```python\nx = 1\n```\n",
+		WantLines: nil,
+	}, { // Test 12: a sentence that only mentions the file does not ask for it.
+		Markdown:  "The `app.py` module looks like this:\n\n```python\nx = 1\n```\n",
+		WantLines: nil,
+	}, { // Test 13: a paragraph separated from the fence by another block is not its lead.
+		Markdown:  "Create `app.py`:\n\n```sh\nuv sync\n```\n\n```python\nx = 1\n```\n",
+		WantLines: []string{"uv sync file= need= line=4"},
+	}, { // Test 14: a file comment the checkout already holds writes nothing.
 		Markdown:  "```sh\n# run.sh\nuv sync\n```\n",
 		Tree:      []string{"run.sh"},
 		WantLines: nil,

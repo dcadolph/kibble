@@ -31,6 +31,11 @@ type Block struct {
 	// before it, "on macOS run the following", and a planner that cannot see
 	// that sentence convicts commands written for another operating system.
 	Intro string
+	// Lead is the paragraph that ends directly above a fenced block, within
+	// two lines and with no other block between them, empty otherwise. It is
+	// where a tutorial names the file a block holds: "create a file named
+	// `app.py`" followed by the file's body.
+	Lead string
 	// Span reports whether this is an inline span rather than a block.
 	Span bool
 	// Line is the 1-based README line the block's content starts on.
@@ -86,7 +91,8 @@ func CodeBlocks(markdown string) []Block {
 	src := stripFrontMatter([]byte(markdown))
 	doc := goldmark.New().Parser().Parse(text.NewReader(src))
 	var blocks []Block
-	var heading, intro string
+	var heading, intro, lead string
+	leadEnd := 0
 	lists, depth, list, item := 0, 0, 0, 0
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		switch n.(type) {
@@ -110,16 +116,27 @@ func CodeBlocks(markdown string) []Block {
 		}
 		if p, ok := n.(*ast.Paragraph); ok {
 			intro = spanText(p, src)
+			lead, leadEnd = rawText(p, src), 0
+			if ls := p.Lines(); ls.Len() > 0 {
+				leadEnd = lineAt(src, ls.At(ls.Len()-1).Start)
+			}
 			return ast.WalkContinue, nil
 		}
 		b := Block{Heading: heading, Intro: intro, List: list, Item: item}
 		switch node := n.(type) {
 		case *ast.Heading:
 			heading = spanText(node, src)
-			intro = ""
+			intro, lead = "", ""
 			return ast.WalkContinue, nil
 		case *ast.FencedCodeBlock:
 			b.Lang = string(node.Language(src))
+			// The content starts the line after the fence, so a paragraph
+			// ending on the line before the fence is two lines up and one
+			// with a blank line between is three.
+			if lead != "" && leadEnd > 0 && BlockLine(node, src)-leadEnd <= 3 {
+				b.Lead = lead
+			}
+			lead = ""
 			if node.Info != nil {
 				if m := reFenceTitle.FindStringSubmatch(string(node.Info.Segment.Value(src))); m != nil {
 					b.Title = m[1] + m[2]
@@ -128,6 +145,7 @@ func CodeBlocks(markdown string) []Block {
 			b.Lines = strings.Split(BlockText(node, src), "\n")
 			b.Line = BlockLine(node, src)
 		case *ast.CodeBlock:
+			lead = ""
 			if admonitionMarker.MatchString(intro) {
 				blocks = append(blocks, admonitionBlocks(node, src, heading, intro)...)
 				return ast.WalkContinue, nil
@@ -238,6 +256,18 @@ func spanText(n ast.Node, src []byte) string {
 	}
 	walk(n)
 	return b.String()
+}
+
+// rawText returns a block node's source lines joined by spaces, markup kept,
+// so a backticked file name in a paragraph is still marked as one.
+func rawText(l liner, src []byte) string {
+	lines := l.Lines()
+	parts := make([]string, 0, lines.Len())
+	for i := 0; i < lines.Len(); i++ {
+		seg := lines.At(i)
+		parts = append(parts, strings.TrimSpace(string(seg.Value(src))))
+	}
+	return strings.Join(parts, " ")
 }
 
 // ShownFailures returns the commands of a prompted block whose displayed
