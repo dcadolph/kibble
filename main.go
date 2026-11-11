@@ -728,7 +728,8 @@ func checkFreeSpace(ctx context.Context, r *DockerRunner, steps []InstallStep) e
 	if i < 0 {
 		return nil
 	}
-	free, err := sandbox.FreeBytes(ctx, r.imageFor(steps[i]))
+	img, _ := r.imageFor(steps[i])
+	free, err := sandbox.FreeBytes(ctx, img)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "kibble could not measure free space in Docker: %v\n", err)
 		return nil

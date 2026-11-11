@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
+	kplan "github.com/dcadolph/kibble/internal/plan"
 )
 
 // TestCommandWords checks that each simple command on a line yields its
@@ -168,5 +170,88 @@ func TestEscapeAnnotation(t *testing.T) {
 				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// TestPythonImage checks that a stated upper bound on Python picks the newest
+// image it allows, that an unbounded or absent range keeps the default, and
+// that a range no Python 3 image satisfies is blocked rather than run.
+func TestPythonImage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Files       map[string]string
+		WantImage   string
+		WantBlocked bool
+	}{{ // Test 0: aider's pyproject bound picks python:3.14.
+		Files:     map[string]string{"pyproject.toml": "[project]\nrequires-python = \">=3.10,<3.15\"\n"},
+		WantImage: "python:3.14",
+	}, { // Test 1: an inclusive bound picks that release.
+		Files:     map[string]string{"pyproject.toml": "requires-python = '<=3.14'\n"},
+		WantImage: "python:3.14",
+	}, { // Test 2: a compatible release on a minor bounds nothing.
+		Files:     map[string]string{"pyproject.toml": "requires-python = \"~=3.12\"\n"},
+		WantImage: "python:3",
+	}, { // Test 3: a compatible release on a patch stops at its minor.
+		Files:     map[string]string{"pyproject.toml": "requires-python = \"~=3.12.0\"\n"},
+		WantImage: "python:3.12",
+	}, { // Test 4: a lower bound alone keeps the default.
+		Files:     map[string]string{"pyproject.toml": "requires-python = \">=3.10\"\n"},
+		WantImage: "python:3",
+	}, { // Test 5: no stated range keeps the default.
+		Files:     map[string]string{"README.md": "# Tool\n"},
+		WantImage: "python:3",
+	}, { // Test 6: setup.cfg is read when there is no pyproject.toml.
+		Files:     map[string]string{"setup.cfg": "[options]\npython_requires = >=3.9, <3.13\n"},
+		WantImage: "python:3.12",
+	}, { // Test 7: markitdown's README range is used when metadata says nothing.
+		Files:     map[string]string{"README.md": "Requires Python 3.10 through 3.14.\n"},
+		WantImage: "python:3.14",
+	}, { // Test 8: pyproject wins over the README.
+		Files: map[string]string{"pyproject.toml": "requires-python = \"<3.13\"\n",
+			"README.md": "Python 3.10 through 3.14\n"},
+		WantImage: "python:3.12",
+	}, { // Test 9: a bound below Python 3 is blocked.
+		Files:       map[string]string{"pyproject.toml": "requires-python = \"<3\"\n"},
+		WantBlocked: true,
+	}, { // Test 10: a patch above zero still allows its minor.
+		Files:     map[string]string{"pyproject.toml": "requires-python = \">=3.8,<3.13.2\"\n"},
+		WantImage: "python:3.13",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, body := range test.Files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			image, blocked := pythonImage(dir)
+			if diff := cmp.Diff(test.WantImage, image); diff != "" {
+				t.Errorf("image mismatch (-want +got):\n%s", diff)
+			}
+			if got := blocked != ""; got != test.WantBlocked {
+				t.Errorf("blocked = %q, want blocked %v", blocked, test.WantBlocked)
+			}
+		})
+	}
+}
+
+// TestPythonStepImage checks that a pip install step and a Python example
+// session both run on the image the checkout's range picks.
+func TestPythonStepImage(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"),
+		[]byte("requires-python = \">=3.10,<3.15\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := &DockerRunner{Image: "golang:1"}
+	if image, _ := d.imageFor(InstallStep{Kind: "pip-install", dir: dir}); image != "python:3.14" {
+		t.Errorf("install image = %q, want python:3.14", image)
+	}
+	plan := &kplan.Plan{Installs: []kplan.PlanInstall{{Ecosystem: "python"}}}
+	if image, ok, _ := d.exampleImage(plan, dir); !ok || image != "python:3.14" {
+		t.Errorf("session image = %q ok=%v, want python:3.14", image, ok)
 	}
 }

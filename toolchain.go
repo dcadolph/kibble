@@ -1,11 +1,14 @@
 package main
 
 import (
-	kplan "github.com/dcadolph/kibble/internal/plan"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+
+	kplan "github.com/dcadolph/kibble/internal/plan"
 )
 
 // toolchain is a language ecosystem and the container image that provides it.
@@ -236,3 +239,113 @@ var reExecNotFound = regexp.MustCompile(`exec: "?([^":]+)"?: executable file not
 // from the phrases a tool also uses about its own optional pieces.
 var reRequiredCommand = regexp.MustCompile(
 	`(?i)missing required commands?:\s*([A-Za-z0-9._+-]+)`)
+
+// pythonImage returns the image a Python step in the checkout at dir runs in.
+// A project that states an upper bound on Python, such as aider's
+// requires-python ">=3.10,<3.15", gets the newest image the bound allows,
+// since the default python:3 tag moves past a supported release and a reader
+// on a supported Python would install fine. With no bound it returns the
+// default image. When the stated range allows no Python 3 release at all,
+// image is empty and blocked says why.
+func pythonImage(dir string) (image, blocked string) {
+	def := toolchains["python"].Image
+	stated, maxMinor, bounded := statedPython(dir)
+	switch {
+	case !bounded:
+		return def, ""
+	case maxMinor < 0:
+		return "", fmt.Sprintf("the project states Python %s, which no Python 3 image satisfies", stated)
+	}
+	return fmt.Sprintf("python:3.%d", maxMinor), ""
+}
+
+var (
+	// rePyprojectPython matches the requires-python setting of a pyproject.toml.
+	rePyprojectPython = regexp.MustCompile(`(?m)^\s*requires-python\s*=\s*["']([^"']+)["']`)
+	// reSetupCfgPython matches the python_requires setting of a setup.cfg.
+	reSetupCfgPython = regexp.MustCompile(`(?m)^\s*python_requires\s*=\s*(\S[^\n]*)$`)
+	// reReadmePython matches a README sentence such as markitdown's "requires
+	// Python 3.10 through 3.14".
+	reReadmePython = regexp.MustCompile(`(?i)\bPython (3\.\d+) through 3\.(\d+)\b`)
+	// rePythonSpec parses one version specifier into its operator and version.
+	rePythonSpec = regexp.MustCompile(`^(<=|<|==|~=|>=|>|!=)\s*(\d+)(?:\.(\d+|\*))?(?:\.(\d+|\*))?$`)
+)
+
+// statedPython returns the Python range a checkout states, the highest
+// Python 3 minor release it allows, and whether it states an upper bound at
+// all. The project's own metadata wins over prose: the root pyproject.toml,
+// then setup.cfg, then a README sentence naming a first and last release.
+// maxMinor is -1 when the bound excludes every Python 3 release.
+func statedPython(dir string) (stated string, maxMinor int, bounded bool) {
+	if dir == "" {
+		return "", 0, false
+	}
+	for _, src := range []struct {
+		file string
+		re   *regexp.Regexp
+	}{{"pyproject.toml", rePyprojectPython}, {"setup.cfg", reSetupCfgPython}} {
+		b, err := os.ReadFile(filepath.Join(dir, src.file))
+		if err != nil {
+			continue
+		}
+		if m := src.re.FindStringSubmatch(string(b)); m != nil {
+			spec := strings.TrimSpace(m[1])
+			maxMinor, bounded = pythonUpperBound(spec)
+			return spec, maxMinor, bounded
+		}
+	}
+	text, _, err := readREADME(dir)
+	if err != nil {
+		return "", 0, false
+	}
+	if m := reReadmePython.FindStringSubmatch(text); m != nil {
+		last, _ := strconv.Atoi(m[2])
+		return m[1] + " through 3." + m[2], last, true
+	}
+	return "", 0, false
+}
+
+// pythonUpperBound reads a PEP 440 specifier list and returns the highest
+// Python 3 minor release it allows, and whether it bounds Python 3 at all.
+// The compatible-release form ~=3.12 allows every later 3.x and so bounds
+// nothing, while ~=3.12.0 stops at 3.12. Lower bounds and exclusions are
+// ignored: the newest allowed image is the one picked, and python:3.N for an
+// allowed N always exists.
+func pythonUpperBound(spec string) (int, bool) {
+	maxMinor, bounded := 0, false
+	limit := func(n int) {
+		if !bounded || n < maxMinor {
+			maxMinor = n
+		}
+		bounded = true
+	}
+	for _, part := range strings.Split(spec, ",") {
+		m := rePythonSpec.FindStringSubmatch(strings.TrimSpace(part))
+		if m == nil {
+			continue
+		}
+		op := m[1]
+		major, _ := strconv.Atoi(m[2])
+		minor, minorErr := strconv.Atoi(m[3])
+		patch, patchErr := strconv.Atoi(m[4])
+		hasMinor, hasPatch := minorErr == nil, patchErr == nil
+		switch {
+		case major < 3:
+			if op == "<" || op == "<=" || op == "==" {
+				limit(-1)
+			}
+		case major > 3:
+		case op == "<" && !hasMinor:
+			limit(-1)
+		case op == "<" && hasPatch && patch > 0:
+			limit(minor)
+		case op == "<":
+			limit(minor - 1)
+		case (op == "<=" || op == "==") && hasMinor:
+			limit(minor)
+		case op == "~=" && hasMinor && m[4] != "":
+			limit(minor)
+		}
+	}
+	return maxMinor, bounded
+}

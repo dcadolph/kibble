@@ -96,10 +96,16 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 		res.Detail = detail
 		return res
 	}
-	image, ok := d.exampleImage(plan)
+	image, ok, blocked := d.exampleImage(plan, step.dir)
 	if !ok {
 		res.Status = StatusSkipped
 		res.Detail = "documented installs need more than one toolchain; no single image serves them"
+		return res
+	}
+	if blocked != "" {
+		res.Status = StatusBlocked
+		res.Reason = ReasonMissingDependency
+		res.Detail = blocked
 		return res
 	}
 
@@ -149,22 +155,25 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 // exampleImage returns the image an example session runs in. Every documented
 // install must be servable by one image, since the session is one shell: a
 // project installed with both cargo and npm names two toolchains and is
-// reported as a skip rather than run in an image missing one of them.
-func (d *DockerRunner) exampleImage(plan *kplan.Plan) (string, bool) {
+// reported as a skip rather than run in an image missing one of them. A
+// Python session runs on the newest release the checkout at dir states it
+// supports, and blocked is set when that range allows no image.
+func (d *DockerRunner) exampleImage(plan *kplan.Plan, dir string) (image string, ok bool, blocked string) {
 	eco := ""
 	for _, in := range plan.Installs {
 		if in.Ecosystem == "" {
 			continue
 		}
 		if eco != "" && eco != in.Ecosystem {
-			return "", false
+			return "", false, ""
 		}
 		eco = in.Ecosystem
 	}
 	if tc, known := toolchains[eco]; known && tc.Image != "" {
-		return tc.Image, true
+		image, blocked = toolchainImage(tc, dir)
+		return image, true, blocked
 	}
-	return d.Image, true
+	return d.Image, true, ""
 }
 
 // sessionBudget bounds the whole example session: each module build gets the
