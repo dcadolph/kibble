@@ -400,3 +400,51 @@ func TestSessionInstallsClone(t *testing.T) {
 		})
 	}
 }
+
+// TestReadREADMENameCase checks that a README spelled in any case is found and
+// reported under its real name, at the root and in a fallback directory.
+func TestReadREADMENameCase(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		Name     string
+		File     string
+		WantName string
+	}{{ // Test 0: a title-case name resolves.
+		Name:     "title case",
+		File:     "Readme.md",
+		WantName: "Readme.md",
+	}, { // Test 1: an upper-case extension resolves.
+		Name:     "upper extension",
+		File:     "README.MD",
+		WantName: "README.MD",
+	}, { // Test 2: a fallback directory honors the same rule.
+		Name:     "docs title case",
+		File:     "docs/Readme.md",
+		WantName: "docs/Readme.md",
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d %s", testNum, test.Name), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			p := filepath.Join(dir, test.File)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(p, []byte("body"), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			body, name, err := readREADME(dir)
+			if err != nil {
+				t.Fatalf("readREADME: %v", err)
+			}
+			if diff := cmp.Diff(test.WantName, name); diff != "" {
+				t.Errorf("name mismatch (-want +got):\n%s", diff)
+			}
+			if body != "body" {
+				t.Errorf("body = %q, want %q", body, "body")
+			}
+		})
+	}
+}

@@ -596,20 +596,7 @@ var readmeFallbackDirs = []string{"docs", "doc"}
 // filesystem answers to README.md for a file named readme.md and would have
 // kibble annotate a path that does not exist on a case-sensitive host.
 func readREADME(dir string) (string, string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", "", err
-	}
-	present := map[string]bool{}
-	for _, e := range entries {
-		if !e.IsDir() {
-			present[e.Name()] = true
-		}
-	}
-	for _, name := range readmeNames {
-		if !present[name] {
-			continue
-		}
+	if name, ok := findReadmeName(dir); ok {
 		b, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			return "", "", err
@@ -620,29 +607,33 @@ func readREADME(dir string) (string, string, error) {
 	// case-insensitive filesystem cannot make kibble name a path that a
 	// case-sensitive host does not have.
 	for _, sub := range readmeFallbackDirs {
-		subEntries, err := os.ReadDir(filepath.Join(dir, sub))
-		if err != nil {
+		name, ok := findReadmeName(filepath.Join(dir, sub))
+		if !ok {
 			continue
 		}
-		subPresent := map[string]bool{}
-		for _, e := range subEntries {
-			if !e.IsDir() {
-				subPresent[e.Name()] = true
-			}
+		rel := filepath.Join(sub, name)
+		b, err := os.ReadFile(filepath.Join(dir, rel))
+		if err != nil {
+			return "", "", err
 		}
-		for _, name := range readmeNames {
-			if !subPresent[name] {
-				continue
-			}
-			rel := filepath.Join(sub, name)
-			b, err := os.ReadFile(filepath.Join(dir, rel))
-			if err != nil {
-				return "", "", err
-			}
-			return string(b), filepath.ToSlash(rel), nil
-		}
+		return string(b), filepath.ToSlash(rel), nil
 	}
 	return "", "", fmt.Errorf("no README found")
+}
+
+// findReadmeName lists dir and returns the real name of the first file that
+// matches readme.md without regard to case.
+func findReadmeName(dir string) (string, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.EqualFold(e.Name(), "readme.md") {
+			return e.Name(), true
+		}
+	}
+	return "", false
 }
 
 // runAll executes steps with bounded concurrency and returns their results.
