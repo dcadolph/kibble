@@ -1084,6 +1084,22 @@ func TestPlanFile(t *testing.T) {
 		Markdown: "```js title=\"prettier.config.mjs, .prettierrc.mjs\"\nexport default {}\n```\n\n" +
 			"```sh title=\".git/hooks/pre-commit\"\nuv sync\n```\n",
 		WantLines: []string{"uv sync file= need= line=6"},
+	}, { // Test 6: a shell block captioned by a comment naming a file writes it.
+		Markdown: "```sh\n# scripts/run.sh\n\necho a\necho b\n```\n",
+		WantLines: []string{
+			"mkdir -p 'scripts' && cat > 'scripts/run.sh' <<'KIBBLE_FILE_END'\necho a\necho b\nKIBBLE_FILE_END" +
+				" file=scripts/run.sh need= line=2",
+		},
+	}, { // Test 7: a comment naming a platform is not a file, so the block runs.
+		Markdown:  "```sh\n# Linux\nuv sync\n```\n",
+		WantLines: []string{"uv sync file= need= line=3"},
+	}, { // Test 8: a comment naming a placeholder path is not a file either.
+		Markdown:  "```sh\n# path/to/run.sh\nuv sync\n```\n",
+		WantLines: []string{"uv sync file= need= line=3"},
+	}, { // Test 9: a file comment the checkout already holds writes nothing.
+		Markdown:  "```sh\n# run.sh\nuv sync\n```\n",
+		Tree:      []string{"run.sh"},
+		WantLines: nil,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
