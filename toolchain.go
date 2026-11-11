@@ -212,6 +212,11 @@ func missingCommand(out string) (string, bool) {
 				return name, true
 			}
 		}
+		// acme.sh refuses to install without cron and says so as an offer:
+		// "Please add '--force' and try install again to go without crontab."
+		if m := reWithoutCommand.FindStringSubmatch(line); m != nil {
+			return m[1], true
+		}
 		for _, marker := range []string{": command not found", ": not found"} {
 			idx := strings.Index(line, marker)
 			if idx < 0 {
@@ -239,6 +244,11 @@ var reExecNotFound = regexp.MustCompile(`exec: "?([^":]+)"?: executable file not
 // from the phrases a tool also uses about its own optional pieces.
 var reRequiredCommand = regexp.MustCompile(
 	`(?i)missing required commands?:\s*([A-Za-z0-9._+-]+)`)
+
+// reWithoutCommand matches an installer offering to go on without a system
+// program the image lacks, which names that program as plainly as a missing
+// command list does.
+var reWithoutCommand = regexp.MustCompile(`(?i)--force.{0,40}\bwithout (crontab|cron)\b`)
 
 // pythonImage returns the image a Python step in the checkout at dir runs in.
 // A project that states an upper bound on Python, such as aider's

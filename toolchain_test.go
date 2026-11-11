@@ -136,6 +136,12 @@ func TestMissingCommand(t *testing.T) {
 	}, { // Test 5: the Go toolchain's exec-not-found is a missing build tool.
 		In:     `lib/results.go:272: running "easyjson": exec: "easyjson": executable file not found in $PATH`,
 		WantOK: true, WantName: "easyjson",
+	}, { // Test 6: acme.sh offers to go on without the crontab the image lacks.
+		In: "[Wed Nov 11 15:26:35 UTC 2026] Please add '--force' and try install again to go " +
+			"without crontab.\n[Wed Nov 11 15:26:35 UTC 2026] Pre-check failed, cannot install.",
+		WantOK: true, WantName: "crontab",
+	}, { // Test 7: a force flag with no missing program named is not one.
+		In: "Please add '--force' to overwrite the existing file.", WantOK: false,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
