@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -43,37 +44,65 @@ var reFlagDefinition = regexp.MustCompile(
 	`(?i)flag|option|add_argument|arg::new|\.long\(|\bname:\s`)
 
 // unreleasedFlags returns the flags among names that the checkout's source, in
-// the language of the install kind, defines. A flag the installed release rejects while HEAD defines it is a
-// document ahead of the release, not a stale one: yq documented
-// --ini-key-value-delimiters before shipping it, and the maintainer who adds
-// a flag and its docs in one change cannot release first. A definition is a
-// quoted --name, or a quoted name on a line that reads like a flag definition,
-// so the bare word in an unrelated string does not count.
+// the language of the install kind, defines. A flag the installed release
+// rejects while HEAD defines it is a document ahead of the release, not a
+// stale one: yq documented --ini-key-value-delimiters before shipping it, and
+// the maintainer who adds a flag and its docs in one change cannot release
+// first. A definition is a quoted --name, or a quoted name on a line that
+// reads like a flag definition, so the bare word in an unrelated string does
+// not count.
 func unreleasedFlags(dir, kind string, names []string) map[string]bool {
-	found := map[string]bool{}
-	exts := ecosystemSources[installEcosystem(kind)]
-	if dir == "" || len(names) == 0 || exts == nil {
-		return found
-	}
-	type pattern struct {
-		// dashed matches the name quoted with its dashes.
-		dashed *regexp.Regexp
-		// quoted matches the bare name in quotes.
-		quoted *regexp.Regexp
-	}
-	pats := map[string]pattern{}
+	defines := map[string]func(string) bool{}
 	for _, n := range names {
 		q := regexp.QuoteMeta(n)
-		pats[n] = pattern{
-			dashed: regexp.MustCompile(`["'` + "`" + `]--?` + q + `([^\w-]|$)`),
-			quoted: regexp.MustCompile(`["'` + "`" + `]` + q + `["'` + "`" + `]`),
+		dashed := regexp.MustCompile(`["'` + "`" + `]--?` + q + `([^\w-]|$)`)
+		quoted := regexp.MustCompile(`["'` + "`" + `]` + q + `["'` + "`" + `]`)
+		defines[n] = func(line string) bool {
+			return dashed.MatchString(line) || (quoted.MatchString(line) && reFlagDefinition.MatchString(line))
 		}
+	}
+	return sourceDefines(dir, kind, defines)
+}
+
+// unreleasedSubs returns the subcommands among names that the checkout's
+// source defines, the subcommand side of unreleasedFlags. sqlc documented
+// analyze and fmt while its latest release had neither. A definition is the
+// parser's own declaration of the name: cobra's Use: "name" with or without
+// argument text, urfave's Name: "name", clap's Command::new("name") or
+// #[command(name = "name")], and argparse's add_parser("name").
+func unreleasedSubs(dir, kind string, names []string) map[string]bool {
+	defines := map[string]func(string) bool{}
+	for _, n := range names {
+		q := regexp.QuoteMeta(n)
+		pats := []*regexp.Regexp{
+			regexp.MustCompile(`\bUse:\s*"` + q + `(\s[^"]*)?"`),
+			regexp.MustCompile(`\bName:\s*"` + q + `"`),
+			regexp.MustCompile(`Command::new\(\s*"` + q + `"\s*\)`),
+			regexp.MustCompile(`#\[command\([^)]*\bname\s*=\s*"` + q + `"`),
+			regexp.MustCompile(`add_parser\(\s*["']` + q + `["']`),
+		}
+		defines[n] = func(line string) bool {
+			return slices.ContainsFunc(pats, func(re *regexp.Regexp) bool { return re.MatchString(line) })
+		}
+	}
+	return sourceDefines(dir, kind, defines)
+}
+
+// sourceDefines walks the checkout's source in the language of the install
+// kind and returns the names with a line their define function accepts.
+// Hidden, vendored, and generated directories, oversized files, and minified
+// lines are skipped, since none of them is where a project declares its CLI.
+func sourceDefines(dir, kind string, defines map[string]func(string) bool) map[string]bool {
+	found := map[string]bool{}
+	exts := ecosystemSources[installEcosystem(kind)]
+	if dir == "" || len(defines) == 0 || exts == nil {
+		return found
 	}
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if len(found) == len(names) {
+		if len(found) == len(defines) {
 			return filepath.SkipAll
 		}
 		if d.IsDir() {
@@ -101,11 +130,8 @@ func unreleasedFlags(dir, kind string, names []string) map[string]bool {
 			if len(line) > sourceMaxLine {
 				continue
 			}
-			for n, pat := range pats {
-				if found[n] || !strings.Contains(line, n) {
-					continue
-				}
-				if pat.dashed.MatchString(line) || (pat.quoted.MatchString(line) && reFlagDefinition.MatchString(line)) {
+			for n, def := range defines {
+				if !found[n] && strings.Contains(line, n) && def(line) {
 					found[n] = true
 				}
 			}
