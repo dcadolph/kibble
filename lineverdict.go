@@ -441,7 +441,7 @@ var (
 			`|\bnothing to search\b|\bno files found to search\b`)
 	reNoData = regexp.MustCompile(
 		`(?i)\bno (entries|results|matches|data|records)\b|\bfound no\b` +
-			`|\bnothing (found|to (show|report))\b|\bno \w+(\s\w+)? found\b` +
+			`|\bnothing (found|to (show|report))\b|\bno \w+(\s\w+){0,4} found\b` +
 			`|\bno [a-z]+ (backups?|snapshots?|indexes|indices)\b`)
 	// reEmptyInput matches a command that rejected the empty input the
 	// session's stubbed editor produced.
