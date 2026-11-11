@@ -105,6 +105,14 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonMissingDependency
 		lr.Detail = "invokes a command the container lacks: " + tail
+	case o.notFound && !o.resolver && documentedNonzeroCode(o.code):
+		// The project documents this exit as its lookup finding nothing, as
+		// witr does with "2 not found". It is checked before the silent-exit
+		// rule because the document has said what the code means. Only such a
+		// row counts: a documented failure code still convicts.
+		lr.Status = StatusSkipped
+		lr.Reason = ReasonNoDataExpected
+		lr.Detail = fmt.Sprintf("exit %d is the documented not-found code", o.code)
 	case reGitNoHistory.MatchString(o.output):
 		// git speaking from outside the tool, with the same standing as the
 		// shell's 127. The session's repository is one kibble initialized

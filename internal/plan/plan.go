@@ -42,6 +42,10 @@ type Plan struct {
 	Settings []string `json:"settings,omitempty"`
 	// Excluded counts code blocks that are not shell recipes.
 	Excluded int `json:"excluded,omitempty"`
+	// NotFoundCodes are the exit codes the documents say mean a lookup found
+	// nothing, such as witr's "2 not found". A documented binary exiting with
+	// one of them reports an empty result rather than a broken command.
+	NotFoundCodes []int `json:"notFoundCodes,omitempty"`
 }
 
 // PlanInstall is one documented install the session runs before replaying
@@ -182,7 +186,8 @@ func (r *Recognizer) provides(flat string) string {
 }
 
 func BuildPlan(repo, dir, markdown string, binaries []string, installs []PlanInstall, cfg *config.ExamplesConfig, rec *Recognizer) *Plan {
-	p := &Plan{Repo: repo, Installs: installs, Binaries: binaries}
+	p := &Plan{Repo: repo, Installs: installs, Binaries: binaries,
+		NotFoundCodes: docblock.NotFoundCodes(markdown)}
 	pl := &planner{
 		rec:      rec,
 		plan:     p,
@@ -723,6 +728,12 @@ func (p *Plan) Merge(doc string, other *Plan) {
 	p.Binaries = mergeUnique(p.Binaries, other.Binaries)
 	p.Packages = mergeUnique(p.Packages, other.Packages)
 	p.Settings = mergeUnique(p.Settings, other.Settings)
+	for _, c := range other.NotFoundCodes {
+		if !slices.Contains(p.NotFoundCodes, c) {
+			p.NotFoundCodes = append(p.NotFoundCodes, c)
+		}
+	}
+	slices.Sort(p.NotFoundCodes)
 	if p.Env == nil && len(other.Env) > 0 {
 		p.Env = map[string]string{}
 	}
