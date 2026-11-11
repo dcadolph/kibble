@@ -402,6 +402,9 @@ func (pl *planner) addBlock(block docblock.Block) {
 		Heading: block.Heading,
 	}
 	scopedTo := otherPlatform(block.Intro)
+	if scopedTo == "" {
+		scopedTo = platformHeading(block.Heading)
+	}
 	lineIn := docblock.SourceLineIndex(block)
 	shownErr := docblock.ShownFailures(block)
 	nonzero := false
