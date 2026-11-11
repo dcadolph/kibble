@@ -668,6 +668,12 @@ func TestClassifyExampleOwnProject(t *testing.T) {
 		Bin: "uvx", Cmd: "uvx nope-zzz-pkg-kibble", Cwd: "/work/repo", Code: 1,
 		Output:     uvxRun,
 		WantStatus: StatusFail,
+	}, { // Test 15: witr finding no such process found no data.
+		Bin: "witr", Cmd: "witr node", Cwd: "/work/repo", Code: 2,
+		Output: "no running process or service named \"node\"\n\n" +
+			"No matching process or service found. Please check your query or try a different " +
+			"name/port/PID.\nFor usage and options, run: witr --help",
+		WantStatus: StatusSkipped, WantReason: ReasonNoDataExpected,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
