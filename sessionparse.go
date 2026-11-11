@@ -357,7 +357,7 @@ func trackCreators(pending map[string]map[string]string, doc string, l kplan.Pla
 // when unplanned is set the code block kibble did not run.
 func settleNeed(lr lineResult, l kplan.PlanLine, o lineOutcome, blocker string, unplanned bool) lineResult {
 	lr.Code = o.code
-	lr.output = o.output
+	lr.output, lr.cwd = o.output, o.cwd
 	if blocker == "" {
 		lr.Status = StatusGap
 		lr.Reason = ReasonMissingFixture

@@ -53,7 +53,9 @@ func resolveMissingBinaries(run *exampleRun, plan *kplan.Plan, have map[string]b
 // the session is no longer a clean test of this line, which is why these
 // become blocked rather than skipped: the cascade stops being reported as
 // several broken lines without any of them being called fine. A gap counts as
-// not having run, since the document's own hole stopped the line.
+// not having run, since the document's own hole stopped the line. A Go build
+// that finds the document's file beside the checkout's own package is blocked
+// here too, since it takes the earlier file writes of the run to see it.
 func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 	bins := map[string]bool{}
 	for _, b := range plan.Binaries {
@@ -86,12 +88,36 @@ func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 	// Earlier line results per document, for the shared-operand rule, which
 	// reads across the document's steps rather than within one.
 	prior := map[string][]lineResult{}
+	// Go files the checkout held at its top before the session started.
+	checkout := map[string]bool{}
+	for _, f := range plan.RootGoFiles {
+		checkout[f] = true
+	}
+	// Files the current document's file blocks wrote from the top of the
+	// checkout, in run order. The session restores the checkout between
+	// documents when it could save it, so an earlier document's files are
+	// gone by the next one and are never counted for it.
+	written, writtenDoc := map[string]bool{}, ""
 	for si := range run.Steps {
 		s := &run.Steps[si]
+		if s.Doc != writtenDoc {
+			written, writtenDoc = map[string]bool{}, s.Doc
+		}
 		for li := range s.Lines {
 			l := &s.Lines[li]
 			if l.Status != StatusFail {
+				m := reFileWrite.FindStringSubmatch(l.Cmd)
+				if m != nil && l.Status == StatusVerified && l.cwd == sessionRepoDir {
+					written[m[1]] = true
+				}
 				prior[s.Doc] = append(prior[s.Doc], *l)
+				continue
+			}
+			if doc, own := mixedCheckoutPackages(l.output, written, checkout); doc != "" {
+				l.Status = StatusBlocked
+				l.Reason = ReasonCheckoutState
+				l.Detail = fmt.Sprintf("wrote %s into the repository's own checkout, beside %s of "+
+					"another Go package, so the claim was not tested as written: %s", doc, own, l.Detail)
 				continue
 			}
 			if cited := citedSkipped(l.output, skippedCmds); cited != "" {
@@ -124,6 +150,42 @@ func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 			prior[s.Doc] = append(prior[s.Doc], *l)
 		}
 	}
+}
+
+var (
+	// reFileWrite matches the line a planned file block runs and captures the
+	// path it writes, relative to the directory the line ran in. The
+	// terminator may carry a number after the part matched here.
+	reFileWrite = regexp.MustCompile(`^(?:mkdir -p '[^']+' && )?cat > '([^']+)' <<'KIBBLE_FILE_END`)
+	// reMixedPackages matches Go refusing a directory that holds two packages
+	// and captures the file it names for each and the directory.
+	reMixedPackages = regexp.MustCompile(
+		`found packages \w+ \(([^)\s]+\.go)\) and \w+ \(([^)\s]+\.go)\) in (\S+)`)
+)
+
+// mixedCheckoutPackages returns the document's file and the checkout's file
+// when Go reports two packages in the repository root, the document's file
+// blocks wrote one of the two files it names, and the checkout held the other
+// before the session started. sqlc's tutorials tell the reader in prose to work
+// in a new directory, so the session stays in the checkout and writes
+// tutorial.go beside sqlc's own root package. A clash between two files the
+// document wrote is the document's own, and so is a clash with a file its
+// commands made some other way, such as a generator's output. A file written
+// into a subdirectory is not the one Go names at the root, and a clash in any
+// other directory is left as it reads, since only the root's files are known
+// to be the checkout's.
+func mixedCheckoutPackages(output string, written, checkout map[string]bool) (doc, own string) {
+	m := reMixedPackages.FindStringSubmatch(output)
+	if m == nil || m[3] != sessionRepoDir {
+		return "", ""
+	}
+	switch a, b := m[1], m[2]; {
+	case written[a] && !written[b] && checkout[b]:
+		return a, b
+	case written[b] && !written[a] && checkout[a]:
+		return b, a
+	}
+	return "", ""
 }
 
 var (

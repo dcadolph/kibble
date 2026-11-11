@@ -61,6 +61,8 @@ type lineResult struct {
 	Synthetic []string
 	// output is what the line printed, kept for dependency analysis.
 	output string
+	// cwd is the directory the line ran in, empty when the session did not say.
+	cwd string
 }
 
 // markerLead is printed before every session marker. A documented command

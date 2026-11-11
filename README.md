@@ -258,7 +258,9 @@ verdict claims the documented step works:
 - `BLOCKED` with the reason `checkout-state` means a line that would have been a plain
   `FAIL` ran in the repository's own checkout and its output says the target already
   exists or is already initialized. The collision is with the checkout kibble chose, so
-  the document may be fine.
+  the document may be fine. A Go build that finds two packages at the top of the checkout
+  reads the same way when the document wrote one of the two files and the repository
+  already held the other.
 - A passing line that writes a titled fence to its file reads `VERIFIED` "wrote X as the
   document shows it". The document supplied the content, so only the write is claimed.
 - An install whose product is a shell function the documented sourcing defines is

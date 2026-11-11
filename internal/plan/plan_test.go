@@ -304,6 +304,77 @@ func TestBuildPlanRepoTree(t *testing.T) {
 	}
 }
 
+// TestBuildPlanRootGoFiles checks that a plan records the Go files at the top
+// of the checkout and nothing below it, and that merging documents keeps them
+// once.
+func TestBuildPlanRootGoFiles(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Files     []string
+		Dirs      []string
+		Links     map[string]string
+		NoDir     bool
+		WantFiles []string
+	}{{ // Test 0: Root Go files are kept in name order, other files and nested ones are not.
+		Files:     []string{"zlib.go", "doc.go", "README.md", "cmd/tool/main.go", "go.mod"},
+		WantFiles: []string{"doc.go", "zlib.go"},
+	}, { // Test 1: A directory named like a Go file is not one.
+		Files:     []string{"main.go"},
+		Dirs:      []string{"gen.go"},
+		WantFiles: []string{"main.go"},
+	}, { // Test 2: A checkout with no Go file at its top records none.
+		Files: []string{"README.md", "internal/x/x.go"},
+	}, { // Test 3: A plan built without a checkout records none.
+		NoDir: true,
+	}, { // Test 4: A link to a file is a root Go file, a link to a directory or nothing is not.
+		Files: []string{"internal/gen/real.go", "README.md"},
+		Links: map[string]string{
+			"api.go": "internal/gen/real.go", "dir.go": "internal", "gone.go": "nope",
+		},
+		WantFiles: []string{"api.go"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			dir := ""
+			if !test.NoDir {
+				dir = t.TempDir()
+			}
+			for _, d := range test.Dirs {
+				if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, f := range test.Files {
+				full := filepath.Join(dir, f)
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte("package x\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for name, target := range test.Links {
+				if err := os.Symlink(filepath.Join(dir, target), filepath.Join(dir, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			md := "```sh\ntool run\n```\n"
+			plan := BuildPlan("repo", dir, md, []string{"tool"}, nil, nil, testRecognizer())
+			if diff := cmp.Diff(test.WantFiles, plan.RootGoFiles, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("root Go files mismatch (-want +got):\n%s", diff)
+			}
+			merged := &Plan{}
+			merged.Merge("README.md", plan)
+			merged.Merge("docs/guide.md", BuildPlan("repo", dir, md, []string{"tool"}, nil, nil,
+				testRecognizer()))
+			if diff := cmp.Diff(test.WantFiles, merged.RootGoFiles, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("merged root Go files mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestLogicalLines(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

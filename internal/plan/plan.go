@@ -46,6 +46,10 @@ type Plan struct {
 	// nothing, such as witr's "2 not found". A documented binary exiting with
 	// one of them reports an empty result rather than a broken command.
 	NotFoundCodes []int `json:"notFoundCodes,omitempty"`
+	// RootGoFiles are the Go files at the top of the checkout before the
+	// session starts. A Go build that finds a document's file beside one of
+	// them met the repository's own package, which the document never wrote.
+	RootGoFiles []string `json:"rootGoFiles,omitempty"`
 }
 
 // PlanInstall is one documented install the session runs before replaying
@@ -187,7 +191,7 @@ func (r *Recognizer) provides(flat string) string {
 
 func BuildPlan(repo, dir, markdown string, binaries []string, installs []PlanInstall, cfg *config.ExamplesConfig, rec *Recognizer) *Plan {
 	p := &Plan{Repo: repo, Installs: installs, Binaries: binaries,
-		NotFoundCodes: docblock.NotFoundCodes(markdown)}
+		NotFoundCodes: docblock.NotFoundCodes(markdown), RootGoFiles: rootGoFiles(dir)}
 	pl := &planner{
 		rec:      rec,
 		plan:     p,
@@ -851,6 +855,7 @@ func (p *Plan) Merge(doc string, other *Plan) {
 		}
 	}
 	slices.Sort(p.NotFoundCodes)
+	p.RootGoFiles = mergeUnique(p.RootGoFiles, other.RootGoFiles)
 	if p.Env == nil && len(other.Env) > 0 {
 		p.Env = map[string]string{}
 	}
