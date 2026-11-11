@@ -1115,7 +1115,16 @@ func TestPlanFile(t *testing.T) {
 	}, { // Test 13: a paragraph separated from the fence by another block is not its lead.
 		Markdown:  "Create `app.py`:\n\n```sh\nuv sync\n```\n\n```python\nx = 1\n```\n",
 		WantLines: []string{"uv sync file= need= line=4"},
-	}, { // Test 14: a file comment the checkout already holds writes nothing.
+	}, { // Test 14: flask names the file in a comment on the block's first line.
+		Markdown: "```python\n# save this as app.py\nfrom flask import Flask\n```\n",
+		WantLines: []string{
+			"cat > 'app.py' <<'KIBBLE_FILE_END'\n# save this as app.py\nfrom flask import Flask\nKIBBLE_FILE_END" +
+				" file=app.py need= line=2",
+		},
+	}, { // Test 15: a first-line comment that only mentions a file asks for nothing.
+		Markdown:  "```python\n# see app.py for the rest\nx = 1\n```\n",
+		WantLines: nil,
+	}, { // Test 16: a file comment the checkout already holds writes nothing.
 		Markdown:  "```sh\n# run.sh\nuv sync\n```\n",
 		Tree:      []string{"run.sh"},
 		WantLines: nil,

@@ -610,14 +610,56 @@ var (
 // the checkout holds.
 func proseFile(block docblock.Block) string {
 	exts := proseExts[strings.ToLower(block.Lang)]
-	if block.Lead == "" || block.Title != "" || exts == nil || !hasCommandLine(block.Lines) {
+	if block.Title != "" || exts == nil || !hasCommandLine(block.Lines) {
 		return ""
 	}
-	ms := reBacktickPath.FindAllStringSubmatchIndex(block.Lead, -1)
+	if path := namedFile(block.Lead, exts); path != "" {
+		return path
+	}
+	// flask names the file in the block's own first line instead, as a
+	// comment: "# save this as app.py".
+	for _, ln := range block.Lines {
+		t := strings.TrimSpace(ln)
+		if t == "" {
+			continue
+		}
+		if c, ok := strings.CutPrefix(t, "#"); ok {
+			return namedFile(markBareFiles(c, exts), exts)
+		}
+		if c, ok := strings.CutPrefix(t, "//"); ok {
+			return namedFile(markBareFiles(c, exts), exts)
+		}
+		return ""
+	}
+	return ""
+}
+
+// markBareFiles backticks the bare words of a code comment that end in one
+// of exts, so a comment is read by the same rule as prose, where file names
+// are marked.
+func markBareFiles(comment string, exts []string) string {
+	words := strings.Fields(comment)
+	for i, w := range words {
+		trimmed := strings.TrimRight(w, ".,:;")
+		if j := strings.LastIndex(trimmed, "."); j > 0 && slices.Contains(exts, strings.ToLower(trimmed[j+1:])) {
+			words[i] = "`" + trimmed + "`" + w[len(trimmed):]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// namedFile returns the one file text tells the reader to put a block in: a
+// single backticked path whose extension is among exts, in a sentence with a
+// verb such as create or save. Two different paths, a placeholder, or a path
+// fileTitle rejects name nothing.
+func namedFile(text string, exts []string) string {
+	if text == "" {
+		return ""
+	}
 	var path string
-	var at int
-	for _, m := range ms {
-		p, ext := block.Lead[m[2]:m[3]], strings.ToLower(block.Lead[m[4]:m[5]])
+	at := 0
+	for _, m := range reBacktickPath.FindAllStringSubmatchIndex(text, -1) {
+		p, ext := text[m[2]:m[3]], strings.ToLower(text[m[4]:m[5]])
 		if !slices.Contains(exts, ext) {
 			continue
 		}
@@ -626,10 +668,7 @@ func proseFile(block docblock.Block) string {
 		}
 		path, at = p, m[0]
 	}
-	if path == "" || docblock.HasPlaceholder(path) {
-		return ""
-	}
-	if !reFileVerb.MatchString(sentenceAt(block.Lead, at)) {
+	if path == "" || docblock.HasPlaceholder(path) || !reFileVerb.MatchString(sentenceAt(text, at)) {
 		return ""
 	}
 	return fileTitle(path)
