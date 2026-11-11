@@ -162,7 +162,9 @@ const (
 	// ReasonInheritedState marks a failure in a directory an earlier section
 	// entered, so the section's own claim was not tested as written.
 	ReasonInheritedState Reason = "inherited-state"
-	// ReasonCheckoutState marks a scaffold command that ran in the repository's
-	// own checkout, which already holds what the command creates.
+	// ReasonCheckoutState marks a line that failed on what the repository's own
+	// checkout already holds: a scaffold command refused because its target
+	// exists, a project manager read the checkout's project, or a Go build
+	// found a file the document wrote beside the checkout's own package.
 	ReasonCheckoutState Reason = "checkout-state"
 )

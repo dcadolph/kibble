@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -207,6 +208,177 @@ func TestSharedOperandAfterLineNotPassed(t *testing.T) {
 			}
 			if test.WantDetail != "" && last != test.WantDetail {
 				t.Errorf("detail = %q, want %q", last, test.WantDetail)
+			}
+		})
+	}
+}
+
+// TestMixedPackagesInCheckout checks the rule for a document's Go file written
+// beside the repository's own package. Go refusing to build two packages in
+// the checkout's root is the session's doing only when a file block of the
+// document wrote one of the two files and the checkout held the other before
+// the session started.
+//
+//nolint:funlen // Test function.
+func TestMixedPackagesInCheckout(t *testing.T) {
+	t.Parallel()
+	const (
+		write  = "cat > 'tutorial.go' <<'KIBBLE_FILE_END'"
+		mixed  = "found packages sqlc (gomod_test.go) and main (tutorial.go) in /work/repo"
+		build  = "go build ."
+		nested = "mkdir -p 'cmd/app' && cat > 'cmd/app/tutorial.go' <<'KIBBLE_FILE_END'"
+	)
+	wrote := lineResult{Cmd: write, Status: StatusVerified, cwd: sessionRepoDir}
+	failed := lineResult{Cmd: build, Status: StatusFail, Detail: "exited 1: " + mixed, output: mixed}
+	held := []string{"doc.go", "gomod_test.go"}
+	one := func(lines ...lineResult) []exampleStep {
+		return []exampleStep{{ID: "b1", Doc: "README.md", Lines: lines}}
+	}
+	tests := []struct {
+		Steps      []exampleStep
+		Checkout   []string
+		Target     string
+		WantStatus Status
+		WantReason Reason
+		WantDetail string
+	}{{ // Test 0: The document's file landed beside the checkout's own package.
+		Steps: one(wrote, failed), Checkout: held,
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+		WantDetail: "wrote tutorial.go into the repository's own checkout, beside gomod_test.go of " +
+			"another Go package, so the claim was not tested as written: exited 1: " + mixed,
+	}, { // Test 1: Neither file is the document's, so the failure stands.
+		Steps: one(lineResult{Cmd: "cat > 'notes.txt' <<'KIBBLE_FILE_END'", Status: StatusVerified,
+			cwd: sessionRepoDir}, failed),
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 2: The document wrote both files, so the clash is its own.
+		Steps: one(lineResult{Cmd: "cat > 'gomod_test.go' <<'KIBBLE_FILE_END'", Status: StatusVerified,
+			cwd: sessionRepoDir}, wrote, failed),
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 3: A directory outside the checkout holds no package of the repository.
+		Steps: one(wrote, lineResult{Cmd: build, Status: StatusFail,
+			output: "found packages sqlc (gomod_test.go) and main (tutorial.go) in /tmp/app"}),
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 4: A directory the session made inside the checkout is not the checkout's package.
+		Steps: one(wrote, lineResult{Cmd: build, Status: StatusFail,
+			output: "found packages db (db.go) and main (tutorial.go) in /work/repo/app"}),
+		Checkout:   []string{"db.go"},
+		WantStatus: StatusFail,
+	}, { // Test 5: A write that was skipped put nothing in the checkout.
+		Steps:      one(lineResult{Cmd: write, Status: StatusSkipped, cwd: sessionRepoDir}, failed),
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 6: A write after the failure did not cause it.
+		Steps: one(failed, wrote), Checkout: held,
+		WantStatus: StatusFail,
+	}, { // Test 7: A file written into a subdirectory is not the one Go names at the root.
+		Steps:      one(lineResult{Cmd: nested, Status: StatusVerified, cwd: sessionRepoDir}, failed),
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 8: Any other Go build error after the write stays a failure.
+		Steps: one(wrote, lineResult{Cmd: build, Status: StatusFail,
+			output: "./tutorial.go:9:2: undefined: tutorial"}),
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 9: A second file the checkout never held is the document's doing.
+		Steps: one(wrote, lineResult{Cmd: "sqlc generate", Status: StatusVerified, cwd: sessionRepoDir},
+			lineResult{Cmd: build, Status: StatusFail,
+				output: "found packages main (tutorial.go) and tutorial (models.go) in /work/repo"}),
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 10: A file a shell line wrote is not a file block's, and not the checkout's.
+		Steps: one(wrote, lineResult{Cmd: "cat > models.go <<EOF", Status: StatusVerified,
+			cwd: sessionRepoDir}, lineResult{Cmd: build, Status: StatusFail,
+			output: "found packages main (tutorial.go) and models (models.go) in /work/repo"}),
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 11: A checkout with no Go file at its top has no package to clash with.
+		Steps:      one(wrote, failed),
+		WantStatus: StatusFail,
+	}, { // Test 12: The write and the build sit in separate blocks, as the planner emits them.
+		Steps: []exampleStep{
+			{ID: "b29", Doc: "docs/tutorials/getting-started.md", Lines: []lineResult{wrote}},
+			{ID: "b30", Doc: "docs/tutorials/getting-started.md", Lines: []lineResult{failed}},
+		},
+		Checkout:   held,
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 13: Go names the document's file first when it sorts first.
+		Steps: one(lineResult{Cmd: "cat > 'main.go' <<'KIBBLE_FILE_END'", Status: StatusVerified,
+			cwd: sessionRepoDir}, lineResult{Cmd: build, Status: StatusFail, Detail: "exited 1",
+			output: "found packages main (main.go) and zlib (zlib.go) in /work/repo"}),
+		Checkout:   []string{"zlib.go"},
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+		WantDetail: "wrote main.go into the repository's own checkout, beside zlib.go of " +
+			"another Go package, so the claim was not tested as written: exited 1",
+	}, { // Test 14: An earlier document's file is gone once the checkout is restored.
+		Steps: []exampleStep{
+			{ID: "b1", Doc: "docs/a.md", Lines: []lineResult{wrote}},
+			{ID: "b2", Doc: "docs/b.md", Lines: []lineResult{failed}},
+		},
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 15: A file written after entering a directory is not at the root.
+		Steps:      one(lineResult{Cmd: write, Status: StatusVerified, cwd: "/work/repo/app"}, failed),
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 16: A write whose directory the session did not report proves nothing.
+		Steps:      one(lineResult{Cmd: write, Status: StatusVerified}, failed),
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 17: A write that failed put nothing reliable in the checkout.
+		Steps:      one(lineResult{Cmd: write, Status: StatusFail, cwd: sessionRepoDir}, failed),
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 18: A write that was blocked did not run as written either.
+		Steps:      one(lineResult{Cmd: write, Status: StatusBlocked, cwd: sessionRepoDir}, failed),
+		Checkout:   held,
+		WantStatus: StatusFail,
+	}, { // Test 19: A later line failing for its own reason is not excused by the blocked build.
+		Steps: one(wrote, failed, lineResult{Cmd: "docker build .", Status: StatusFail,
+			output: "ERROR: failed to solve: dockerfile parse error on line 3"}),
+		Checkout:   held,
+		Target:     "docker build .",
+		WantStatus: StatusFail,
+	}, { // Test 20: A numbered terminator marks a file block all the same.
+		Steps: one(lineResult{Cmd: "cat > 'tutorial.go' <<'KIBBLE_FILE_END_1'", Status: StatusVerified,
+			cwd: sessionRepoDir}, failed),
+		Checkout:   held,
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 21: Go prefixes the importing position when the root is reached by an import.
+		Steps: one(wrote, lineResult{Cmd: build, Status: StatusFail,
+			output: "cmd/tool/main.go:3:8: " + mixed}),
+		Checkout:   held,
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			steps := make([]exampleStep, len(test.Steps))
+			for i, s := range test.Steps {
+				steps[i] = exampleStep{ID: s.ID, Doc: s.Doc, Lines: slices.Clone(s.Lines)}
+			}
+			run := &exampleRun{Steps: steps}
+			resolveDependentFailures(run, &kplan.Plan{RootGoFiles: test.Checkout})
+			target := test.Target
+			if target == "" {
+				target = build
+			}
+			var got lineResult
+			for _, s := range run.Steps {
+				for _, l := range s.Lines {
+					if l.Cmd == target {
+						got = l
+					}
+				}
+			}
+			if got.Status != test.WantStatus || got.Reason != test.WantReason {
+				t.Errorf("got %s %q, want %s %q (detail %q)",
+					got.Status, got.Reason, test.WantStatus, test.WantReason, got.Detail)
+			}
+			if test.WantDetail != "" && got.Detail != test.WantDetail {
+				t.Errorf("detail = %q, want %q", got.Detail, test.WantDetail)
 			}
 		})
 	}

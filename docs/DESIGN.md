@@ -223,7 +223,13 @@ procedure, which is the same boundary `inherited-state` reads.
 The same holds for the checkout itself. A would-be plain `FAIL` that ran in the
 repository's own checkout, and whose output says the target "already exists" or is
 "already initialized", is `BLOCKED` with the reason `checkout-state`. The collision is
-with the checkout kibble chose, not with anything the document wrote. A project manager,
+with the checkout kibble chose, not with anything the document wrote. A Go build that
+reports two packages at the top of the checkout is `checkout-state` as well, when a file
+block of the document wrote one of the two files Go names and the checkout held the other
+before the session started. A tutorial that tells the reader in prose to work in a new
+directory has its file written beside the repository's own package instead. A second file
+the checkout never held, such as a generator's output, leaves the failure standing, since
+that clash is the document's own. A project manager,
 a documented binary with a known ecosystem such as uv, that fails in the repository's own
 checkout is `checkout-state` as well, because it read the checkout's own project. A project
 that a scaffold line reported adding to the checkout's workspace, in the tool's own words, is

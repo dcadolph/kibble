@@ -319,6 +319,35 @@ func repoTree(dir string) map[string]bool {
 	return tree
 }
 
+// rootGoFiles returns the names of the Go files directly inside the checkout,
+// sorted. The directory is read on its own instead of taken from repoTree,
+// whose cap can stop before the walk returns to the top of a large checkout.
+// A link to a file counts, since the Go tool compiles it like any other.
+func rootGoFiles(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		regular := e.Type().IsRegular()
+		if e.Type()&os.ModeSymlink != 0 {
+			info, err := os.Stat(filepath.Join(dir, e.Name()))
+			regular = err == nil && info.Mode().IsRegular()
+		}
+		if regular {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
 // reSettingMention matches an environment setting named anywhere in the
 // document. Readers are commonly told about a variable in a table or a
 // sentence rather than in a runnable line, and a document that names one has
