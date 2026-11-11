@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -50,6 +51,9 @@ type lineOutcome struct {
 	resolver bool
 	// missing marks a line whose needed file did not exist just before it ran.
 	missing bool
+	// notFound marks a line that invoked a documented binary and exited with a
+	// code the documents say means nothing was found.
+	notFound bool
 	// member marks a line that ran in a directory an earlier line's own words
 	// declared a member of the checkout's workspace.
 	member bool
@@ -279,6 +283,7 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 				if bin, _ := kplan.InvokedBinary(docblock.Flatten(l.Cmd), bins); bin != "" {
 					o.ownProject = kplan.CommandEcosystem[bin] != ""
 					o.resolver = o.ownProject || resolverTools[bin]
+					o.notFound = slices.Contains(plan.NotFoundCodes, o.code)
 				}
 				o.member = members[o.cwd]
 				recordMembers(members, o)
