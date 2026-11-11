@@ -36,6 +36,9 @@ func TestTerminalErrorIsNotAFailure(t *testing.T) {
 	}, { // Test 4: an ordinary failure is untouched.
 		Name: "unrelated failure", Output: "error: no such option --heigth", Code: 2,
 		WantStatus: StatusFail,
+	}, { // Test 5: tcell names the unset TERM a container leaves behind.
+		Name: "tcell term not set", Output: "ERROR terminal entry not found: term not set", Code: 2,
+		WantStatus: StatusSkipped, WantReason: ReasonInteractive,
 	}}
 
 	for testNum, test := range tests {

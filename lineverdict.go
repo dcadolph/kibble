@@ -331,7 +331,8 @@ var (
 		`(?i)/dev/tty|not a (tty|terminal)|terminal is required|requires a terminal|no tty` +
 			`|needs an interactive terminal|interactive terminal|must be run interactively` +
 			`|not interactive|requires a controlling terminal|inappropriate ioctl for device` +
-			`|no such device or address`)
+			`|no such device or address|terminal entry not found|term not set` +
+			`|TERM (is )?(not set|unset|empty)`)
 	// reOtherArch matches a binary built for an architecture the container
 	// cannot run, such as an emulator that lacks the target's loader.
 	reOtherArch = regexp.MustCompile(
