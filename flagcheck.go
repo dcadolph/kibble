@@ -371,21 +371,32 @@ func flagChecks(results []Result) []Result {
 				missing = append(missing, r.Step.Usage.dashOf(f)+f)
 			}
 		}
+		var rejectedSubs, badSubs, unreleasedSubList []string
+		for _, s := range r.Step.Usage.Subs {
+			if rejectedSub(r, s) {
+				rejectedSubs = append(rejectedSubs, s)
+			}
+		}
+		// A subcommand the release rejects while HEAD's source declares it is
+		// the same document-ahead case as a flag, and joins the same note.
+		aheadSubs := unreleasedSubs(r.Step.dir, r.Step.Kind, rejectedSubs)
+		for _, s := range rejectedSubs {
+			if aheadSubs[s] {
+				unreleasedSubList = append(unreleasedSubList, s)
+			} else {
+				badSubs = append(badSubs, s)
+			}
+		}
 		sort.Strings(unreleased)
+		sort.Strings(unreleasedSubList)
 		release := "the installed release"
 		if r.SmokeLine != "" {
 			release = "the installed " + r.SmokeLine
 		}
 		unreleasedNote := ""
-		if len(unreleased) > 0 {
+		if all := append(slices.Clone(unreleased), unreleasedSubList...); len(all) > 0 {
 			unreleasedNote = fmt.Sprintf("%d unreleased (%s), defined in the source at HEAD but not in %s",
-				len(unreleased), strings.Join(unreleased, " "), release)
-		}
-		var badSubs []string
-		for _, s := range r.Step.Usage.Subs {
-			if rejectedSub(r, s) {
-				badSubs = append(badSubs, s)
-			}
+				len(all), strings.Join(all, " "), release)
 		}
 		sort.Strings(missing)
 		sort.Strings(badSubs)
