@@ -98,6 +98,20 @@ func TestHasPlaceholder(t *testing.T) {
 		In: `fzf --delimiter : --nth 3.. --bind 'enter:become(vim {1} +{2})'`, Want: false,
 	}, { // Test 21: A named slot still is.
 		In: `tool {name}`, Want: true,
+	}, { // Test 22: An ellipsis standing in for a leading path is a stand-in.
+		In: `curl -fsSL .../install.sh | sh`, Want: true,
+	}, { // Test 23: Numbered all-caps names are stand-ins.
+		In: `make UTILS='UTILITY_1 UTILITY_2'`, Want: true,
+	}, { // Test 24: An all-caps variable without a number is not.
+		In: `export GITHUB_TOKEN=x`, Want: false,
+	}, { // Test 25: An all-caps assignment without a number is not.
+		In: `FOO_BAR=1 ./run`, Want: false,
+	}, { // Test 26: An ellipsis inside a word is not.
+		In: `echo a...b`, Want: false,
+	}, { // Test 27: A Go package pattern is not.
+		In: `go test ./...`, Want: false,
+	}, { // Test 28: A Go package pattern under a directory is not.
+		In: `go build ./cmd/...`, Want: false,
 	}}
 
 	for testNum, test := range tests {

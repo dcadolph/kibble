@@ -458,9 +458,10 @@ var (
 // <command name>, xxxx runs, path/to/ and /home/user stand-ins,
 // double-brace templates such as a config example's {{.Field | quote}}, a
 // repository under a stand-in owner such as github.com/example/, a stand-in ref
-// such as @fix-something, and values that trail off in an ellipsis. The
-// ellipsis is ignored after a slash so a Go package pattern such as ./... is
-// not mistaken for one.
+// such as @fix-something, values that trail off in an ellipsis, an ellipsis
+// standing in for a leading path such as .../install.sh, and numbered
+// all-caps stand-ins such as UTILITY_1. The ellipsis is ignored after a slash
+// so a Go package pattern such as ./... is not mistaken for one.
 var rePlaceholder = regexp.MustCompile(
 	`<[^<>\s]+>|=<[^<>]+>|(^|[^${])\{[A-Za-z][A-Za-z0-9_]*\}|(^|\s)\[[^\[\]\s]+\](\s|$)` +
 		`|\{\{[^{}]*\}\}` +
@@ -471,7 +472,7 @@ var rePlaceholder = regexp.MustCompile(
 		`|yourusername|your-github-username|my-?org|my-?user)/` +
 		`|@(fix-something|my-branch|some-branch|your-branch|feature-branch|abc123def|abc123` +
 		`|deadbeef|1234567|123abc)\b` +
-		`|(^|[^/])\.\.\.($|[\s'".])`)
+		`|(^|[^/])\.\.\.($|[\s'"./])|\b[A-Z][A-Z]+_[0-9]+\b`)
 
 // HasPlaceholder reports whether s holds a token the reader must replace
 // before running it. The planner asks it of an example line and the extractor
