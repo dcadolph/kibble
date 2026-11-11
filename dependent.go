@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 
@@ -99,6 +100,12 @@ func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 				l.Detail = fmt.Sprintf("failed naming `%s`, which did not run", cited)
 				continue
 			}
+			if word := skippedProvider(s.Lines[:li], l.output); word != "" {
+				l.Status = StatusBlocked
+				l.Reason = ReasonMissingFixture
+				l.Detail = fmt.Sprintf("follows a skipped line that would have provided %s", word)
+				continue
+			}
 			if prior := earlierGapInFamily(s.Lines[:li], l.Cmd, bins); prior != "" {
 				l.Status = StatusBlocked
 				l.Reason = ReasonDependsOnSkipped
@@ -117,6 +124,55 @@ func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 			prior[s.Doc] = append(prior[s.Doc], *l)
 		}
 	}
+}
+
+var (
+	// reAbsentQuoted matches output reporting a quoted name as absent, such
+	// as Go's `no such tool "air"`, and captures the name.
+	reAbsentQuoted = regexp.MustCompile(
+		"(?i)(?:no such (?:tool|file|command)|not found)[^\"'`\\n]{0,20}[\"'`]([\\w.-]+)[\"'`]" +
+			"|[\"'`]([\\w.-]+)[\"'`][^\\n]{0,20}(?:not found|no such file)")
+	// reAbsentBare matches a shell reporting a bare name as absent, such as
+	// "air: command not found", and captures the name.
+	reAbsentBare = regexp.MustCompile(`(?i)(?:^|[\s:])([\w.-]+): (?:command )?not found`)
+)
+
+// skippedProvider returns the name a failing line reports as absent when an
+// earlier line of the same block was skipped for a missing fixture or
+// dependency and would have provided it. air's README skips `go get -tool
+// github.com/air-verse/air@latest`, since it adds a tool to the reader's own
+// module, and the next line fails with `go: no such tool "air"`. The name
+// must be a whole argument of the skipped line or the last element of a
+// module path in it, never part of a URL, and a placeholder skip provides
+// nothing.
+func skippedProvider(earlier []lineResult, output string) string {
+	var names []string
+	for _, line := range strings.Split(output, "\n") {
+		for _, m := range reAbsentQuoted.FindAllStringSubmatch(line, -1) {
+			names = append(names, m[1]+m[2])
+		}
+		for _, m := range reAbsentBare.FindAllStringSubmatch(line, -1) {
+			names = append(names, m[1])
+		}
+	}
+	for _, prev := range earlier {
+		if prev.Status != StatusSkipped ||
+			(prev.Reason != ReasonMissingFixture && prev.Reason != ReasonMissingDependency) {
+			continue
+		}
+		for _, f := range strings.Fields(prev.Cmd) {
+			if strings.Contains(f, "://") {
+				continue
+			}
+			mod, _, _ := strings.Cut(f, "@")
+			for _, n := range names {
+				if n != "" && (f == n || path.Base(mod) == n) {
+					return n
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // sharedOperandNotPassed returns a file-shaped operand of a failing line and

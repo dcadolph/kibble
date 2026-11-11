@@ -52,6 +52,36 @@ func TestSuppressionNeedsMoreThanAMention(t *testing.T) {
 		Failing: lineResult{Cmd: "tool deploy", Status: StatusFail,
 			output: "error: bad flag\nTry tool help for usage."},
 		Want: StatusFail,
+	}, { // Test 4: air's skipped go get would have provided the tool the next
+		// line reports absent.
+		Name: "skipped provider",
+		Skipped: lineResult{Cmd: "go get -tool github.com/air-verse/air@latest", Status: StatusSkipped,
+			Reason: ReasonMissingFixture},
+		Failing: lineResult{Cmd: "go tool air -v", Status: StatusFail,
+			output: `go: no such tool "air"`},
+		Want: StatusBlocked,
+	}, { // Test 5: the same skip does not excuse an unrelated failure.
+		Name: "skipped provider, unrelated failure",
+		Skipped: lineResult{Cmd: "go get -tool github.com/air-verse/air@latest", Status: StatusSkipped,
+			Reason: ReasonMissingFixture},
+		Failing: lineResult{Cmd: "go tool air -v", Status: StatusFail,
+			output: "open /work/repo/.air.toml: permission denied"},
+		Want: StatusFail,
+	}, { // Test 6: a placeholder skip provides nothing.
+		Name: "placeholder skip",
+		Skipped: lineResult{Cmd: "go get -tool github.com/<owner>/air@latest", Status: StatusSkipped,
+			Reason: ReasonPlaceholder},
+		Failing: lineResult{Cmd: "go tool air -v", Status: StatusFail,
+			output: `go: no such tool "air"`},
+		Want: StatusFail,
+	}, { // Test 7: a name that appears only inside a URL of the skipped line
+		// was not provided by it.
+		Name: "provider named in a url",
+		Skipped: lineResult{Cmd: "curl -o x https://example.com/air", Status: StatusSkipped,
+			Reason: ReasonMissingDependency},
+		Failing: lineResult{Cmd: "go tool air -v", Status: StatusFail,
+			output: `go: no such tool "air"`},
+		Want: StatusFail,
 	}}
 
 	for testNum, test := range tests {
