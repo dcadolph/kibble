@@ -57,6 +57,9 @@ type lineOutcome struct {
 	// member marks a line that ran in a directory an earlier line's own words
 	// declared a member of the checkout's workspace.
 	member bool
+	// truncated marks a line that printed more than the session keeps, so the
+	// end of output is not the end of what the line said.
+	truncated bool
 	// creators maps each path an earlier line of the same document was to
 	// create, and did not pass, to that line's command.
 	creators map[string]string
@@ -110,9 +113,14 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 	var chunk []string
 	aborted, done, noBin := false, false, false
 	pkgCode := 0
+	cut := false
 	keep := func(s string) {
-		if strings.TrimSpace(s) != "" && len(chunk) < 200 {
+		switch {
+		case strings.TrimSpace(s) == "":
+		case len(chunk) < 200:
 			chunk = append(chunk, s)
+		default:
+			cut = true
 		}
 	}
 	for _, line := range strings.Split(out, "\n") {
@@ -131,19 +139,20 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 		case strings.Contains(line, "KIBBLE-PKGS CODE="):
 			_, code, _ := markerTail(line, "KIBBLE-PKGS CODE=")
 			pkgCode, _ = strconv.Atoi(strings.TrimSpace(code))
-			chunk = nil
+			chunk, cut = nil, false
 		case strings.Contains(line, "KIBBLE-BUILD CODE="):
-			chunk = nil
+			chunk, cut = nil, false
 		case strings.Contains(line, "KIBBLE-ABORT"):
 			aborted = true
 		case strings.Contains(line, "KIBBLE-STEP "):
-			chunk = nil
+			chunk, cut = nil, false
 		case strings.Contains(line, "KIBBLE-DONE"):
 			done = true
 		case reLineMarker.MatchString(line):
 			m := reLineMarker.FindStringSubmatch(line)
 			keep(line[:len(line)-len(m[0])])
 			o := lineOutcome{code: -1, output: strings.Join(chunk, "\n"), missing: absent[m[1]+":"+m[2]]}
+			o.truncated = cut
 			switch {
 			case m[3] != "":
 				o.code, _ = strconv.Atoi(m[3])
@@ -154,7 +163,7 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 				o.ready = ready == 0
 			}
 			outcomes[m[1]+":"+m[2]] = o
-			chunk = nil
+			chunk, cut = nil, false
 		default:
 			keep(line)
 		}

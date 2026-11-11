@@ -56,7 +56,7 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Status = StatusBlocked
 		lr.Reason = ReasonLongRunning
 		lr.Detail = "ran without exiting and never reached its documented readiness signal"
-		lr.output = o.output
+		lr.output, lr.cwd = o.output, o.cwd
 		return lr
 	case wrapped && o.code == 124:
 		lr.Status = StatusTimeout
@@ -309,11 +309,22 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		// uv's README pins a Python version inside a project an earlier
 		// section created. The section was never tested as written.
 		lr = inheritedResult(lr, o, tail)
+	case missingScriptPackage(lr.Cmd, o) != "":
+		// Node ended on a package the script on the command line imports and
+		// could not resolve. Nothing in the session installed it, and whether
+		// the container or an unwritten step owes it is not something the
+		// error says. Every rule above has had its turn, so this excuses only
+		// what would otherwise convict. A package the tool's own code imports
+		// and lacks is a different matter and still convicts below.
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonMissingDependency
+		lr.Detail = fmt.Sprintf("runs a script that imports %s, which Node could not find, and "+
+			"that may be the container or a missing step", missingScriptPackage(lr.Cmd, o))
 	default:
 		lr.Status = StatusFail
 		lr.Detail = fmt.Sprintf("exited %d: %s", o.code, tail)
 	}
-	lr.output = o.output
+	lr.output, lr.cwd = o.output, o.cwd
 	return lr
 }
 
@@ -635,6 +646,107 @@ func crashMissingName(output string) string {
 		}
 	}
 	return ""
+}
+
+// reNodeNoPackage matches Node's module loader reporting an import of a package
+// no node_modules directory holds. The package and the importing file are
+// captured.
+var reNodeNoPackage = regexp.MustCompile(
+	`(?m)^Error \[ERR_MODULE_NOT_FOUND\]: Cannot find package '([^']+)' imported from (.+)$`)
+
+// reNodeErrorTail matches a line Node prints after an error's message as part
+// of that same error: a blank line, a stack frame, the code or url property of
+// the error object, a brace, or the closing version banner. A frame ends in a
+// position or a parenthesis, so an indented sentence that starts with "at" is
+// not one, and no other property is read, so a script's own indented
+// "error: text" is not one either.
+var reNodeErrorTail = regexp.MustCompile(`^(?:\s*|\s+at (?:.*(?:\)|:\d+)|<anonymous>)(?: \{)?|` +
+	`\s+(?:code|url): '[^']*',?|\s*[{}],?|Node\.js v\S+)$`)
+
+// reAddedExt matches the one extension a runner appends to the document it
+// compiles, such as the .mjs zx adds to a Markdown file.
+var reAddedExt = regexp.MustCompile(`^\.\w+$`)
+
+// missingScriptPackage returns the package a script the command passed tried
+// to import and Node could not find, or empty when the outcome says anything
+// else. The line must have exited 1 with its output kept whole. The importing
+// file must be the path the command names, resolved from the directory the
+// line ran in or one the line itself entered first, with at most one extension
+// a runner added, and must sit outside node_modules. A file elsewhere that
+// only ends the way the argument does is the tool's own code, and a package
+// missing under it is the tool's defect. Every kept line after the loader
+// error must be part of that error, since a script that catches a failed
+// optional import and dies later died of something else. A script that
+// catches the import, prints it, and exits 1 in silence reads the same as an
+// uncaught one and is not told apart.
+func missingScriptPackage(cmd string, o lineOutcome) string {
+	if o.code != 1 || o.truncated {
+		return ""
+	}
+	all := reNodeNoPackage.FindAllStringSubmatchIndex(o.output, -1)
+	if len(all) == 0 {
+		return ""
+	}
+	loc := all[len(all)-1]
+	for _, line := range strings.Split(o.output[loc[1]:], "\n") {
+		if !reNodeErrorTail.MatchString(strings.TrimRight(line, "\r")) {
+			return ""
+		}
+	}
+	pkg, importer := o.output[loc[2]:loc[3]], strings.TrimSpace(o.output[loc[4]:loc[5]])
+	if strings.Contains(importer, "/node_modules/") {
+		return ""
+	}
+	dir := o.cwd
+	if dir == "" {
+		dir = sessionRepoDir
+	}
+	words := shell.ArgWordsOrFields(cmd)
+	for i := 0; i < len(words); i++ {
+		tok := strings.Trim(words[i], "'\"")
+		if (tok == "cd" || tok == "pushd") && i+1 < len(words) {
+			i++
+			dir = enteredDir(dir, strings.Trim(words[i], "'\""))
+			continue
+		}
+		if strings.HasPrefix(tok, "-") {
+			_, val, ok := strings.Cut(tok, "=")
+			if !ok {
+				continue
+			}
+			tok = val
+		}
+		name := normName(tok)
+		if name == "" || !strings.ContainsAny(tok, "./") {
+			continue
+		}
+		if !path.IsAbs(name) {
+			if dir == "" {
+				continue
+			}
+			name = path.Join(dir, name)
+		}
+		rest, found := strings.CutPrefix(importer, path.Clean(name))
+		if found && (rest == "" || reAddedExt.MatchString(rest)) {
+			return pkg
+		}
+	}
+	return ""
+}
+
+// enteredDir returns the directory a cd or pushd to target leaves a line in
+// when it started in dir, or empty when the target is not a plain path and the
+// result cannot be known from the line's words.
+func enteredDir(dir, target string) string {
+	switch {
+	case target == "" || strings.ContainsAny(target, "$~`*?") || strings.HasPrefix(target, "-"):
+		return ""
+	case path.IsAbs(target):
+		return path.Clean(target)
+	case dir == "":
+		return ""
+	}
+	return path.Join(dir, target)
 }
 
 // crashWantsInput reports whether a crash's last line is an EOFError, which is

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	kplan "github.com/dcadolph/kibble/internal/plan"
 )
 
@@ -275,6 +277,283 @@ FileNotFoundError: [Errno 2] No such file or directory: 'patfile'
 			}
 			if !strings.Contains(lr.Detail, test.WantDetail) {
 				t.Errorf("detail = %q, want it to contain %q", lr.Detail, test.WantDetail)
+			}
+		})
+	}
+}
+
+// TestClassifyMissingScriptPackage pins the rule that reads Node failing to
+// find a package the script on the command line imports. The first output is
+// what zx printed in a sweep. A package missing under a file the command never
+// named, under installed code, or under a file elsewhere that only ends like
+// the argument stays a failure, and so does a run that printed the loader
+// error and then died of something else.
+func TestClassifyMissingScriptPackage(t *testing.T) {
+	t.Parallel()
+
+	const (
+		stack = "    at packageResolve (node:internal/modules/esm/resolve:772:81)\n" +
+			"    at ModuleLoader.import (node:internal/modules/esm/loader:679:21) {\n" +
+			"  code: 'ERR_MODULE_NOT_FOUND'\n}\n"
+		typeError = "TypeError: Cannot read properties of undefined (reading 'port')\n" +
+			"    at file:///work/repo/opt.mjs:3:1\n\nNode.js v26.13.0\n"
+	)
+	noPackage := func(pkg, importer string) string {
+		return "Error [ERR_MODULE_NOT_FOUND]: Cannot find package '" + pkg +
+			"' imported from " + importer + "\n" + stack
+	}
+
+	tests := []struct {
+		WantStatus Status
+		WantReason Reason
+		WantDetail string
+		Cmd        string
+		Cwd        string
+		Output     string
+		Code       int
+		Truncated  bool
+	}{{ // Test 0: A script a runner compiled from the named document is blocked.
+		Cmd:        "zx docs/markdown.md",
+		Cwd:        "/work/repo",
+		Output:     noPackage("chalk", "/work/repo/docs/markdown.md.mjs"),
+		WantStatus: StatusBlocked, WantReason: ReasonMissingDependency,
+		WantDetail: "imports chalk, which Node could not find",
+	}, { // Test 1: A script named outright is blocked, with no directory on the marker.
+		Cmd:        "node app.js",
+		Output:     noPackage("express", "/work/repo/app.js"),
+		WantStatus: StatusBlocked, WantReason: ReasonMissingDependency,
+		WantDetail: "imports express, which Node could not find",
+	}, { // Test 2: A leading ./ on the named script does not hide it.
+		Cmd:        "node ./src/app.mjs --port 8080",
+		Cwd:        "/work/repo",
+		Output:     noPackage("@scope/pkg", "/work/repo/src/app.mjs"),
+		WantStatus: StatusBlocked, WantReason: ReasonMissingDependency,
+		WantDetail: "imports @scope/pkg, which Node could not find",
+	}, { // Test 3: A package the tool's installed code lacks is the tool's defect.
+		Cmd:        "tool build site.config.js",
+		Output:     noPackage("chalk", "/usr/local/lib/node_modules/tool/dist/index.js"),
+		WantStatus: StatusFail,
+	}, { // Test 4: A named script under node_modules is installed code all the same.
+		Cmd:        "node node_modules/tool/cli.js",
+		Output:     noPackage("chalk", "/work/repo/node_modules/tool/cli.js"),
+		WantStatus: StatusFail,
+	}, { // Test 5: A file the command never named settles nothing in the line's favor.
+		Cmd:        "node app.js",
+		Output:     noPackage("chalk", "/work/repo/lib/util.js"),
+		WantStatus: StatusFail,
+	}, { // Test 6: A name that only ends like the named script is another file.
+		Cmd:        "node app.js",
+		Output:     noPackage("chalk", "/work/repo/myapp.js"),
+		WantStatus: StatusFail,
+	}, { // Test 7: A file inside a directory named like the script is another file.
+		Cmd:        "zx docs/markdown.md",
+		Output:     noPackage("chalk", "/work/repo/docs/markdown.md.d/run.mjs"),
+		WantStatus: StatusFail,
+	}, { // Test 8: A command naming no script has no importer to match.
+		Cmd:        "tool serve",
+		Output:     noPackage("chalk", "/work/repo/serve.js"),
+		WantStatus: StatusFail,
+	}, { // Test 9: A crash before the loader error still convicts.
+		Cmd:        "node app.js",
+		Output:     "fatal error: out of memory\n" + noPackage("chalk", "/work/repo/app.js"),
+		WantStatus: StatusFail, WantDetail: "crashed with exit 1",
+	}, { // Test 10: A workspace tool's own source ends like the argument and is not it.
+		Cmd:        "tool build src/index.js",
+		Cwd:        "/work/repo",
+		Output:     noPackage("chalk", "/work/repo/packages/tool/src/index.js"),
+		WantStatus: StatusFail,
+	}, { // Test 11: The same holds for a tool installed outside node_modules.
+		Cmd:        "tool lint index.js",
+		Cwd:        "/work/repo",
+		Output:     noPackage("chalk", "/opt/tool/index.js"),
+		WantStatus: StatusFail,
+	}, { // Test 12: A caught optional import followed by the real error convicts.
+		Cmd:        "node opt.mjs",
+		Cwd:        "/work/repo",
+		Output:     noPackage("fsevents", "/work/repo/opt.mjs") + typeError,
+		WantStatus: StatusFail,
+	}, { // Test 13: A caught optional import does not hide the file the document never made.
+		Cmd: "node opt2.mjs data.json",
+		Cwd: "/work/repo",
+		Output: noPackage("fsevents", "/work/repo/opt2.mjs") +
+			"Error: ENOENT: no such file or directory, open 'data.json'\n",
+		WantStatus: StatusGap, WantDetail: "references data.json",
+	}, { // Test 14: Of two scripts, the one that ended the line decides.
+		Cmd:        "node a.mjs; node b.mjs",
+		Cwd:        "/work/repo",
+		Output:     noPackage("chalk", "/work/repo/a.mjs") + typeError,
+		WantStatus: StatusFail,
+	}, { // Test 15: A script named through the parent directory is resolved first.
+		Cmd:        "node ../app.mjs",
+		Cwd:        "/work/repo/sub",
+		Output:     noPackage("chalk", "/work/repo/app.mjs"),
+		WantStatus: StatusBlocked, WantReason: ReasonMissingDependency,
+	}, { // Test 16: A directory named like the script does not hide the script inside it.
+		Cmd:        "node demo.mjs",
+		Cwd:        "/work/repo/demo.mjs.org",
+		Output:     noPackage("chalk", "/work/repo/demo.mjs.org/demo.mjs"),
+		WantStatus: StatusBlocked, WantReason: ReasonMissingDependency,
+	}, { // Test 17: A script passed as a flag's value is named all the same.
+		Cmd:        "tool --config=app.mjs",
+		Cwd:        "/work/repo",
+		Output:     noPackage("chalk", "/work/repo/app.mjs"),
+		WantStatus: StatusBlocked, WantReason: ReasonMissingDependency,
+	}, { // Test 18: A script named by its full path is named.
+		Cmd:        "node /work/repo/src/./app.js",
+		Cwd:        "/tmp",
+		Output:     noPackage("chalk", "/work/repo/src/app.js"),
+		WantStatus: StatusBlocked, WantReason: ReasonMissingDependency,
+	}, { // Test 19: Two added extensions make another file, such as a test beside the script.
+		Cmd:        "tool src/app",
+		Cwd:        "/work/repo",
+		Output:     noPackage("chalk", "/work/repo/src/app.test.js"),
+		WantStatus: StatusFail,
+	}, { // Test 20: A process a signal killed did not end on the loader error.
+		Cmd:        "node app.js",
+		Cwd:        "/work/repo",
+		Output:     noPackage("chalk", "/work/repo/app.js"),
+		Code:       137,
+		WantStatus: StatusFail,
+	}, { // Test 21: An uncaught loader error carries Node's header and version banner.
+		Cmd: "node app.mjs",
+		Cwd: "/work/repo",
+		Output: "node:internal/modules/esm/resolve:873\n" +
+			"  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);\n" +
+			"        ^\n\n" + noPackage("chalk", "/work/repo/app.mjs") + "\nNode.js v22.11.0\n",
+		WantStatus: StatusBlocked, WantReason: ReasonMissingDependency,
+	}, { // Test 22: A program the tool could not start is still the container's gap.
+		Cmd:        "node run.mjs",
+		Cwd:        "/work/repo",
+		Output:     "Error: spawn ava ENOENT\n" + noPackage("chalk", "/work/repo/run.mjs"),
+		WantStatus: StatusSkipped, WantReason: ReasonMissingDependency,
+	}, { // Test 23: The directory the line ran in decides which file a relative name means.
+		Cmd:        "node app.js",
+		Cwd:        "/work/repo/sub",
+		Output:     noPackage("chalk", "/work/repo/app.js"),
+		WantStatus: StatusFail,
+	}, { // Test 24: A directory the line itself enters first is where its script is.
+		Cmd:        "cd examples && node demo.mjs",
+		Cwd:        "/work/repo",
+		Output:     noPackage("chalk", "/work/repo/examples/demo.mjs"),
+		WantStatus: StatusBlocked, WantReason: ReasonMissingDependency,
+	}, { // Test 25: A pushd and a runner in front of the script read the same way.
+		Cmd:        "pushd examples && npx tsx src/main.ts",
+		Cwd:        "/work/repo",
+		Output:     noPackage("chalk", "/work/repo/examples/src/main.ts"),
+		WantStatus: StatusBlocked, WantReason: ReasonMissingDependency,
+	}, { // Test 26: After the line changes directory the old one no longer names the script.
+		Cmd:        "cd examples && node demo.mjs",
+		Cwd:        "/work/repo",
+		Output:     noPackage("chalk", "/work/repo/demo.mjs"),
+		WantStatus: StatusFail,
+	}, { // Test 27: A directory only a variable names leaves a relative script unplaced.
+		Cmd:        "cd \"$DEMO_DIR\" && node demo.mjs",
+		Cwd:        "/work/repo",
+		Output:     noPackage("chalk", "/work/repo/demo.mjs"),
+		WantStatus: StatusFail,
+	}, { // Test 28: An indented message of the script's own after the stack is not Node's.
+		Cmd:        "node opt.mjs",
+		Cwd:        "/work/repo",
+		Output:     noPackage("fsevents", "/work/repo/opt.mjs") + "  error: port must be a number\n",
+		WantStatus: StatusFail,
+	}, { // Test 29: An indented sentence that starts with "at" is not a stack frame.
+		Cmd:        "node opt.mjs",
+		Cwd:        "/work/repo",
+		Output:     noPackage("fsevents", "/work/repo/opt.mjs") + "  at least one entry is required\n",
+		WantStatus: StatusFail,
+	}, { // Test 30: Output the session cut short cannot show what the line ended on.
+		Cmd:        "node app.js",
+		Cwd:        "/work/repo",
+		Output:     noPackage("chalk", "/work/repo/app.js"),
+		Truncated:  true,
+		WantStatus: StatusFail,
+	}, { // Test 31: A script named by ./ and no extension is still a path.
+		Cmd:        "node ./server",
+		Cwd:        "/work/repo",
+		Output:     noPackage("express", "/work/repo/server.js"),
+		WantStatus: StatusBlocked, WantReason: ReasonMissingDependency,
+	}, { // Test 32: A bare frame, a url property, and a pre-release banner are Node's own.
+		Cmd: "node app.mjs",
+		Cwd: "/work/repo",
+		Output: "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'chalk' imported from " +
+			"/work/repo/app.mjs\n    at packageResolve (node:internal/modules/esm/resolve:772:81)\n" +
+			"    at async file:///work/repo/app.mjs:1:1 {\n  code: 'ERR_MODULE_NOT_FOUND',\n" +
+			"  url: 'file:///work/repo/node_modules/chalk'\n}\n\nNode.js v23.0.0-pre\n",
+		WantStatus: StatusBlocked, WantReason: ReasonMissingDependency,
+	}}
+
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			code := 1
+			if test.Code != 0 {
+				code = test.Code
+			}
+			lr := classifyLineResult(lineResult{Cmd: test.Cmd}, kplan.PlanLine{},
+				lineOutcome{code: code, cwd: test.Cwd, output: test.Output, truncated: test.Truncated},
+				false, nil, lineTimeout)
+			if lr.Status != test.WantStatus || lr.Reason != test.WantReason {
+				t.Errorf("verdict = %s %q, want %s %q (detail %q)",
+					lr.Status, lr.Reason, test.WantStatus, test.WantReason, lr.Detail)
+			}
+			if !strings.Contains(lr.Detail, test.WantDetail) {
+				t.Errorf("detail = %q, want it to contain %q", lr.Detail, test.WantDetail)
+			}
+		})
+	}
+}
+
+// TestClassifyExampleLongOutput pins that a line whose output passed the
+// session's cap is not read as ending where the kept lines end. A script that
+// printed a caught loader error and then died of something else past the cap
+// stays a failure, and the same loader error inside the cap is still blocked.
+func TestClassifyExampleLongOutput(t *testing.T) {
+	t.Parallel()
+
+	const (
+		loader = "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'chalk' imported from " +
+			"/work/repo/build.mjs\n" +
+			"    at packageResolve (node:internal/modules/esm/resolve:772:81)\n" +
+			"    at ModuleLoader.import (node:internal/modules/esm/loader:679:21) {\n" +
+			"  code: 'ERR_MODULE_NOT_FOUND'\n}\n"
+		typeError = "TypeError: Cannot read properties of undefined (reading 'port')\n" +
+			"    at file:///work/repo/build.mjs:9:1\n\nNode.js v22.11.0\n"
+	)
+	tests := []struct {
+		WantStatus Status
+		Progress   int
+		After      string
+	}{{ // Test 0: A loader error that ends short output is blocked.
+		Progress: 20, WantStatus: StatusBlocked,
+	}, { // Test 1: A later error inside the cap is read and convicts.
+		Progress: 20, After: typeError, WantStatus: StatusFail,
+	}, { // Test 2: A later error the cap dropped convicts all the same.
+		Progress: 195, After: typeError, WantStatus: StatusFail,
+	}, { // Test 3: Output that fills the cap exactly was not cut.
+		Progress: 195, WantStatus: StatusBlocked,
+	}, { // Test 4: One kept line past the cap was cut, whatever it said.
+		Progress: 195, After: "done\n", WantStatus: StatusFail,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := &kplan.Plan{
+				Repo: "repo", Binaries: []string{"zx"},
+				Steps: []kplan.PlanStep{{ID: "b1", Lines: []kplan.PlanLine{{Cmd: "zx build.mjs"}}}},
+			}
+			out := "KIBBLE-BUILD CODE=0\nKIBBLE-STEP b1 START\n" +
+				strings.Repeat("built one more page\n", test.Progress) + loader + test.After +
+				"KIBBLE-LINE b1:0 CODE=1 CWD=/work/repo\nKIBBLE-DONE\n"
+			res := classifyExample(InstallStep{Repo: "repo", Kind: "example"}, plan, out, nil, 0,
+				lineTimeout, sessionEnd{})
+			var got []Status
+			for _, s := range res.example.Steps {
+				for _, l := range s.Lines {
+					got = append(got, l.Status)
+				}
+			}
+			if diff := cmp.Diff([]Status{test.WantStatus}, got); diff != "" {
+				t.Errorf("line statuses mismatch (-want +got):\n%s\ndetail %q", diff, res.Detail)
 			}
 		})
 	}
