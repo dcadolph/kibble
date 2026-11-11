@@ -589,6 +589,17 @@ func TestPlatformScopedBlocks(t *testing.T) {
 		// when the final sentence moves on.
 		Markdown: "Users on macOS often ask this. The answer is the same " +
 			"everywhere, run the following:\n\n```sh\ntool run --fix\n```\n",
+	}, { // Test 6: a block under a bare macOS heading is skipped.
+		Markdown: "### macOS\n\n```sh\ntool run --fix\n```\n",
+		WantSkip: "documented for",
+	}, { // Test 7: a bare Windows heading scopes a block whose own
+		// introduction names no platform.
+		Markdown: "## Windows\n\nRun the following:\n\n```sh\ntool run --fix\n```\n",
+		WantSkip: "documented for",
+	}, { // Test 8: a heading that only mentions macOS does not scope the block.
+		Markdown: "## Building on macOS\n\n```sh\ntool run --fix\n```\n",
+	}, { // Test 9: a bare Linux heading runs.
+		Markdown: "## Linux\n\n```sh\ntool run --fix\n```\n",
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

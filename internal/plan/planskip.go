@@ -550,10 +550,6 @@ func describedAsLinter(markdown string) []string {
 	return subs
 }
 
-// describedAsWatcher reports whether a document introduces a binary as a tool
-// that keeps running. The words have to sit near the tool's name, since a
-// document can mention watching for reasons that say nothing about the
-// command, and being wrong here costs a check that would have run.
 // reOtherPlatform matches the operating systems a Linux container cannot
 // stand in for. BSD sed counts because the FreeBSD and macOS sed shares a
 // name with GNU sed and nothing else, which is exactly why docs call it out.
@@ -584,6 +580,26 @@ func otherPlatform(intro string) string {
 	return m
 }
 
+// rePlatformHeading matches a section heading that is nothing but the name of
+// an operating system a Linux container cannot stand in for.
+var rePlatformHeading = regexp.MustCompile(`(?i)^\s*(macOS|OS X|FreeBSD|OpenBSD|NetBSD|Windows)\s*$`)
+
+// platformHeading returns the platform a block's section heading scopes it to,
+// or empty when the heading is anything other than a bare platform name. A
+// heading such as "Building on macOS" is left to the prose rule, since the
+// section under it often covers every platform.
+func platformHeading(heading string) string {
+	m := rePlatformHeading.FindStringSubmatch(heading)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// describedAsWatcher reports whether a document introduces a binary as a tool
+// that keeps running. The words have to sit near the tool's name, since a
+// document can mention watching for reasons that say nothing about the
+// command, and being wrong here costs a check that would have run.
 func describedAsWatcher(markdown, bin string) bool {
 	if bin == "" {
 		return false
