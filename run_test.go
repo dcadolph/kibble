@@ -895,6 +895,15 @@ func TestPkgScriptPrefersNamedBinary(t *testing.T) {
 	if strings.Contains(evil, "rm -rf") {
 		t.Error("shell syntax from the docs reached the owned-bins lookup")
 	}
+	// A binary name read from a manifest in the checkout is no more trusted
+	// than a package name read from a document.
+	for _, name := range []string{"x'; touch /tmp/owned; '", "a b", "$(id)", "x\\", "a\nb", "a\x00b", "a\tb"} {
+		bad := pkgScriptFor(InstallStep{
+			Kind: "npm-install", Raw: "npm install zx", Module: "zx", Binary: name}, 300)
+		if strings.Contains(bad, name) {
+			t.Errorf("binary name %q reached the script", name)
+		}
+	}
 	if strings.Contains(script, "pip show") {
 		t.Error("pipx script gained a lookup only pip needs")
 	}
@@ -1043,6 +1052,104 @@ func TestPkgScriptOwnedBinaries(t *testing.T) {
 			}
 			if test.WantLine != "" && !strings.Contains(got, test.WantLine+"\n") {
 				t.Errorf("missing %q\n%s", test.WantLine, got)
+			}
+		})
+	}
+}
+
+// TestPkgScriptLocalNpmBinaries runs the local npm script against a fake npm.
+// The installed package's own manifest decides which binary is smoke-tested:
+// the scratch project's bin directory also holds every dependency's tool, and
+// a library that ships no binary must not borrow one.
+func TestPkgScriptLocalNpmBinaries(t *testing.T) {
+	t.Parallel()
+	for _, tool := range []string{"bash", "timeout", "comm", "node"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("no %s", tool)
+		}
+	}
+	tests := []struct {
+		Raw       string
+		Package   string
+		Manifest  string
+		Bins      []string
+		Binary    string
+		WantLine  string
+		WantNoBin bool
+	}{{ // Test 0: A library with no binary does not borrow a dependency's tool.
+		Raw: "npm install chalk", Package: "chalk", Manifest: `{"name": "chalk"}`,
+		Bins: []string{"loose-envify"}, WantNoBin: true,
+	}, { // Test 1: A declared binary is smoke-tested, not the dependency sorted before it.
+		Raw: "npm install zx # add -g to install globally", Package: "zx",
+		Manifest: `{"name": "zx", "bin": {"zx": "build/cli.js"}}`,
+		Bins:     []string{"acorn", "zx"}, Binary: "zx", WantLine: "SMOKELINE=zx 1.0",
+	}, { // Test 2: A single-path bin is named after the scoped package, with no name documented.
+		Raw: "npm i @scope/tool@2", Package: "@scope/tool",
+		Manifest: `{"name": "@scope/tool", "bin": "cli.js"}`,
+		Bins:     []string{"acorn", "tool"}, WantLine: "SMOKELINE=tool 1.0",
+	}, { // Test 3: The documented name wins among several declared binaries.
+		Raw: "npm install multi", Package: "multi",
+		Manifest: `{"name": "multi", "bin": {"aaa": "a.js", "multi": "m.js"}}`,
+		Bins:     []string{"aaa", "multi"}, Binary: "multi", WantLine: "SMOKELINE=multi 1.0",
+	}, { // Test 4: A manifest that cannot be read still stands as an answer of none.
+		Raw: "npm install broken", Package: "broken", Manifest: `{"name": `,
+		Bins: []string{"acorn"}, WantNoBin: true,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			stage := filepath.Join(dir, "stage", "node_modules")
+			for _, d := range []string{filepath.Join(dir, "fake"), filepath.Join(stage, ".bin"),
+				filepath.Join(stage, filepath.FromSlash(test.Package))} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			manifest := filepath.Join(stage, filepath.FromSlash(test.Package), "package.json")
+			if err := os.WriteFile(manifest, []byte(test.Manifest), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for _, b := range test.Bins {
+				tool := fmt.Sprintf("#!/bin/sh\necho '%s 1.0'\n", b)
+				//nolint:gosec // Test fixture must be executable.
+				if err := os.WriteFile(filepath.Join(stage, ".bin", b), []byte(tool), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			npm := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in\ninit) echo '{}' > package.json ;;\n"+
+				"install|i|add) cp -R %q . ;;\n*) exit 2 ;;\nesac\n", stage)
+			//nolint:gosec // Test fixture must be executable.
+			if err := os.WriteFile(filepath.Join(dir, "fake", "npm"), []byte(npm), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			script := pkgScriptFor(InstallStep{
+				Kind: "npm-install", Raw: test.Raw, Module: test.Package, Binary: test.Binary}, 60)
+			cmd := exec.Command("bash", "-c", script)
+			cmd.Env = append(os.Environ(), "HOME="+filepath.Join(dir, "home"),
+				"PATH="+filepath.Join(dir, "fake")+":"+os.Getenv("PATH"))
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("script: %v\n%s", err, out)
+			}
+			got := string(out)
+			if !strings.Contains(got, "BUILDCODE=0\n") {
+				t.Fatalf("install did not run clean:\n%s", got)
+			}
+			if test.WantNoBin != strings.Contains(got, "NOBIN=1") {
+				t.Errorf("NOBIN = %v, want %v\n%s", !test.WantNoBin, test.WantNoBin, got)
+			}
+			if test.WantLine != "" && !strings.Contains(got, test.WantLine+"\n") {
+				t.Errorf("missing %q\n%s", test.WantLine, got)
+			}
+			// An install that ran and left no binary of its own is reported as
+			// run, never as verified and never as failed.
+			status := classify(InstallStep{Kind: "npm-install", Raw: test.Raw}, got, 0).Status
+			if test.WantNoBin && status != StatusRan {
+				t.Errorf("status = %s, want %s\n%s", status, StatusRan, got)
+			}
+			if !test.WantNoBin && status != StatusVerified {
+				t.Errorf("status = %s, want %s\n%s", status, StatusVerified, got)
 			}
 		})
 	}

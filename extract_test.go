@@ -126,7 +126,7 @@ func TestExtract(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			steps := DefaultExtractor().Extract("repo", test.In)
+			steps := ExtractorWith(repoNames{}).Extract("repo", test.In)
 			if diff := cmp.Diff(test.WantCount, len(steps)); diff != "" {
 				t.Fatalf("count mismatch (-want +got):\n%s\nsteps: %+v", diff, steps)
 			}
@@ -176,7 +176,7 @@ func TestInstallRecipeCapture(t *testing.T) {
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
-			steps := DefaultExtractor().Extract("repo", test.In)
+			steps := ExtractorWith(repoNames{}).Extract("repo", test.In)
 			var clone *InstallStep
 			for i := range steps {
 				if steps[i].Kind == "git-clone" {
@@ -262,6 +262,8 @@ func TestClassifyPackage(t *testing.T) {
 		WantKind: "npm-install", WantPkg: "prettier",
 	}, { // Test 10: an unrelated line matches nothing.
 		In: "go build ./...", WantOK: false,
+	}, { // Test 11: A global flag named only in a comment is not a global install.
+		In: "npm install zx # add -g to install globally", WantOK: false,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -275,6 +277,151 @@ func TestClassifyPackage(t *testing.T) {
 			}
 			if diff := cmp.Diff(test.WantPkg, pkg); diff != "" {
 				t.Errorf("package mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestLocalNpmStep checks that a local npm install is an install route only
+// for a plain registry name the repository's own manifest declares, and that
+// the expected binary is the one the manifest names.
+func TestLocalNpmStep(t *testing.T) {
+	t.Parallel()
+	owned := repoNames{
+		names: map[string]bool{"checkout": true},
+		npm: map[string][]string{
+			"zx": {"zx"}, "chalk": nil, "ink": nil, "@scope/tool": {"other", "tool"},
+			"multi": {"aaa", "bbb"}, "core": nil,
+		},
+	}
+	tests := []struct {
+		In         string
+		WantModule string
+		WantBinary string
+		WantOK     bool
+		WantNoRun  bool
+	}{{ // Test 0: A declared package with a binary is a route.
+		In: "npm install zx", WantOK: true, WantModule: "zx", WantBinary: "zx",
+	}, { // Test 1: A declared package with no binary is a route that expects none.
+		In: "npm install chalk", WantOK: true, WantModule: "chalk",
+	}, { // Test 2: A package no manifest declares is a dependency install.
+		In: "npm install prettier",
+	}, { // Test 3: The checkout's folder name alone is not a declaration.
+		In: "npm install checkout",
+	}, { // Test 4: A URL is not a registry name.
+		In: "npm install https://example.com/zx.tgz",
+	}, { // Test 5: A GitHub shorthand is not a registry name.
+		In: "npm install google/zx",
+	}, { // Test 6: A line naming a registry is refused.
+		In: "npm install --registry https://npm.example.com zx",
+	}, { // Test 7: The glued registry form is refused too.
+		In: "npm install zx --registry=https://npm.example.com",
+	}, { // Test 8: A global flag named only in a comment leaves the line local.
+		In: "npm install zx # add -g to install globally", WantOK: true,
+		WantModule: "zx", WantBinary: "zx",
+	}, { // Test 9: A global install is not a local route.
+		In: "npm install -g zx",
+	}, { // Test 10: The first package decides, and the rest ride along.
+		In: "npm install ink react", WantOK: true, WantModule: "ink",
+	}, { // Test 11: An undeclared first package is not rescued by a later one.
+		In: "npm install react ink",
+	}, { // Test 12: A version tag is kept on the module and ignored for the match.
+		In: "npm i zx@8.8.5", WantOK: true, WantModule: "zx@8.8.5", WantBinary: "zx",
+	}, { // Test 13: A scoped package prefers the binary named after it.
+		In: "$ npm add @scope/tool", WantOK: true, WantModule: "@scope/tool", WantBinary: "tool",
+	}, { // Test 14: An alias installs another package under the declared name.
+		In: "npm install zx@npm:other",
+	}, { // Test 15: A near spelling is not the declared name.
+		In: "npm install ZX",
+	}, { // Test 16: A compound line is not a single install.
+		In: "npm install zx && zx --version",
+	}, { // Test 17: Without a binary named after the package, the first by name is expected.
+		In: "npm install multi", WantOK: true, WantModule: "multi", WantBinary: "aaa",
+	}, { // Test 18: A path is the checkout, not the registry.
+		In: "npm install ./zx",
+	}, { // Test 19: A save flag before the name leaves the line a route.
+		In: "npm install --save-dev zx", WantOK: true, WantModule: "zx", WantBinary: "zx",
+	}, { // Test 20: A save flag after the name does too.
+		In: "npm i zx -D", WantOK: true, WantModule: "zx", WantBinary: "zx",
+	}, { // Test 21: A workspace flag's value is not the package being installed.
+		In: "npm install -w core lodash",
+	}, { // Test 22: A workspace install is not an install in a new project.
+		In: "npm install --workspace=core zx",
+	}, { // Test 23: A prefix sends the install somewhere other than the scratch project.
+		In: "npm install --prefix ./app zx",
+	}, { // Test 24: A flag outside the known set is not guessed at.
+		In: "npm install zx --install-strategy nested",
+	}, { // Test 25: A path riding along fails in a new project, so the line is no route.
+		In: "npm install zx ./local",
+	}, { // Test 26: A URL riding along is refused the same way.
+		In: "npm install zx https://example.com/other.tgz",
+	}, { // Test 27: A scoped registry setting is a registry by another name.
+		In: "npm install zx --@scope:registry=https://npm.example.com",
+	}, { // Test 28: A scoped name keeps its version on the module and matches without it.
+		In: "npm install @scope/tool@2", WantOK: true, WantModule: "@scope/tool@2", WantBinary: "tool",
+	}, { // Test 29: A stand-in version is recorded and not run.
+		In: "npm install zx@xxxx", WantOK: true, WantModule: "zx@xxxx", WantBinary: "zx",
+		WantNoRun: true,
+	}, { // Test 30: The glued prefix form is refused by the flag list alone.
+		In: "npm install --prefix=./app zx",
+	}, { // Test 31: A quoted name is the name.
+		In: `npm install "zx"`, WantOK: true, WantModule: "zx", WantBinary: "zx",
+	}, { // Test 32: A quote that never closes is a broken line, not a route.
+		In: `npm install "zx`,
+	}, { // Test 33: Two names inside one pair of quotes are one argument npm rejects.
+		In: `npm install "zx lodash"`,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			got, _, ok := localNpmStep("checkout", test.In, owned)
+			if diff := cmp.Diff(test.WantOK, ok); diff != "" {
+				t.Fatalf("ok mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantModule, got.Module); diff != "" {
+				t.Errorf("module mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantBinary, got.Binary); diff != "" {
+				t.Errorf("binary mismatch (-want +got):\n%s", diff)
+			}
+			if ok && (got.Kind != "npm-install" || got.Run == test.WantNoRun) {
+				t.Errorf("step = %s run %v, want npm-install run %v", got.Kind, got.Run, !test.WantNoRun)
+			}
+			if _, _, plain := localNpmStep("checkout", test.In, repoNames{}); plain {
+				t.Errorf("a repository that declares nothing gave a route for %q", test.In)
+			}
+		})
+	}
+}
+
+// TestExtractLocalAndGlobalNpm checks that a local and a global install of one
+// package are two routes. Each is a line a reader may type, and sharing one
+// key left the second unverified.
+func TestExtractLocalAndGlobalNpm(t *testing.T) {
+	t.Parallel()
+	owned := repoNames{npm: map[string][]string{"zx": {"zx"}}}
+	tests := []struct {
+		In       string
+		WantRaws []string
+	}{{ // Test 0: The local line first.
+		In:       "```sh\nnpm install zx\nnpm install -g zx\n```\n",
+		WantRaws: []string{"npm install zx", "npm install -g zx"},
+	}, { // Test 1: The global line first.
+		In:       "```sh\nnpm install -g zx\nnpm install zx\n```\n",
+		WantRaws: []string{"npm install -g zx", "npm install zx"},
+	}, { // Test 2: A repeated local line is still one route.
+		In:       "```sh\nnpm install zx\n```\n\n```sh\nnpm install zx\n```\n",
+		WantRaws: []string{"npm install zx"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for _, s := range ExtractorWith(owned).Extract("zx", test.In) {
+				got = append(got, s.Raw)
+			}
+			if diff := cmp.Diff(test.WantRaws, got); diff != "" {
+				t.Errorf("steps mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -439,7 +586,7 @@ func TestExtractListRecipe(t *testing.T) {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
 			t.Parallel()
 			var got []string
-			for _, s := range DefaultExtractor().Extract("tool", test.In) {
+			for _, s := range ExtractorWith(repoNames{}).Extract("tool", test.In) {
 				if s.Kind == "git-clone" {
 					got = s.Block
 					break

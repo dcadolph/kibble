@@ -23,18 +23,95 @@ import (
 func pkgScriptFor(step InstallStep, timeoutSecs int) string {
 	pk := pkgKinds[step.Kind]
 	body := shellCommand(step.Raw)
+	name := step.Module
+	if step.Kind == "npm-install" && localNpmInstall(body) {
+		body = npmLocalCmd(body)
+		pk.BinDir = `"` + npmLocalBin + `"`
+		pk.OwnedBins = npmLocalOwnedBins
+		_, name = localNpmPackage(step.Raw)
+	}
 	if pk.Bootstrap != "" {
 		body = pk.Bootstrap + "\n" + body
 	}
 	body = strings.ReplaceAll(body, "'", `'\''`)
 	// The package name came out of a document, so it is interpolated into the
 	// owned-bins lookup only when it carries no shell syntax. Without the
-	// lookup the script simply falls back to the bin diff.
+	// lookup the script simply falls back to the bin diff. The expected binary
+	// can come out of a manifest in the checkout, so it is held to the same
+	// test, and without it the first candidate is smoke-tested.
 	own := ""
-	if pk.OwnedBins != "" && !strings.ContainsAny(step.Module, "$\x60;&|<>()'\" ") {
-		own = fmt.Sprintf(pk.OwnedBins, step.Module)
+	if pk.OwnedBins != "" && name != "" && !strings.ContainsAny(name, shellSyntax) {
+		own = fmt.Sprintf(pk.OwnedBins, name)
 	}
-	return fmt.Sprintf(pkgScript, pk.BinDir, timeoutSecs, body, step.Binary, own)
+	bin := step.Binary
+	if strings.ContainsAny(bin, shellSyntax) {
+		bin = ""
+	}
+	return fmt.Sprintf(pkgScript, pk.BinDir, timeoutSecs, body, bin, own)
+}
+
+// shellSyntax holds the characters that keep a name out of a generated script.
+const shellSyntax = "$\x60;&|<>()'\"\\ \n\t\r\x00"
+
+// npmLocalOwnedBins is the owned-bins lookup for a local npm install. The
+// installed package's own manifest says which binaries it provides, and that
+// answer stands even when it is none: the scratch project's bin directory
+// also holds every dependency's tool, and the first new file there once stood
+// to be smoke-tested in the name of a library that ships no binary.
+const npmLocalOwnedBins = `ownknown=1
+own=$(node -e '
+const fs = require("fs"), path = require("path");
+let pkg = {};
+try { pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch (e) {}
+let bin = pkg.bin || {};
+if (typeof bin === "string") bin = { [String(pkg.name).split("/").pop()]: bin };
+for (const name of Object.keys(bin)) console.log(path.join(process.argv[2], name));
+' "` + npmLocalDir + `/node_modules/%s/package.json" "$BINDIR" 2>/dev/null)`
+
+const (
+	// npmLocalDir is the scratch project a local npm install runs in. Run in
+	// the checkout instead, zx's `npm install zx` met zx's own workspace and
+	// failed with `Tracker "idealTree" already exists`, and a reader runs it
+	// in a project of their own.
+	npmLocalDir = "$HOME/kibble-npm"
+	// npmLocalBin is where that project's installed binaries land.
+	npmLocalBin = npmLocalDir + "/node_modules/.bin"
+)
+
+// localNpmInstall reports whether cmd is a single npm install of named
+// packages into the current project rather than globally. A bare npm install
+// installs the checkout's own dependencies and is left alone.
+func localNpmInstall(cmd string) bool {
+	if strings.ContainsAny(cmd, ";&|<>`$()") {
+		return false
+	}
+	f := strings.Fields(cmd)
+	if len(f) < 3 || f[0] != "npm" || (f[1] != "install" && f[1] != "i" && f[1] != "add") {
+		return false
+	}
+	pkgs := 0
+	for _, a := range f[2:] {
+		switch {
+		case a == "-g" || a == "--global" || strings.HasPrefix(a, "--location=global"):
+			return false
+		case !strings.HasPrefix(a, "-"):
+			pkgs++
+		}
+	}
+	return pkgs > 0
+}
+
+// localNpmRoute reports whether a step is a local npm install, the route kept
+// apart from a global install of the same package.
+func localNpmRoute(s InstallStep) bool {
+	return s.Kind == "npm-install" && localNpmInstall(shellCommand(s.Raw))
+}
+
+// npmLocalCmd runs a local npm install in the scratch project, creating it
+// with npm init -y first.
+func npmLocalCmd(cmd string) string {
+	return `mkdir -p "` + npmLocalDir + `" && cd "` + npmLocalDir + `" && ` +
+		`{ [ -f package.json ] || npm init -y >/dev/null; } && ` + cmd
 }
 
 // shellCommand returns a documented line in the form a shell can run: the

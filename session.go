@@ -138,7 +138,7 @@ func sessionScript(plan *kplan.Plan, installSecs, lineSecs int) (string, map[str
 	// BLOCKED on the next from the same code.
 	b.WriteString(`exec 2>&1
 export GOBIN="$(go env GOPATH 2>/dev/null || echo /root/go)/bin"
-export PATH="$GOBIN:$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+export PATH="$GOBIN:$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$PATH:` + npmLocalBin + `"
 export EDITOR=true VISUAL=true GIT_EDITOR=` + gitEditorPath + `
 cat > ` + gitEditorPath + ` <<'KIBBLE-EDITOR'
 ` + commitEditor + `KIBBLE-EDITOR
@@ -174,6 +174,9 @@ printf '\nKIBBLE-PKGS CODE=%%d\n' "$?"
 			fmt.Fprintf(&b, "%s >/dev/null 2>&1 || true\n", in.Bootstrap)
 		}
 		cmd := in.Cmd
+		if localNpmInstall(shellCommand(cmd)) {
+			cmd = npmLocalCmd(shellCommand(cmd))
+		}
 		if in.Dir != "" {
 			cmd = "cd " + in.Dir + "\n" + cmd
 		}

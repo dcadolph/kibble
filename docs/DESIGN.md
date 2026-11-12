@@ -16,6 +16,16 @@ reports which steps a brand-new user could actually complete.
 - Runs documented package installs the same way, verbatim as written:
   `cargo install`, `npm install -g`, `yarn global add`, `pipx install`, and
   `uv tool install`.
+- Runs a local `npm install <name>` in a scratch project when a `package.json` in the
+  checkout declares that name. The binary comes from the installed package's own `bin`
+  field, so a dependency's tool is never tested in the package's name. A package with no
+  `bin` is checked as an install only. The rule is narrow on purpose, because the line
+  runs for real: the name must be exactly a package name a manifest in the checkout
+  declares, a package marked `private` does not count, every argument must be a registry
+  name or a plain save or logging flag, and a line naming a registry, a workspace, or a
+  prefix is left alone. A local and a global install of the same package are checked as
+  two routes and open one example session. Binaries a package provides through
+  `directories.bin` are not read.
 - Runs each `git clone` recipe too: the clone and the build lines that follow it in the
   same code block, with GitHub SSH remotes rewritten to HTTPS for the keyless container.
 - Picks the image from the toolchain the step assumes, so a Rust project builds with

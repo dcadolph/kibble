@@ -158,11 +158,14 @@ func cloneTarget(line string) string {
 	return plain
 }
 
-// DefaultExtractor returns an Extractor that reads code from fenced blocks,
+// ExtractorWith returns an Extractor that reads code from fenced blocks,
 // indented blocks, and inline spans, and classifies the install commands
 // inside them. Only text the author marked as code is considered, so plain
-// prose does not count as a runnable step.
-func DefaultExtractor() Extractor {
+// prose does not count as a runnable step. The repository's own names are
+// what make a local npm install a route to the tool: `npm install chalk` is
+// chalk's documented install in chalk's README and a dependency install in
+// every other one.
+func ExtractorWith(owned repoNames) Extractor {
 	return ExtractorFunc(func(repo, markdown string) []InstallStep {
 		seen := map[string]bool{}
 		var steps []InstallStep
@@ -176,6 +179,9 @@ func DefaultExtractor() Extractor {
 					taps = append(taps, m[1])
 				}
 				s, key, ok := classifyLine(repo, line)
+				if !ok {
+					s, key, ok = localNpmStep(repo, line, owned)
+				}
 				if !ok || seen[key] {
 					continue
 				}
@@ -410,9 +416,110 @@ func classifyPackage(repo, line string) (string, string, bool) {
 // rather than a project dependency install.
 var reGlobalFlag = regexp.MustCompile(`(^|\s)(-g|--global)(\s|$)`)
 
-// hasGlobalFlag reports whether a line installs globally.
+// hasGlobalFlag reports whether a line installs globally. A trailing comment
+// is not part of the command: zx's `npm install zx # add -g to install
+// globally` is a local install that mentions the flag.
 func hasGlobalFlag(line string) bool {
-	return reGlobalFlag.MatchString(line)
+	return reGlobalFlag.MatchString(stripComment(line))
+}
+
+// reNpmPackage matches a plain registry package argument, scoped or not, with
+// an optional version or tag. A URL, a path, a GitHub shorthand, and an alias
+// of another package all fail it.
+var reNpmPackage = regexp.MustCompile(`^((?:@[\w~][\w.~-]*/)?[\w~][\w.~-]*)(?:@[\w.^~*-]+)?$`)
+
+// npmLocalFlags are the npm install flags a local route may carry. Each takes
+// no value and leaves the install in the current project, so every other
+// argument on the line is a package.
+var npmLocalFlags = map[string]bool{
+	"-S": true, "--save": true, "-P": true, "--save-prod": true, "-D": true, "--save-dev": true,
+	"-O": true, "--save-optional": true, "--save-peer": true, "-E": true, "--save-exact": true,
+	"--no-save": true, "-f": true, "--force": true, "--legacy-peer-deps": true,
+	"--no-audit": true, "--no-fund": true, "--no-package-lock": true, "--ignore-scripts": true,
+	"-s": true, "--silent": true, "-q": true, "--quiet": true, "-d": true, "--verbose": true,
+}
+
+// localNpmPackage returns the first package a local npm install names and
+// that package's bare name, or empty strings when the line is not a local
+// install of plain registry packages. Every argument must be a registry name
+// or a flag from npmLocalFlags. A registry setting is refused, since the
+// package it fetches need not be the one the public name means. So is a
+// workspace or prefix flag, which installs somewhere a new project lacks, and
+// a path or URL riding along, which a new project cannot resolve.
+func localNpmPackage(line string) (string, string) {
+	cmd := shellCommand(line)
+	if !localNpmInstall(cmd) {
+		return "", ""
+	}
+	var pkg, name string
+	for _, f := range strings.Fields(cmd)[2:] {
+		if strings.HasPrefix(f, "-") {
+			if !npmLocalFlags[f] {
+				return "", ""
+			}
+			continue
+		}
+		f = unquote(f)
+		m := reNpmPackage.FindStringSubmatch(f)
+		if m == nil {
+			return "", ""
+		}
+		if pkg == "" {
+			pkg, name = f, m[1]
+		}
+	}
+	return pkg, name
+}
+
+// unquote removes one matching pair of quotes around a shell word. A quote
+// with no partner stays, so a broken line does not read as a clean name.
+func unquote(s string) string {
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
+// npmPackageName returns a node package request without its version or tag,
+// or the request unchanged when it is not a plain registry name.
+func npmPackageName(module string) string {
+	if m := reNpmPackage.FindStringSubmatch(module); m != nil {
+		return m[1]
+	}
+	return module
+}
+
+// localNpmStep returns the install step for a local npm install of a package
+// the repository itself declares. The name must equal a declared package name
+// exactly: the checkout's folder name and a near spelling are not enough,
+// because the line runs for real and the registry serves whatever holds the
+// name. The expected binary comes from the manifest and is empty for a
+// package that declares none. The key differs from a global install's, so a
+// document that shows both has both verified.
+func localNpmStep(repo, line string, owned repoNames) (InstallStep, string, bool) {
+	pkg, name := localNpmPackage(line)
+	if pkg == "" {
+		return InstallStep{}, "", false
+	}
+	bin, ok := owned.npmBinary(name)
+	if !ok {
+		return InstallStep{}, "", false
+	}
+	return InstallStep{
+		Repo: repo, Kind: "npm-install", Raw: strings.TrimSpace(line),
+		Module: pkg, Binary: bin, Run: !docblock.HasPlaceholder(pkg),
+	}, repo + "|npm-local|" + pkg, true
+}
+
+// installKey names an install step for the purpose of adding it once across
+// documents. A local npm install and a global one of the same package are two
+// routes and keep separate keys.
+func installKey(s InstallStep) string {
+	key := s.Kind + "|" + s.Module
+	if localNpmRoute(s) {
+		key += "|local"
+	}
+	return key
 }
 
 // valueFlags are flags that consume the argument after them, so the argument

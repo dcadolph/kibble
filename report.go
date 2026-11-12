@@ -406,13 +406,20 @@ func dedupe(in []string) []string {
 // sharedCauseKey identifies a result by everything except which document it
 // came from, so rows that say the same thing about different documents group
 // together. The document prefix is stripped from the detail, since that is the
-// only part of an otherwise identical message that differs.
+// only part of an otherwise identical message that differs. A local npm
+// install keeps its own key, since it and a global install of the same package
+// are two commands and often share a document.
 func sharedCauseKey(r Result) string {
 	detail := r.Detail
 	if r.Step.doc != "" {
 		detail = strings.TrimPrefix(detail, r.Step.doc+": ")
 	}
-	return strings.Join([]string{r.Step.Repo, r.Step.Kind, string(r.Status), string(r.Reason), detail}, "\x00")
+	kind := r.Step.Kind
+	if localNpmRoute(r.Step) {
+		kind += "|local"
+	}
+	parts := []string{r.Step.Repo, kind, string(r.Status), string(r.Reason), detail}
+	return strings.Join(parts, "\x00")
 }
 
 // versionNote returns "behind <Latest>" when the installed version is older than the
