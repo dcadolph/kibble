@@ -260,7 +260,10 @@ verdict claims the documented step works:
   exists or is already initialized. The collision is with the checkout kibble chose, so
   the document may be fine. A Go build that finds two packages at the top of the checkout
   reads the same way when the document wrote one of the two files and the repository
-  already held the other.
+  already held the other. So does a documented tool saying the top of the checkout is not
+  a repository of its own kind and naming its own init command, when no earlier line of
+  the document that passed made or cloned one. That line was not tested, and it is not
+  counted as passing.
 - A passing line that writes a titled fence to its file reads `VERIFIED` "wrote X as the
   document shows it". The document supplied the content, so only the write is claimed.
 - An install whose product is a shell function the documented sourcing defines is
