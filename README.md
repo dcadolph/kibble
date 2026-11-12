@@ -317,7 +317,7 @@ What the weekly job prints, with each repository's counts in VERIFIED, FAIL, GAP
 
 ```
 ripgrep: 3,0,0 as expected
-nodemon: 2,0,0 as expected
+nodemon: 3,0,0 as expected
 fd: 6,0,0 as expected
 glow: 5,0,0 as expected
 httpie: 0,0,0 as expected
