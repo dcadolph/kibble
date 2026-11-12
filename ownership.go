@@ -29,6 +29,10 @@ type repoNames struct {
 	// declared reports whether any manifest named anything. Without one,
 	// ownership is unknown rather than absent, and every install is kept.
 	declared bool
+	// npm maps each node package name a manifest declares, exactly as written,
+	// to the binaries that package declares. A local npm install is a route to
+	// the tool only for a name found here.
+	npm map[string][]string
 }
 
 // manifestMaxDepth bounds how deep below the root ownedNames looks for
@@ -51,6 +55,11 @@ var (
 	reGoModule = regexp.MustCompile(`(?m)^module\s+"?([^\s"]+)"?`)
 	// reMajorSuffix matches a module major-version path element such as /v2.
 	reMajorSuffix = regexp.MustCompile(`/v\d+(/|$)`)
+	// reVersionSuffix matches the version or tag that ends a package request.
+	// An alias such as name@npm:other is not one.
+	reVersionSuffix = regexp.MustCompile(`@[\w.^~*-]+$`)
+	// reBinName matches a binary name made of plain word characters.
+	reBinName = regexp.MustCompile(`^\w[\w.+-]*$`)
 )
 
 // ownedNames reads the manifests under dir and returns the names the
@@ -137,23 +146,79 @@ func (rn *repoNames) declare(name string) {
 }
 
 // addPackageJSON records a node package's name and the binaries it provides.
+// A private package still names the repository, and it stays out of the npm
+// map: npm refuses to publish it, so an install of that name from the registry
+// fetches someone else's package or nothing. A binary name that is not a plain
+// word is dropped, since no install could put it on PATH under that name.
 func (rn *repoNames) addPackageJSON(body []byte) {
 	var pkg struct {
 		// Name is the package name, scope included.
 		Name string `json:"name"`
 		// Bin is a single path or a map of binary name to path.
 		Bin json.RawMessage `json:"bin"`
+		// Private is any truthy value for a package npm refuses to publish.
+		Private json.RawMessage `json:"private"`
 	}
 	if json.Unmarshal(body, &pkg) != nil {
 		return
 	}
 	rn.declare(pkg.Name)
 	var bins map[string]string
-	if json.Unmarshal(pkg.Bin, &bins) == nil {
+	var one string
+	var provided []string
+	switch {
+	case json.Unmarshal(pkg.Bin, &bins) == nil:
 		for b := range bins {
+			if !reBinName.MatchString(b) {
+				continue
+			}
 			rn.declare(b)
+			provided = append(provided, b)
+		}
+	case json.Unmarshal(pkg.Bin, &one) == nil && one != "":
+		// A single path installs one binary named after the package.
+		if b := packageBinary(pkg.Name); reBinName.MatchString(b) {
+			provided = append(provided, b)
 		}
 	}
+	if pkg.Name == "" || npmPrivate(pkg.Private) {
+		return
+	}
+	if rn.npm == nil {
+		rn.npm = map[string][]string{}
+	}
+	for _, b := range provided {
+		if !slices.Contains(rn.npm[pkg.Name], b) {
+			rn.npm[pkg.Name] = append(rn.npm[pkg.Name], b)
+		}
+	}
+	rn.npm[pkg.Name] = slices.Sorted(slices.Values(rn.npm[pkg.Name]))
+}
+
+// npmPrivate reports whether a manifest's private value keeps its package off
+// the registry. npm refuses on any truthy value, so only a missing value and
+// the JSON values that read as false leave the package published.
+func npmPrivate(raw json.RawMessage) bool {
+	switch strings.TrimSpace(string(raw)) {
+	case "", "false", "null", "0", `""`:
+		return false
+	}
+	return true
+}
+
+// npmBinary reports whether a manifest declares a node package of exactly
+// this name, and names the binary to expect from it. The binary named after
+// the package is preferred, then the first by name, and it is empty for a
+// package that declares none, as a library does.
+func (rn repoNames) npmBinary(name string) (string, bool) {
+	bins, ok := rn.npm[name]
+	if !ok || len(bins) == 0 {
+		return "", ok
+	}
+	if want := packageBinary(name); slices.Contains(bins, want) {
+		return want, true
+	}
+	return bins[0], true
 }
 
 // addSections records names from an INI-shaped manifest. keys maps a section
@@ -216,11 +281,16 @@ func (rn repoNames) owns(s InstallStep) bool {
 }
 
 // packageCandidates returns the names a package argument could match: the
-// whole name and its bare form for a registry package, and every path element
-// for a URL, so git+https://github.com/psf/black.git@main offers black.
+// whole name, its bare form, and the name without a version or tag for a
+// registry package, so @scope/tool@2 offers @scope/tool, and every path element for a
+// URL, so git+https://github.com/psf/black.git@main offers black.
 func packageCandidates(pkg string) []string {
 	if !strings.Contains(pkg, "://") && !strings.HasPrefix(pkg, "git+") {
-		return []string{pkg, packageBinary(pkg)}
+		out := []string{pkg, packageBinary(pkg)}
+		if loc := reVersionSuffix.FindStringIndex(pkg); loc != nil && loc[0] > 0 {
+			out = append(out, pkg[:loc[0]])
+		}
+		return out
 	}
 	u := strings.TrimPrefix(pkg, "git+")
 	if _, after, ok := strings.Cut(u, "://"); ok {
@@ -256,10 +326,12 @@ func stripMajor(mod string) string {
 // in a Go repository. Otherwise it is only a name kibble did not recognize:
 // `cargo install ripgreppp` is the one cargo route ripgrep's README offers,
 // and whether that crate exists is the registry's to say when the line runs.
+// A library install puts no tool in hand, so `npm install -g express-generator`
+// stays beside `npm install express`.
 func (rn repoNames) keep(steps []InstallStep) []InstallStep {
 	known := map[string]bool{}
 	for _, s := range steps {
-		if s.Run && rn.owns(s) {
+		if s.Run && rn.owns(s) && !libraryInstall(s) {
 			known[stepEcosystem(s)] = true
 		}
 	}
@@ -270,6 +342,12 @@ func (rn repoNames) keep(steps []InstallStep) []InstallStep {
 		eco := stepEcosystem(s)
 		return known[eco] || !rn.ecosystems[eco]
 	})
+}
+
+// libraryInstall reports whether a step installs a node package whose manifest
+// declares no binary, which verifies the install line and provides no tool.
+func libraryInstall(s InstallStep) bool {
+	return s.Kind == "npm-install" && s.Binary == ""
 }
 
 // stepEcosystem is the ecosystem an install step runs in, empty for a kind

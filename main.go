@@ -227,7 +227,6 @@ func kibbleVersion() string {
 // a result per repository kibble could not read, so a path with no README and
 // a malformed config both reach the report instead of passing as silence.
 func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Result) {
-	ex := DefaultExtractor()
 	var out []InstallStep
 	var plans []*kplan.Plan
 	var problems []Result
@@ -242,6 +241,8 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 			})
 			continue
 		}
+		owned := ownedNames(p, repo)
+		ex := ExtractorWith(owned)
 		steps := ex.Extract(repo, md)
 		// Install instructions outlive the README they started in: a docs tree
 		// and an INSTALL file are where they go once the front page fills up,
@@ -251,7 +252,7 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 		// verified rather than reported as having nothing to install.
 		installSeen := map[string]bool{}
 		for i := range steps {
-			installSeen[steps[i].Kind+"|"+steps[i].Module] = true
+			installSeen[installKey(steps[i])] = true
 		}
 		idocs := installDocs(p, name)
 		for _, doc := range idocs {
@@ -263,7 +264,7 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 				continue
 			}
 			for _, st := range ex.Extract(repo, string(body)) {
-				key := st.Kind + "|" + st.Module
+				key := installKey(st)
 				if installSeen[key] {
 					continue
 				}
@@ -276,7 +277,6 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 		// not a route to it. Kept as an install, it became the tool under test,
 		// and uv's report described ruff. Package installs still run as example
 		// lines, since the planner only leaves owned installs to the installer.
-		owned := ownedNames(p, repo)
 		seen := installRoutes(steps)
 		steps = owned.keep(steps)
 		own := slices.DeleteFunc(slices.Clone(steps), func(s InstallStep) bool { return !owned.owns(s) })
@@ -430,6 +430,7 @@ func sessionInstalls(dir string, steps []InstallStep) ([]string, []kplan.PlanIns
 	var bins []string
 	var all []kplan.PlanInstall
 	var clone *kplan.PlanInstall
+	npmSeen := map[string]bool{}
 	for _, s := range steps {
 		// A step recorded but not run, such as a clone of a placeholder URL,
 		// must not become the session's install either.
@@ -446,6 +447,21 @@ func sessionInstalls(dir string, steps []InstallStep) ([]string, []kplan.PlanIns
 		case s.Kind == "go-install":
 			in = kplan.PlanInstall{Cmd: "go install " + s.Module, Ecosystem: "go", Binary: s.Binary}
 		case pkgKinds[s.Kind].Ecosystem != "":
+			// A package whose manifest declares no binary puts no tool on PATH,
+			// so its install is verified as a step and opens no session.
+			if libraryInstall(s) {
+				continue
+			}
+			// A local and a global install of one node package are two routes
+			// to one tool. The package name decides, since the binary a
+			// manifest declares need not be the one guessed for a global line.
+			if s.Kind == "npm-install" {
+				name := npmPackageName(s.Module)
+				if npmSeen[name] {
+					continue
+				}
+				npmSeen[name] = true
+			}
 			pk := pkgKinds[s.Kind]
 			in = kplan.PlanInstall{
 				Cmd: shellCommand(s.Raw), Ecosystem: pk.Ecosystem,

@@ -255,6 +255,27 @@ func TestSharedCauseKeyIgnoresVersion(t *testing.T) {
 	}
 }
 
+// TestSharedCauseKeySplitsNpmRoutes checks that a local and a global install
+// of one package stay two rows. They are two commands in one document, and
+// counting them as one row across two documents misstated both.
+func TestSharedCauseKeySplitsNpmRoutes(t *testing.T) {
+	t.Parallel()
+	row := func(raw, doc string) Result {
+		return Result{
+			Step:   InstallStep{Repo: "zx", Kind: "npm-install", Module: "zx", Raw: raw, doc: doc},
+			Status: StatusVerified, Detail: "zx 1.0",
+		}
+	}
+	local, global := row("npm install zx", "README.md"), row("npm install -g zx", "README.md")
+	if sharedCauseKey(local) == sharedCauseKey(global) {
+		t.Error("a local and a global install share one key")
+	}
+	other := row("npm install -g zx", "docs/setup.md")
+	if diff := cmp.Diff(sharedCauseKey(global), sharedCauseKey(other)); diff != "" {
+		t.Errorf("one route in two documents split (-readme +setup):\n%s", diff)
+	}
+}
+
 // TestReportTriage checks that the triage listing prints every result that is
 // not working, whole, and leaves out the VERIFIED result and VERIFIED lines.
 func TestReportTriage(t *testing.T) {
