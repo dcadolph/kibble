@@ -171,7 +171,7 @@ func docCoverageChecks(results []Result) []Result {
 		if len(cmds) == 0 {
 			check.Status = StatusSkipped
 			check.Detail = "no command list in the help output to check against"
-			out = append(out, check)
+			out = appendCheck(out, check)
 			continue
 		}
 		docs := readDocSet(r.Step.dir, r.Step.readme)
@@ -199,7 +199,7 @@ func docCoverageChecks(results []Result) []Result {
 					len(outsideReadme), strings.Join(outsideReadme, " "))
 			}
 		}
-		out = append(out, check)
+		out = appendCheck(out, check)
 	}
 	return out
 }

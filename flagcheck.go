@@ -310,6 +310,21 @@ func rejectedSub(r Result, sub string) bool {
 	return named.MatchString(r.helpBySub[sub]) || named.MatchString(r.helpText)
 }
 
+// appendCheck adds check to out unless an earlier check already reports the
+// same binary with the same outcome. Two install routes of one binary, such as
+// a global and a local npm install, print the same help, and one finding is
+// one row.
+func appendCheck(out []Result, check Result) []Result {
+	for _, c := range out {
+		if c.Step.Repo == check.Step.Repo && c.Step.Kind == check.Step.Kind &&
+			c.Step.Binary == check.Step.Binary && c.Status == check.Status &&
+			c.Reason == check.Reason && c.Detail == check.Detail {
+			return out
+		}
+	}
+	return append(out, check)
+}
+
 // flagChecks derives one flag-check result per binary whose install succeeded
 // and whose README cites usage. A cited flag missing from every collected
 // help screen, or a subcommand the binary rejects, is reported as drift.
@@ -329,7 +344,7 @@ func flagChecks(results []Result) []Result {
 		if len(known) == 0 && len(r.helpByFlag) == 0 {
 			check.Status = StatusSkipped
 			check.Detail = "no help output to check against"
-			out = append(out, check)
+			out = appendCheck(out, check)
 			continue
 		}
 		var rejected, missing, unreleased, unverifiable []string
@@ -426,7 +441,7 @@ func flagChecks(results []Result) []Result {
 			}
 			check.Detail = strings.Join(parts, ", ")
 		}
-		out = append(out, check)
+		out = appendCheck(out, check)
 	}
 	return out
 }
