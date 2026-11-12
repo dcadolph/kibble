@@ -19,6 +19,17 @@ import (
 func TestClassifyMissingNames(t *testing.T) {
 	t.Parallel()
 
+	// entryModule is what vite printed in a sweep when the file it builds from
+	// was absent, color codes included, around the name it gives.
+	entryModule := func(name string) string {
+		const dist = "file:///root/kibble-npm/node_modules/"
+		return "transforming...\nBuild failed with 1 error:\n\n" +
+			"\x1b[31m[UNRESOLVED_ENTRY] \x1b[0mCannot resolve entry module " + name + ".\n\n" +
+			"    at #build (" + dist + "rolldown/dist/shared/rolldown-AohEFLrh.mjs:146:34)\n" +
+			"    at async CAC.<anonymous> (" + dist + "vite/dist/node/cli.js:789:3) {\n" +
+			"  errors: [Getter/Setter]\n}\n"
+	}
+
 	tests := []struct {
 		Creators   map[string]string
 		WantStatus Status
@@ -263,6 +274,40 @@ FileNotFoundError: [Errno 2] No such file or directory: 'patfile'
 		Cmd:    "nve 18 node app.js",
 		Output: "Error: Cannot find module 'node:path'\n",
 		Code:   1, WantStatus: StatusFail,
+	}, { // Test 26: A bundler's entry file the command never named is blocked.
+		Cmd:    "vite build",
+		Output: entryModule("index.html"),
+		Code:   1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "reads index.html, which no documented step creates: ",
+	}, { // Test 27: An entry file the command passed is the document's gap.
+		Cmd:    "vite build --ssr src/entry-server.js",
+		Output: entryModule("src/entry-server.js"),
+		Code:   1, WantStatus: StatusGap,
+		WantDetail: "references src/entry-server.js, which no documented step creates: ",
+	}, { // Test 28: A name with several dots is captured whole, without the period.
+		Cmd:    "vite build",
+		Output: entryModule("vite.config.ts"),
+		Code:   1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "reads vite.config.ts, which no documented step creates: ",
+	}, { // Test 29: A quoted entry path is read without its quotes.
+		Cmd:    "vite build",
+		Output: entryModule(`"src/main.ts"`),
+		Code:   1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "reads src/main.ts, which no documented step creates: ",
+	}, { // Test 30: An entry with no extension names no file, so the failure stands.
+		Cmd:    "vite build",
+		Output: entryModule("main"),
+		Code:   1, WantStatus: StatusFail,
+	}, { // Test 31: Rollup's wording for the same absent entry file reads the same.
+		Cmd:    "vite build",
+		Output: "error during build:\nCould not resolve entry module \"index.html\".\n",
+		Code:   1, WantStatus: StatusBlocked, WantReason: ReasonMissingFixture,
+		WantDetail: "reads index.html, which no documented step creates: ",
+	}, { // Test 32: Older Rollup wraps the name in parentheses, and it reads the same.
+		Cmd:    "rollup src/main.js -f cjs",
+		Output: "[!] Error: Could not resolve entry module (src/main.js).\n",
+		Code:   1, WantStatus: StatusGap,
+		WantDetail: "references src/main.js, which no documented step creates: ",
 	}}
 
 	for testNum, test := range tests {
