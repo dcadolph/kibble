@@ -189,3 +189,77 @@ func TestDocCoverageChecks(t *testing.T) {
 		})
 	}
 }
+
+// TestChecksCollapseEqualRows checks that two install routes of one binary
+// with the same outcome yield one flag-check and one doc-coverage row, while
+// routes whose outcomes differ keep a row each.
+func TestChecksCollapseEqualRows(t *testing.T) {
+	t.Parallel()
+	ok := map[string]string{"json": "ok", "yaml": "ok"}
+	tests := []struct {
+		SecondProbes map[string]string
+		SecondBinary string
+		WantFlag     int
+		WantCoverage int
+	}{{ // Test 0: a global and a local install of one binary answer alike.
+		SecondProbes: ok, SecondBinary: "tool", WantFlag: 1, WantCoverage: 1,
+	}, { // Test 1: a second route that rejects a flag drifts, so both rows stay.
+		SecondProbes: map[string]string{"json": "unknown flag: --json", "yaml": "ok"},
+		SecondBinary: "tool", WantFlag: 2, WantCoverage: 1,
+	}, { // Test 2: two binaries with equal outcomes are separate findings.
+		SecondProbes: ok, SecondBinary: "other", WantFlag: 2, WantCoverage: 2,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "README.md"),
+				[]byte("Run `tool attest --json --yaml` or `other attest`."), 0o600); err != nil {
+				t.Fatalf("write README: %v", err)
+			}
+			in := []Result{
+				collapseRoute(dir, "tool", ok),
+				collapseRoute(dir, test.SecondBinary, test.SecondProbes),
+			}
+			if got := len(flagChecks(in)); got != test.WantFlag {
+				t.Errorf("flag-check rows = %d, want %d", got, test.WantFlag)
+			}
+			if got := len(docCoverageChecks(in)); got != test.WantCoverage {
+				t.Errorf("doc-coverage rows = %d, want %d", got, test.WantCoverage)
+			}
+		})
+	}
+}
+
+// TestChecksKeepEqualStatusApart checks that two routes of one binary that
+// both drift on different flags keep a row each, since the detail differs.
+func TestChecksKeepEqualStatusApart(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	in := []Result{
+		collapseRoute(dir, "tool", map[string]string{"json": "unknown flag: --json", "yaml": "ok"}),
+		collapseRoute(dir, "tool", map[string]string{"json": "ok", "yaml": "unknown flag: --yaml"}),
+	}
+	got := flagChecks(in)
+	if len(got) != 2 {
+		t.Fatalf("got %d flag-check rows, want 2", len(got))
+	}
+	if got[0].Status != StatusDrift || got[1].Status != StatusDrift {
+		t.Errorf("statuses = %s, %s, want both %s", got[0].Status, got[1].Status, StatusDrift)
+	}
+}
+
+// collapseRoute builds a passing npm install result for binary in dir whose
+// cited flags json and yaml were probed with the given answers.
+func collapseRoute(dir, binary string, probes map[string]string) Result {
+	return Result{
+		Status:     StatusVerified,
+		helpText:   "Usage: tool [options]\nCommands:\n  attest   Seal it\n",
+		helpByFlag: probes,
+		Step: InstallStep{Repo: "repo", Kind: "npm-install", Binary: binary,
+			dir: dir, readme: "README.md", Usage: &Usage{
+				Flags:   []string{"json", "yaml"},
+				FlagSub: map[string]string{"json": "", "yaml": ""},
+			}},
+	}
+}
