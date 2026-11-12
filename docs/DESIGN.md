@@ -317,8 +317,10 @@ matches.
 
 A tool that names what was missing is evidence, and the verdict follows what it names.
 Output saying "File not found: X" names the file, and settles like "No such file or
-directory". A line whose operand starts with `../` is skipped at plan time as
-`missing-fixture`, since that path lies outside the checkout and only the reader has it.
+directory". So does a bundler saying "Cannot resolve entry module index.html" or "Could
+not resolve entry module", where the name must carry an extension. A line whose operand
+starts with `../` is skipped at plan time as `missing-fixture`, since that path lies
+outside the checkout and only the reader has it.
 A missing file or directory the document itself mentioned is a `GAP`, the same as a
 file the planner sees no step creating. A missing path the document never mentions is
 `BLOCKED`, because the tool may have a bug or the document may have skipped a step, and

@@ -595,6 +595,14 @@ var rePathNotExist = regexp.MustCompile(`(?:^|\s)([\w./-]*/[\w.-]+) does not exi
 // "error: File not found: requirements.in".
 var reFileNotFound = regexp.MustCompile(`(?i)\bfile not found: '?"?([^\s'"]+)`)
 
+// reEntryModule matches a bundler's sentence that the file it builds from is
+// absent, as vite says "Cannot resolve entry module index.html." It also reads
+// Rollup's "Could not resolve entry module". The name must carry an extension
+// and is captured without the period that ends the sentence. Quotes,
+// backticks, or the parentheses older Rollup puts around the name are dropped.
+var reEntryModule = regexp.MustCompile(`(?i)\b(?:cannot|could not) resolve entry module ` +
+	`["'\x60(]?([\w@/.-]+?\.\w+)["'\x60)]?\.?(?:\s|$)`)
+
 // rePyNoFile matches the line a Python traceback ends with when a file or a
 // program it tried to run was missing. Python names it after the message.
 var rePyNoFile = regexp.MustCompile(
@@ -610,7 +618,9 @@ var reErrnoName = regexp.MustCompile(`^E[A-Z]+$`)
 // generic shape, which would otherwise capture ENOENT itself.
 func reportedNames(output string) []string {
 	var out []string
-	shapes := []*regexp.Regexp{reNodeEnoent, reNotExist, rePathNotExist, reFileNotFound, reEnoent}
+	shapes := []*regexp.Regexp{
+		reNodeEnoent, reNotExist, rePathNotExist, reFileNotFound, reEntryModule, reEnoent,
+	}
 	for _, re := range shapes {
 		m := re.FindStringSubmatch(output)
 		if m == nil {
