@@ -55,7 +55,9 @@ func resolveMissingBinaries(run *exampleRun, plan *kplan.Plan, have map[string]b
 // several broken lines without any of them being called fine. A gap counts as
 // not having run, since the document's own hole stopped the line. A Go build
 // that finds the document's file beside the checkout's own package is blocked
-// here too, since it takes the earlier file writes of the run to see it.
+// here too, since it takes the earlier file writes of the run to see it. So is
+// a documented tool saying the top of the checkout is not a repository of its
+// own kind, since it takes the document's earlier lines to see none made one.
 func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 	bins := map[string]bool{}
 	for _, b := range plan.Binaries {
@@ -118,6 +120,14 @@ func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 				l.Reason = ReasonCheckoutState
 				l.Detail = fmt.Sprintf("wrote %s into the repository's own checkout, beside %s of "+
 					"another Go package, so the claim was not tested as written: %s", doc, own, l.Detail)
+				continue
+			}
+			if bin := notItsRepository(l, prior[s.Doc], bins); bin != "" {
+				l.Status = StatusBlocked
+				l.Reason = ReasonCheckoutState
+				l.Detail = fmt.Sprintf("ran at the top of the checkout, which %s reports is not a %s "+
+					"repository, and no line of this document that ran created one, so the claim was "+
+					"not tested as written: %s", bin, bin, l.Detail)
 				continue
 			}
 			if cited := citedSkipped(l.output, skippedCmds); cited != "" {
@@ -186,6 +196,71 @@ func mixedCheckoutPackages(output string, written, checkout map[string]bool) (do
 		return b, a
 	}
 	return "", ""
+}
+
+// reMadeRepository matches a command holding init or clone as a whole word,
+// the two ways a tool makes a repository of its own kind.
+var reMadeRepository = regexp.MustCompile(`\b(?:init|clone)\b`)
+
+// notItsRepository returns the documented binary a failing line invoked when
+// that tool reports the top of the checkout is not a repository of its own
+// kind. A version control tool's guide is written for a reader standing in
+// such a repository, and the session stands in a plain clone of the project.
+// The tool must say there is no repository of its name there and must name its
+// own init command, so the report and the remedy are both the tool's words.
+// Every such report must name the directory the line ran in or the checkout's
+// own path, since a report about any other directory is about one the document
+// named. A line that ran in another directory, or that stepped into one and
+// back, went where the document sent it. A usage error is the document's own
+// wording, and a crash convicts the line whatever else it printed. An earlier
+// line of the same document that passed and made or cloned a repository with
+// the tool means the document did set one up, so its failure at the top of the
+// checkout stands.
+func notItsRepository(l *lineResult, earlier []lineResult, bins map[string]bool) string {
+	if l.cwd != sessionRepoDir || changesDir(l.Cmd) {
+		return ""
+	}
+	bin, _ := kplan.InvokedBinary(l.Cmd, bins)
+	if bin == "" {
+		return ""
+	}
+	out, name := stripANSI(l.output), regexp.QuoteMeta(bin)
+	noRepo := regexp.MustCompile(
+		`(?i)there is no ` + name + ` repo(?:sitory)? in ["'\x60]?([^\s"'\x60>]*)`)
+	initCmd := regexp.MustCompile(`(?i)\b` + name + `(?: \w+)? init\b`)
+	reports := noRepo.FindAllStringSubmatch(out, -1)
+	if reports == nil || !initCmd.MatchString(out) {
+		return ""
+	}
+	for _, m := range reports {
+		if m[1] != "." && strings.TrimSuffix(m[1], "/") != sessionRepoDir {
+			return ""
+		}
+	}
+	if reUsageError.MatchString(out) || reCrash.MatchString(out) {
+		return ""
+	}
+	for _, p := range earlier {
+		if p.Status == StatusVerified && reMadeRepository.MatchString(p.Cmd) && runsBinary(p.Cmd, bin) {
+			return ""
+		}
+	}
+	return bin
+}
+
+// runsBinary reports whether any command of a line runs bin, stepping over
+// wrappers such as env as InvokedBinary does.
+func runsBinary(cmd, bin string) bool {
+	line, ok := shell.Parse(cmd)
+	if !ok {
+		return false
+	}
+	for _, c := range line.Cmds {
+		if shell.Invoked(c).Name() == bin {
+			return true
+		}
+	}
+	return false
 }
 
 var (

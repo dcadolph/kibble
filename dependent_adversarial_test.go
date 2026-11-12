@@ -383,3 +383,158 @@ func TestMixedPackagesInCheckout(t *testing.T) {
 		})
 	}
 }
+
+// TestNotItsRepository checks the rule for a tool saying the checkout is not a
+// repository of its own kind and naming the command that makes one. The first
+// outputs are what jj printed in a sweep, plain, colored, and with its debug
+// color labels. The line was not tested as written only when it ran at the top
+// of the checkout and no earlier line of its document that passed made or
+// cloned a repository with the same tool.
+//
+//nolint:funlen // Test function.
+func TestNotItsRepository(t *testing.T) {
+	t.Parallel()
+	const (
+		hint  = "It looks like this is a git repo. You can create a jj repo backed by it by running this:"
+		plain = "Error: There is no jj repo in \".\"\nHint: " + hint + "\njj git init\n"
+		color = "\x1b[1m\x1b[38;5;1mError: \x1b[39mThere is no jj repo in \".\"\x1b[0m\n" +
+			"\x1b[1m\x1b[38;5;6mHint: \x1b[0m\x1b[39m" + hint + "\x1b[39m\n\x1b[39mjj git init\x1b[39m\n"
+		labeled = "\x1b[1m\x1b[38;5;1m<<error heading::Error: >>\x1b[39m" +
+			"<<error::There is no jj repo in \".\">>\x1b[0m\n" +
+			"\x1b[1m\x1b[38;5;6m<<hint heading::Hint: >>\x1b[0m\x1b[39m<<hint::" + hint + ">>\x1b[39m\n" +
+			"\x1b[39m<<hint::jj git init>>\x1b[39m\n"
+		advice = "[warn] No hook installed — run `rtk init -g` for automatic token savings\n" +
+			"fatal: not a git repository (or any of the parent directories): .git\n"
+		logCmd  = "jj log"
+		blocked = "ran at the top of the checkout, which jj reports is not a jj repository, and no " +
+			"line of this document that ran created one, so the claim was not tested as written: "
+	)
+	fail := func(cmd, output, cwd string) lineResult {
+		const detail = "exited 1: jj git init"
+		return lineResult{Cmd: cmd, Status: StatusFail, Detail: detail, output: output, cwd: cwd}
+	}
+	ran := func(cmd string, status Status) lineResult {
+		return lineResult{Cmd: cmd, Status: status, cwd: sessionRepoDir}
+	}
+	failed := fail(logCmd, plain, sessionRepoDir)
+	made := ran("jj git init somedir", StatusVerified)
+	one := func(lines ...lineResult) []exampleStep {
+		return []exampleStep{{ID: "b1", Doc: "docs/tutorial.md", Lines: lines}}
+	}
+	tests := []struct {
+		Steps      []exampleStep
+		Binaries   []string
+		Target     string
+		WantStatus Status
+		WantReason Reason
+		WantDetail string
+	}{{ // Test 0: The tool says the checkout top is not its repository and names its init.
+		Steps:      one(failed),
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+		WantDetail: blocked + "exited 1: jj git init",
+	}, { // Test 1: The colored form reads the same once the codes are stripped.
+		Steps:      one(fail(logCmd, color, sessionRepoDir)),
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 2: The form with debug color labels reads the same.
+		Steps:      one(fail(logCmd, labeled, sessionRepoDir)),
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 3: A line that ran in another directory is the document's own doing.
+		Steps:      one(fail(logCmd, plain, "/work/repo/docs")),
+		WantStatus: StatusFail,
+	}, { // Test 4: A document that made its repository and then failed keeps its failure.
+		Steps:      one(made, failed),
+		WantStatus: StatusFail,
+	}, { // Test 5: A document that cloned its repository keeps its failure too.
+		Steps:      one(ran("jj git clone https://example.com/hello.git", StatusVerified), failed),
+		WantStatus: StatusFail,
+	}, { // Test 6: An init that passed in another document made nothing for this one.
+		Steps: []exampleStep{
+			{ID: "b1", Doc: "docs/install.md", Lines: []lineResult{made}},
+			{ID: "b2", Doc: "docs/tutorial.md", Lines: []lineResult{failed}},
+		},
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 7: A message naming a different tool is not this tool's report.
+		Steps: one(fail(logCmd, "abort: there is no hg repository in \".\"\nTry jj git init here.\n",
+			sessionRepoDir)),
+		WantStatus: StatusFail,
+	}, { // Test 8: A report that names no init command stays a failure.
+		Steps:      one(fail(logCmd, "Error: There is no jj repo in \".\"\n", sessionRepoDir)),
+		WantStatus: StatusFail,
+	}, { // Test 9: A usage error is the document's own wording, whatever else was printed.
+		Steps: one(fail("jj lg --oneline", "error: unexpected argument '--oneline' found\n"+plain,
+			sessionRepoDir)),
+		Target:     "jj lg --oneline",
+		WantStatus: StatusFail,
+	}, { // Test 10: Advice to run an init command is no report of a missing repository.
+		Steps:      one(fail("rtk git status", advice, sessionRepoDir)),
+		Target:     "rtk git status",
+		WantStatus: StatusBlocked, WantReason: ReasonDependsOnSkipped,
+		WantDetail: "says to run `rtk init` first, which did not run",
+	}, { // Test 11: An init line that did not pass made no repository, so the rule holds.
+		Steps:      one(ran("jj git init", StatusSkipped), failed),
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 12: A passing line of the tool with no init or clone made no repository.
+		Steps:      one(ran("jj --version", StatusVerified), failed),
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 13: A tool the document does not install is not read for this.
+		Steps:      one(failed),
+		Binaries:   []string{"rtk"},
+		WantStatus: StatusFail,
+	}, { // Test 14: A report about a directory the line named is not about the checkout.
+		Steps: one(ran("git init demo", StatusVerified), fail("jj -R demo log",
+			"Error: There is no jj repo in \"demo\"\nHint: "+hint+"\njj git init\n", sessionRepoDir)),
+		Target:     "jj -R demo log",
+		WantStatus: StatusFail,
+	}, { // Test 15: A line that stepped into a directory and back was not run at the top.
+		Steps:      one(fail("cd demo; jj st; cd ..", plain, sessionRepoDir)),
+		Target:     "cd demo; jj st; cd ..",
+		WantStatus: StatusFail,
+	}, { // Test 16: A crash after the report convicts the line whatever else it printed.
+		Steps:      one(fail(logCmd, plain+"thread 'main' panicked at main.rs:9:5:\n", sessionRepoDir)),
+		WantStatus: StatusFail,
+	}, { // Test 17: An init that passed after another documented tool on its line still counts.
+		Steps:      one(ran("rtk sync && jj git init demo", StatusVerified), failed),
+		WantStatus: StatusFail,
+	}, { // Test 18: A report naming the checkout by its full path is about the checkout.
+		Steps: one(fail(logCmd, "Error: There is no jj repo in \"/work/repo\"\nHint: "+hint+
+			"\njj git init\n", sessionRepoDir)),
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}, { // Test 19: A repository another tool made is not one of this tool's kind.
+		Steps:      one(ran("git init demo", StatusVerified), failed),
+		WantStatus: StatusBlocked, WantReason: ReasonCheckoutState,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			steps := make([]exampleStep, len(test.Steps))
+			for i, s := range test.Steps {
+				steps[i] = exampleStep{ID: s.ID, Doc: s.Doc, Lines: slices.Clone(s.Lines)}
+			}
+			bins := test.Binaries
+			if bins == nil {
+				bins = []string{"jj", "rtk"}
+			}
+			run := &exampleRun{Steps: steps}
+			resolveDependentFailures(run, &kplan.Plan{Binaries: bins})
+			target := test.Target
+			if target == "" {
+				target = logCmd
+			}
+			var got lineResult
+			for _, s := range run.Steps {
+				for _, l := range s.Lines {
+					if l.Cmd == target {
+						got = l
+					}
+				}
+			}
+			if got.Status != test.WantStatus || got.Reason != test.WantReason {
+				t.Errorf("got %s %q, want %s %q (detail %q)",
+					got.Status, got.Reason, test.WantStatus, test.WantReason, got.Detail)
+			}
+			if test.WantDetail != "" && got.Detail != test.WantDetail {
+				t.Errorf("detail = %q, want %q", got.Detail, test.WantDetail)
+			}
+		})
+	}
+}

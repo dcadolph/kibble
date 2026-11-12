@@ -239,7 +239,14 @@ block of the document wrote one of the two files Go names and the checkout held 
 before the session started. A tutorial that tells the reader in prose to work in a new
 directory has its file written beside the repository's own package instead. A second file
 the checkout never held, such as a generator's output, leaves the failure standing, since
-that clash is the document's own. A project manager,
+that clash is the document's own. A documented tool that reports there is no repository
+of its own kind at the top of the checkout, and names its own init command, is
+`checkout-state` too. A version control tool's guide is written for a reader standing in
+such a repository, and the session stands in a plain clone of the project. The line was
+not tested as written, which is not a pass. A line that ran in any other directory or
+stepped into one, a report about a directory the line named, a usage error, a crash, and
+a document whose earlier passing line made or cloned a repository with the tool all keep
+the failure. A project manager,
 a documented binary with a known ecosystem such as uv, that fails in the repository's own
 checkout is `checkout-state` as well, because it read the checkout's own project. A project
 that a scaffold line reported adding to the checkout's workspace, in the tool's own words, is
