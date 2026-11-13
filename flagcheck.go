@@ -77,9 +77,14 @@ func extractUsage(binaries []string, markdown string) map[string]*Usage {
 		}
 		codeLines = append(codeLines, b.Lines...)
 	}
+	owned := func(name string) bool { return slices.Contains(binaries, name) }
 	for _, line := range codeLines {
 		line = stripComment(line)
 		for _, seg := range splitSegments(line) {
+			// A stand-in path to the binary, such as pyenv's own
+			// `<path/to/pyenv> --install`, cites the binary. Resolved first,
+			// its angle brackets would otherwise read as a synopsis below.
+			seg = docblock.ResolveToolPath(strings.TrimSpace(seg), owned)
 			// A synopsis such as `tool schedule [add <workflow> --every <dur>]`
 			// is a signature, not an invocation. Splitting it on pipes strands
 			// its flags on the parent command, and that mis-attribution once

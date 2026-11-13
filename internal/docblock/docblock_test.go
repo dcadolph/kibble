@@ -124,6 +124,54 @@ func TestHasPlaceholder(t *testing.T) {
 	}
 }
 
+// TestResolveToolPath checks that a stand-in path to an installed program in
+// command position becomes the program, and every other stand-in path stays.
+func TestResolveToolPath(t *testing.T) {
+	t.Parallel()
+
+	owned := func(name string) bool { return name == "pyenv" }
+	tests := []struct {
+		In         string
+		WantResult string
+	}{{ // Test 0: A bare stand-in path resolves.
+		In: "path/to/pyenv --install bash", WantResult: "pyenv --install bash",
+	}, { // Test 1: An angle-bracketed stand-in path resolves.
+		In: "<path/to/pyenv> --install", WantResult: "pyenv --install",
+	}, { // Test 2: A rooted stand-in path resolves.
+		In: "/path/to/pyenv --install", WantResult: "pyenv --install",
+	}, { // Test 3: A nested slot resolves.
+		In: "<path/to/<pyenv>> --install", WantResult: "pyenv --install",
+	}, { // Test 4: A slot on the program name alone resolves.
+		In: "path/to/<pyenv> init", WantResult: "pyenv init",
+	}, { // Test 5: A prompt and indentation are kept.
+		In: "  $ path/to/pyenv --install", WantResult: "  $ pyenv --install",
+	}, { // Test 6: The command alone resolves.
+		In: "path/to/pyenv", WantResult: "pyenv",
+	}, { // Test 7: A file path stays a placeholder.
+		In: "path/to/file.txt --x", WantResult: "path/to/file.txt --x",
+	}, { // Test 8: A tool the session does not install stays a placeholder.
+		In: "path/to/other-tool --x", WantResult: "path/to/other-tool --x",
+	}, { // Test 9: A stand-in path past command position is left alone.
+		In: "pyenv exec path/to/pyenv", WantResult: "pyenv exec path/to/pyenv",
+	}, { // Test 10: A deeper path is not the program.
+		In: "path/to/bin/pyenv --install", WantResult: "path/to/bin/pyenv --install",
+	}, { // Test 11: Unbalanced brackets are left alone.
+		In: "<path/to/pyenv --install", WantResult: "<path/to/pyenv --install",
+	}, { // Test 12: A real path to the program is not a stand-in.
+		In: "~/.pyenv/bin/pyenv init", WantResult: "~/.pyenv/bin/pyenv init",
+	}, { // Test 13: A prose stand-in prefix is not the path form.
+		In: "the/path/to/pyenv --install", WantResult: "the/path/to/pyenv --install",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(test.WantResult, ResolveToolPath(test.In, owned)); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestCodeBlocksAdmonition checks that an indented body under an admonition
 // marker is prose, while an indented block after an ordinary paragraph is code.
 func TestCodeBlocksAdmonition(t *testing.T) {

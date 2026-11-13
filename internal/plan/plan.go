@@ -389,6 +389,7 @@ type planner struct {
 // whole block is left to it; a lone go install or brew line is dropped and
 // the rest of its block still runs, since the session installs on its own.
 func (pl *planner) addBlock(block docblock.Block) {
+	block.Lines = pl.resolvedToolPaths(block.Lines)
 	lines := docblock.LogicalLines(docblock.PrepareLines(block.Lines))
 	if len(lines) == 0 {
 		return
@@ -760,6 +761,30 @@ func (pl *planner) addFileBlock(block docblock.Block, path string) {
 		Lines:   []PlanLine{{Cmd: cmd, File: path, Line: block.Line}},
 	})
 	pl.created[path] = true
+}
+
+// resolvedToolPaths returns a block's raw lines with a stand-in path to a
+// documented binary in command position replaced by the binary, so
+// `path/to/pyenv --install bash` plans as the pyenv line it documents. The
+// raw lines are rewritten, not the logical ones, so line numbers still map.
+// The input is never modified, since other readers share it.
+func (pl *planner) resolvedToolPaths(raw []string) []string {
+	owned := func(name string) bool { return pl.binaries[name] }
+	var out []string
+	for i, l := range raw {
+		r := docblock.ResolveToolPath(l, owned)
+		if r == l {
+			continue
+		}
+		if out == nil {
+			out = slices.Clone(raw)
+		}
+		out[i] = r
+	}
+	if out == nil {
+		return raw
+	}
+	return out
 }
 
 // qualifies reports whether every command line of a block starts with a
