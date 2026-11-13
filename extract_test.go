@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/dcadolph/kibble/internal/docblock"
 )
 
 // TestClassifyLine checks that install commands are recognized and classified.
@@ -596,5 +598,142 @@ func TestExtractListRecipe(t *testing.T) {
 				t.Errorf("recipe mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// TestSourceBuildStep checks which blocks document building the checkout from
+// source, and that the recipe is the block as written apart from sudo.
+func TestSourceBuildStep(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In         string
+		WantRaw    string
+		WantRecipe []string
+		WantRun    bool
+		Want       bool
+	}{{ // Test 0: jq's block is a route, sudo dropped and make clean kept as written.
+		In: "```console\ngit submodule update --init    # if building from git\nautoreconf -i\n" +
+			"./configure --with-oniguruma=builtin\nmake clean    # if upgrading\nmake -j8\nmake check\n" +
+			"sudo make install\n```\n",
+		WantRaw: "sudo make install",
+		WantRecipe: []string{"git submodule update --init", "autoreconf -i",
+			"./configure --with-oniguruma=builtin", "make clean", "make -j8", "make check", "make install"},
+		WantRun: true, Want: true,
+	}, { // Test 1: configure with no install is not a route.
+		In: "```sh\n./configure\nmake\n```\n",
+	}, { // Test 2: make install with no configure step is not a route.
+		In: "```sh\nmake\nsudo make install\n```\n",
+	}, { // Test 3: a cmake generate, build, and install is a route.
+		In:         "```sh\ncmake -B build\ncmake --build build\nsudo cmake --install build\n```\n",
+		WantRaw:    "sudo cmake --install build",
+		WantRecipe: []string{"cmake -B build", "cmake --build build", "cmake --install build"},
+		WantRun:    true, Want: true,
+	}, { // Test 4: a block that clones belongs to the clone route.
+		In: "```sh\ngit clone https://github.com/o/r\ncd r\n./configure\nmake install\n```\n",
+	}, { // Test 5: a block that installs system packages needs a refused route.
+		In: "```sh\nsudo apt-get install -y libfoo-dev\n./configure\nmake install\n```\n",
+	}, { // Test 6: lines after the install run, up to a blank line or a teardown.
+		In:         "```sh\n./configure\nmake\nsudo make install\nsudo ldconfig\n\nsudo make uninstall\n```\n",
+		WantRaw:    "sudo make install",
+		WantRecipe: []string{"./configure", "make", "make install", "ldconfig"},
+		WantRun:    true, Want: true,
+	}, { // Test 7: a placeholder in the recipe records the route unrun.
+		In:         "```sh\n./configure --prefix=<dir>\nmake install\n```\n",
+		WantRaw:    "make install",
+		WantRecipe: []string{"./configure --prefix=<dir>", "make install"},
+		Want:       true,
+	}, { // Test 8: inline code is not a recipe.
+		In: "Run `./configure && make && sudo make install` to build.\n",
+	}, { // Test 9: make uninstall is not an install.
+		In: "```sh\n./configure\nmake uninstall\n```\n",
+	}, { // Test 10: a one-line chain is a route.
+		In:         "```sh\n./configure && make && sudo make install\n```\n",
+		WantRaw:    "./configure && make && sudo make install",
+		WantRecipe: []string{"./configure && make && make install"},
+		WantRun:    true, Want: true,
+	}, { // Test 11: a cmake build-only call does not count as the generate step.
+		In: "```sh\ncmake --build build\ncmake --install build\n```\n",
+	}, { // Test 12: a prose block is not shell.
+		In: "```yaml\n./configure\nmake install\n```\n",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			var got InstallStep
+			found := false
+			for _, b := range docblock.CodeBlocks(test.In) {
+				if s, ok := sourceBuildStep("repo", b); ok {
+					got, found = s, true
+				}
+			}
+			if found != test.Want {
+				t.Fatalf("found = %v, want %v (step %+v)", found, test.Want, got)
+			}
+			if !found {
+				return
+			}
+			if diff := cmp.Diff(test.WantRaw, got.Raw); diff != "" {
+				t.Errorf("raw mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantRecipe, got.Block); diff != "" {
+				t.Errorf("recipe mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantRun, got.Run); diff != "" {
+				t.Errorf("run mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestExtractSourceBuildRecipes checks that two builds ending on the same
+// install line are two routes, and that a loader step the document gives
+// outside a recipe is recorded on it.
+func TestExtractSourceBuildRecipes(t *testing.T) {
+	t.Parallel()
+	fromGit := "```sh\nautoreconf -i\n./configure\nmake\nsudo make install\n```\n"
+	fromTar := "```sh\n./configure\nmake\nsudo make install\n```\n"
+	tests := []struct {
+		In        string
+		WantNotes []string
+	}{{ // Test 0: two recipes with one install line are both kept.
+		In: fromGit + "\nOr from a tarball:\n\n" + fromTar, WantNotes: []string{"", ""},
+	}, { // Test 1: the same recipe written twice is one route.
+		In: fromTar + "\nAgain:\n\n" + fromTar, WantNotes: []string{""},
+	}, { // Test 2: ldconfig in a later sentence is noted.
+		In: fromTar + "\nOn Linux run `sudo ldconfig` afterwards.\n", WantNotes: []string{"ldconfig"},
+	}, { // Test 3: a library path variable in a later block is noted.
+		In:        fromTar + "\n```sh\nexport LD_LIBRARY_PATH=/usr/local/lib\n```\n",
+		WantNotes: []string{"LD_LIBRARY_PATH"},
+	}, { // Test 4: a recipe that runs ldconfig itself has nothing left to note.
+		In:        "```sh\n./configure\nmake\nsudo make install\nsudo ldconfig\n```\n\nRun ldconfig again if needed.\n",
+		WantNotes: []string{""},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			var notes []string
+			for _, s := range ExtractorWith(repoNames{}).Extract("repo", test.In) {
+				if s.Kind == "source-build" {
+					notes = append(notes, s.loaderNote)
+				}
+			}
+			if diff := cmp.Diff(test.WantNotes, notes); diff != "" {
+				t.Errorf("loader notes mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestExtractSourceBuildLine checks that the route points at the README line
+// of its install command, sudo and all.
+func TestExtractSourceBuildLine(t *testing.T) {
+	t.Parallel()
+	md := "# T\n\n```sh\n./configure\nmake\nsudo make install\n```\n"
+	steps := ExtractorWith(repoNames{}).Extract("repo", md)
+	if len(steps) != 1 || steps[0].Kind != "source-build" {
+		t.Fatalf("steps = %+v, want one source-build", steps)
+	}
+	if diff := cmp.Diff(6, steps[0].Line); diff != "" {
+		t.Errorf("line mismatch (-want +got):\n%s", diff)
 	}
 }

@@ -28,6 +28,19 @@ reports which steps a brand-new user could actually complete.
   `directories.bin` are not read.
 - Runs each `git clone` recipe too: the clone and the build lines that follow it in the
   same code block, with GitHub SSH remotes rewritten to HTTPS for the keyless container.
+- Runs a source build when a block configures the checkout (`./configure` or a cmake
+  generate step) and installs it (`make install`, `ninja install`, or `cmake --install`).
+  The recipe is the block as written, from its first command through the install and on
+  to the first blank line, comment, or teardown, with a leading `sudo` dropped. It runs in
+  `buildpack-deps:stable` on the committed tree, restored from the objects and refs of
+  the checkout's `.git` directory, which are streamed in so submodules resolve. The git
+  config, hooks, and reflogs stay on the host, since a config can hold a token. The
+  installed binary is smoke-tested in its own process. A loader error there, such as a
+  library `make install` placed where the loader does not look until `ldconfig` runs, is
+  a `FAIL`, because no argument starts that binary. When the document names `ldconfig` or
+  `LD_LIBRARY_PATH` outside the block, the same error is `BUILT`: the reader was told, and
+  kibble ran only the block. Any other failed smoke test stays `BUILT`. A block that also
+  clones, installs system packages, or pipes a remote script is not a source build.
 - Picks the image from the toolchain the step assumes, so a Rust project builds with
   `cargo` and a Node project with `npm`, and finds the installed binary wherever that
   toolchain puts it, even when it is not named after the package.

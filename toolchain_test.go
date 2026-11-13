@@ -261,3 +261,13 @@ func TestPythonStepImage(t *testing.T) {
 		t.Errorf("session image = %q ok=%v, want python:3.14", image, ok)
 	}
 }
+
+// TestSourceBuildImage checks that a source build runs in the build image
+// whatever the runner's default is.
+func TestSourceBuildImage(t *testing.T) {
+	t.Parallel()
+	d := &DockerRunner{Image: "golang:1.26"}
+	if image, _ := d.imageFor(InstallStep{Kind: "source-build", dir: t.TempDir()}); image != sourceBuildImage {
+		t.Errorf("image = %q, want %q", image, sourceBuildImage)
+	}
+}

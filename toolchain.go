@@ -29,6 +29,12 @@ var toolchains = map[string]toolchain{
 	"go":     {Name: "go", Image: ""},
 }
 
+// sourceBuildImage is the image a source build runs in. It is Debian's own
+// build image, with a C and C++ compiler, make, autoconf, automake, libtool,
+// pkg-config, git, and the common development libraries, which is the machine
+// a configure-and-make README assumes its reader has.
+const sourceBuildImage = "buildpack-deps:stable"
+
 // pkgKind describes how one package manager installs a documented tool and
 // where the binaries it produces land.
 type pkgKind struct {

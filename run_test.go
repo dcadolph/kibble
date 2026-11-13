@@ -1,8 +1,11 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1214,5 +1217,222 @@ func TestClassifyBinKind(t *testing.T) {
 				t.Errorf("detail mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// TestClassifySourceBuildLoader checks that a loader refusing to start the
+// binary convicts a source build, and only a source build.
+func TestClassifySourceBuildLoader(t *testing.T) {
+	t.Parallel()
+	loader := "BUILDCODE=0\nSMOKECODE=127\nSMOKELINE=/usr/local/bin/jq: error while loading shared libraries: " +
+		"libjq.so.1: cannot open shared object file: No such file or directory\n"
+	tests := []struct {
+		Kind       string
+		In         string
+		Note       string
+		WantStatus Status
+	}{{ // Test 0: a source build whose binary cannot load its library fails.
+		Kind: "source-build", In: loader, WantStatus: StatusFail,
+	}, { // Test 1: the same smoke line after a go install stays BUILT.
+		Kind: "go-install", In: loader, WantStatus: StatusBuilt,
+	}, { // Test 2: any other failed smoke test after a source build stays BUILT.
+		Kind: "source-build", In: "BUILDCODE=0\nSMOKECODE=2\nSMOKELINE=usage: tool [-x]\n", WantStatus: StatusBuilt,
+	}, { // Test 3: a passing smoke test after a source build is VERIFIED.
+		Kind: "source-build", In: "BUILDCODE=0\nSMOKECODE=0\nSMOKELINE=jq-1.8.1\n", WantStatus: StatusVerified,
+	}, { // Test 4: a checkout the container could not restore is kibble's error.
+		Kind: "source-build", In: "kibble could not restore the checkout from its git history\n",
+		WantStatus: StatusError,
+	}, { // Test 5: a loader step the document gives outside the recipe keeps it BUILT.
+		Kind: "source-build", In: loader, Note: "ldconfig", WantStatus: StatusBuilt,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			got := classify(InstallStep{Repo: "jq", Kind: test.Kind, loaderNote: test.Note}, test.In, time.Second)
+			if diff := cmp.Diff(test.WantStatus, got.Status); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s", diff)
+			}
+			if test.WantStatus == StatusFail && !strings.Contains(got.Detail, "libjq.so.1") {
+				t.Errorf("detail %q does not name the library", got.Detail)
+			}
+			if test.Note != "" && !strings.Contains(got.Detail, test.Note) {
+				t.Errorf("detail %q does not name the step the document gives", got.Detail)
+			}
+		})
+	}
+}
+
+// TestSourceBlocked checks that a source build needs a git directory to send.
+func TestSourceBlocked(t *testing.T) {
+	t.Parallel()
+	withDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(withDir, ".git", "refs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withFile := t.TempDir()
+	if err := os.WriteFile(filepath.Join(withFile, ".git"), []byte("gitdir: /elsewhere\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		Dir      string
+		WantNone bool
+	}{{ // Test 0: a git directory can be sent.
+		Dir: withDir, WantNone: true,
+	}, { // Test 1: a worktree pointer cannot.
+		Dir: withFile,
+	}, { // Test 2: no git at all cannot.
+		Dir: t.TempDir(),
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if got := sourceBlocked(test.Dir); (got == "") != test.WantNone {
+				t.Errorf("sourceBlocked = %q, want none %v", got, test.WantNone)
+			}
+		})
+	}
+}
+
+// TestGitTreeStream checks that a source build's stream carries the objects
+// and refs of the git directory, empty directories and large packs included,
+// and nothing else: not the config a token or a remote password lives in, not
+// the host's hooks, not a submodule's git directory, and not the working tree.
+func TestGitTreeStream(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, d := range []string{".git/refs/tags", ".git/objects/pack", ".git/hooks", ".git/logs",
+		".git/modules/dep/objects"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, body := range map[string]string{
+		".git/HEAD":               "ref: refs/heads/main\n",
+		".git/packed-refs":        "# pack-refs\n",
+		".git/shallow":            "0000\n",
+		".git/config":             "[http \"https://github.com/\"]\n\textraheader = AUTHORIZATION: basic c2VjcmV0\n",
+		".git/hooks/post-commit":  "#!/bin/sh\n",
+		".git/logs/HEAD":          "clone: from https://user:secret@example.test/r\n",
+		".git/FETCH_HEAD":         "https://user:secret@example.test/r\n",
+		".git/modules/dep/config": "[remote \"origin\"]\n\turl = https://user:secret@example.test/d\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	big := make([]byte, 3<<20)
+	if err := os.WriteFile(filepath.Join(dir, ".git/objects/pack/p.pack"), big, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.c"), []byte("int main(){}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := treeTarTo(&buf, dir, gitTree); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int64{}
+	tr := tar.NewReader(&buf)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[hdr.Name] = hdr.Size
+	}
+	want := map[string]int64{
+		".git/": 0, ".git/refs/": 0, ".git/refs/tags/": 0, ".git/objects/": 0,
+		".git/objects/pack/": 0, ".git/objects/pack/p.pack": 3 << 20,
+		".git/HEAD": 21, ".git/packed-refs": 12, ".git/shallow": 5,
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("archive mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestCopyPadded checks that a source running short of its declared size is
+// filled out with zeros, so the tar entry it feeds stays whole.
+func TestCopyPadded(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In         string
+		Size       int64
+		WantResult string
+	}{{ // Test 0: a source of the declared size is copied as is.
+		In: "abcd", Size: 4, WantResult: "abcd",
+	}, { // Test 1: a source that shrank is padded to the declared size.
+		In: "ab", Size: 4, WantResult: "ab\x00\x00",
+	}, { // Test 2: a source that grew is cut at the declared size.
+		In: "abcdef", Size: 4, WantResult: "abcd",
+	}, { // Test 3: an empty source of declared size zero writes nothing.
+		In: "", Size: 0, WantResult: "",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			if err := copyPadded(&buf, strings.NewReader(test.In), test.Size); err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(test.WantResult, buf.String()); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestDockerSourceBuild builds a checkout whose installed binary needs its own
+// shared library. Without ldconfig the documented install leaves a binary that
+// cannot start, and with it the same project verifies.
+func TestDockerSourceBuild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("container test skipped in short mode")
+	}
+	if os.Getenv("KIBBLE_INTEGRATION") == "" {
+		t.Skip("set KIBBLE_INTEGRATION=1 to run container tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if err := sandbox.Available(ctx); err != nil {
+		t.Skipf("docker is not reachable: %v", err)
+	}
+	dir := t.TempDir()
+	files := map[string]string{
+		"configure": "#!/bin/sh\necho configured\n",
+		"lib.c":     "const char *greeting(void) { return \"hello 1.0\"; }\n",
+		"main.c":    "#include <stdio.h>\nconst char *greeting(void);\nint main(void) { puts(greeting()); return 0; }\n",
+		"Makefile": "all: hello\nlibhello.so: lib.c\n\tcc -shared -fPIC -o $@ lib.c\n" +
+			"hello: main.c libhello.so\n\tcc -o $@ main.c -L. -lhello\ninstall: all\n" +
+			"\tinstall -m755 hello /usr/local/bin/hello\n\tinstall -m644 libhello.so /usr/local/lib/libhello.so\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{
+		{"init", "-q"}, {"add", "-A"},
+		{"-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "init"},
+		{"config", "--local", "http.https://example.invalid/.extraheader", "AUTHORIZATION: kibble-marker"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	runner := &DockerRunner{Image: "golang:1.26", Timeout: 120 * time.Second}
+	// The first line fails the recipe if the token planted in the host's git
+	// config reached the container, so neither result below can be met then.
+	recipe := []string{"if grep -rqs kibble-marker .git; then exit 9; fi", "./configure", "make", "make install"}
+	res := runner.Run(ctx, InstallStep{Repo: "hello", Kind: "source-build", Run: true, Block: recipe, dir: dir})
+	if res.Status != StatusFail || !strings.Contains(res.Detail, "libhello.so") {
+		t.Errorf("without ldconfig: status %s detail %q, want FAIL naming libhello.so", res.Status, res.Detail)
+	}
+	recipe = append(recipe, "ldconfig")
+	res = runner.Run(ctx, InstallStep{Repo: "hello", Kind: "source-build", Run: true, Block: recipe, dir: dir})
+	if res.Status != StatusVerified || res.SmokeLine != "hello 1.0" {
+		t.Errorf("with ldconfig: status %s smoke %q detail %q, want VERIFIED", res.Status, res.SmokeLine, res.Detail)
 	}
 }

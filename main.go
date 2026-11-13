@@ -706,7 +706,7 @@ func unrunResult(step InstallStep) Result {
 			Detail: "kibble does not run system package installs; verify this one by hand",
 		}
 	case step.Kind == "git-clone" || step.Kind == "go-install" || step.Kind == "brew" ||
-		pkgKinds[step.Kind].Ecosystem != "":
+		step.Kind == "source-build" || pkgKinds[step.Kind].Ecosystem != "":
 		// These kinds run unless the line holds a placeholder, which is the
 		// only reason one is recorded unrun.
 		res = Result{

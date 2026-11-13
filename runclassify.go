@@ -111,6 +111,21 @@ func classify(step InstallStep, out string, dur time.Duration) Result {
 		res.Status = StatusCrossArch
 		res.SmokeLine = ""
 		res.Detail = "installed, but the binary targets another architecture, smoke test not possible here"
+	case step.Kind == "source-build" && reLoaderError.MatchString(res.SmokeLine) && step.loaderNote != "":
+		// The document covers the loader in a place the recipe did not reach,
+		// so the reader who follows all of it may well have a working binary.
+		// kibble ran only the block, and its own shortfall is not a failure.
+		res.Status = StatusBuilt
+		res.Detail = fmt.Sprintf("installed, but the binary cannot start until the %s step the document "+
+			"gives outside this block, which kibble did not run", step.loaderNote)
+	case step.Kind == "source-build" && reLoaderError.MatchString(res.SmokeLine):
+		// A failed smoke test is normally only BUILT, since --version and --help
+		// can fail on a working tool. A dynamic loader refusing to start it
+		// cannot: no argument gets that binary to run. After a source build
+		// every library it linked against was present at link time, so the
+		// install the document gave is what left it unable to find one.
+		res.Status = StatusFail
+		res.Detail = "the documented install leaves a binary that cannot start: " + res.SmokeLine
 	default:
 		res.Status = StatusBuilt
 		res.Detail = fmt.Sprintf("binary built but smoke exit=%d", smokeCode)
@@ -130,6 +145,10 @@ var reFlagMarker = regexp.MustCompile(`^KIBBLE-FLAG (--?\S+) CODE=(-?\d+)$`)
 // produces, so an emulation artifact of the host is not reported as the tool
 // failing its smoke test.
 var reArchMismatch = regexp.MustCompile(`qemu-\w+: |Exec format error|cannot execute binary file`)
+
+// reLoaderError matches the dynamic loader refusing to start a binary because
+// a shared library it needs cannot be found or loaded.
+var reLoaderError = regexp.MustCompile(`error while loading shared libraries|Library not loaded`)
 
 // reANSI matches the escape sequences a program writes to color or reposition
 // its own output. Both the color form and the wider set of control sequences

@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -135,6 +138,11 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 		return res
 	case "git-clone":
 		script = cloneScriptFor(step, int(d.Timeout.Seconds()))
+	case "source-build":
+		if blocked := sourceBlocked(step.dir); blocked != "" {
+			return Result{Step: step, Status: StatusSkipped, Reason: ReasonMissingDependency, Detail: blocked}
+		}
+		script = sourceScriptFor(step, int(d.Timeout.Seconds()))
 	default:
 		if _, isPkg := pkgKinds[step.Kind]; isPkg {
 			script = pkgScriptFor(step, int(d.Timeout.Seconds())) + helpProbe(step)
@@ -156,10 +164,22 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	// The official Go images pin GOTOOLCHAIN=local, so a module asking for a
 	// newer Go than the image ships fails to install. A reader running the
 	// default fetches that toolchain, so the session matches them instead.
-	args := append([]string{"run", "--rm", "--name", name},
-		append(sandbox.Args(), "-e", "GOTOOLCHAIN=auto", image, "bash", "-c", script)...)
+	head := []string{"run", "--rm", "--name", name}
+	if step.Kind == "source-build" {
+		head = append(head, "-i")
+	}
+	args := append(head, append(sandbox.Args(), "-e", "GOTOOLCHAIN=auto", image, "bash", "-c", script)...)
 	cmd := exec.CommandContext(ctx, sandbox.Bin(), args...)
 	cmd.Cancel = sandbox.RemoveFunc(cmd, name)
+	if step.Kind == "source-build" {
+		pr, pw := io.Pipe()
+		go func() {
+			_, err := treeTarTo(pw, step.dir, gitTree)
+			_ = pw.CloseWithError(err)
+		}()
+		defer func() { _ = pr.Close() }()
+		cmd.Stdin = pr
+	}
 	out, _ := cmd.CombinedOutput()
 	if ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) {
 		return Result{
@@ -225,6 +245,22 @@ var reNetworkError = regexp.MustCompile(
 		`\b(EAI_AGAIN|ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH)\b|` +
 		`getaddrinfo|socket hang up|request to \S+ failed, reason`)
 
+// sourceBlocked returns why a source build cannot be handed the checkout it
+// builds, or empty when it can. The build restores the committed tree from the
+// git directory, so a checkout without one, or a worktree whose .git is only a
+// pointer to another repository's, has nothing to send.
+func sourceBlocked(dir string) string {
+	info, err := os.Stat(filepath.Join(dir, ".git"))
+	switch {
+	case err != nil || !info.IsDir():
+		return "builds the checkout from its git history, and this checkout has no .git directory to send"
+	case !treeFits(dir, gitTree):
+		return fmt.Sprintf("builds the checkout from its git history, which exceeds the %d MB kibble will stream",
+			repoStreamCap>>20)
+	}
+	return ""
+}
+
 // imageFor returns the container image a step runs in. A clone recipe runs in
 // the image that provides the toolchain its commands assume, so a Rust or Node
 // project builds with the tools its docs were written for. Everything else runs
@@ -235,6 +271,9 @@ func (d *DockerRunner) imageFor(step InstallStep) (image, blocked string) {
 			return toolchainImage(tc, step.dir)
 		}
 		return d.Image, ""
+	}
+	if step.Kind == "source-build" {
+		return sourceBuildImage, ""
 	}
 	if step.Kind != "git-clone" {
 		return d.Image, ""
