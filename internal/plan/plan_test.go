@@ -250,6 +250,21 @@ func TestBuildPlan(t *testing.T) {
 		Markdown:  "```sh\ntool run --key $TOKEN\n```\n",
 		Cfg:       &config.ExamplesConfig{Env: map[string]string{"TOKEN": "abc"}},
 		WantSteps: [][]planLine{{{Cmd: "tool run --key $TOKEN"}}},
+	}, { // Test 21: a stand-in path to the documented binary plans as the binary.
+		Markdown:  "```sh\npath/to/tool --install bash\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "tool --install bash"}}},
+	}, { // Test 22: an angle-bracketed stand-in path to it does too.
+		Markdown:  "```sh\n<path/to/tool> --install bash\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "tool --install bash"}}},
+	}, { // Test 23: a resolved line that still holds a slot stays a placeholder.
+		Markdown:  "```sh\npath/to/tool --install <shell executable name>\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "tool --install <shell executable name>", Skip: true}}},
+	}, { // Test 24: a stand-in path to another program is not an example.
+		Markdown:     "```sh\npath/to/other-tool --x\n```\n",
+		WantExcluded: 1,
+	}, { // Test 25: a stand-in path to a file stays a placeholder.
+		Markdown:  "```sh\ntool run path/to/file.txt\n```\n",
+		WantSteps: [][]planLine{{{Cmd: "tool run path/to/file.txt", Skip: true}}},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

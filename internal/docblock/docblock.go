@@ -504,6 +504,39 @@ var rePlaceholder = regexp.MustCompile(
 		`|deadbeef|1234567|123abc)\b` +
 		`|(^|[^/])\.\.\.($|[\s'"./])|\b[A-Z][A-Z]+_[0-9]+\b`)
 
+// ResolveToolPath replaces a stand-in path to a program in command position,
+// such as path/to/tool, /path/to/tool, <path/to/tool>, or <path/to/<tool>>,
+// with the program's bare name when owned reports that the session installs
+// it. pyenv documents its own flag as `<path/to/pyenv> --install`, and reading
+// that as a placeholder left the one wrong line of its README untested. A
+// stand-in path to anything else, such as path/to/file.txt or a tool the
+// session does not install, is returned unchanged and stays a placeholder.
+// Leading indentation and a "$ " prompt are kept.
+func ResolveToolPath(line string, owned func(string) bool) string {
+	body := strings.TrimLeft(line, " \t")
+	lead := line[:len(line)-len(body)]
+	if strings.HasPrefix(body, "$ ") {
+		lead += "$ "
+		body = body[2:]
+	}
+	word, rest, spaced := strings.Cut(body, " ")
+	if spaced {
+		rest = " " + rest
+	}
+	if strings.Count(word, "<") != strings.Count(word, ">") {
+		return line
+	}
+	name, ok := strings.CutPrefix(strings.TrimPrefix(strings.NewReplacer("<", "", ">", "").Replace(word), "/"),
+		"path/to/")
+	if !ok || !reToolName.MatchString(name) || !owned(name) {
+		return line
+	}
+	return lead + name + rest
+}
+
+// reToolName matches a program name with no path in it.
+var reToolName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
+
 // HasPlaceholder reports whether s holds a token the reader must replace
 // before running it. The planner asks it of an example line and the extractor
 // asks it of an install line, so both read placeholders the same way.

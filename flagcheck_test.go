@@ -103,6 +103,22 @@ func TestExtractUsage(t *testing.T) {
 		In:        "```sh\nrclone -vvv  --stats-one-line --max-stats-groups 10\n```\n",
 		Binaries:  []string{"rclone"},
 		WantFlags: []string{"vvv", "stats-one-line", "max-stats-groups"},
+	}, { // Test 17: a stand-in path to the binary in inline code cites its flag.
+		In:        "To set up the shell, run `<path/to/pyenv> --install`.\n",
+		Binaries:  []string{"pyenv"},
+		WantFlags: []string{"install"},
+	}, { // Test 18: a bare stand-in path to the binary in a block cites its flag.
+		In:        "```sh\npath/to/pyenv --install\n```\n",
+		Binaries:  []string{"pyenv"},
+		WantFlags: []string{"install"},
+	}, { // Test 19: a stand-in path to another tool cites nothing.
+		In:       "```sh\npath/to/other-tool --install\n```\n",
+		Binaries: []string{"pyenv"},
+		WantNone: true,
+	}, { // Test 20: a resolved line that still holds a slot is a synopsis.
+		In:       "```sh\npath/to/pyenv --install <shell executable name>\n```\n",
+		Binaries: []string{"pyenv"},
+		WantNone: true,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
