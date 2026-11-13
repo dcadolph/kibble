@@ -1,0 +1,27 @@
+# The recall corpus: real documentation bugs found by hand in repositories
+# where kibble tested nothing, each pinned to the commit the bug was found at
+# and to the line a reader trips on. repos.tsv proves kibble does not invent
+# failures and mutations.tsv proves it catches rot planted on purpose. This
+# file holds what neither can: rot that was already there and that kibble
+# walked past, reading the repository as fine.
+#
+# A row is caught when the run reports the wanted status on that bug: an
+# example line in the named document whose status is wanted and whose
+# command or detail contains the proof, or a top-level row whose status is
+# wanted and whose detail contains the proof. The JSON carries no line
+# number, so the line column says where a person should look and the proof
+# pins identity, as in mutations.tsv. Wanted statuses are separated by "|".
+#
+# caught=no rows are the scoreboard: the job prints whether each is caught now
+# and never fails on them. Once a change catches a row, flip it to caught=yes,
+# and from then on the job fails if the line stops reaching its status. Every
+# bug found by hand becomes a row here before any fix for it is built.
+#
+# The first four came from the 2026-10-22 hand check of ten repositories
+# kibble had run nothing on. Columns are tab-separated:
+# name, clone URL, pinned commit, document, line, wanted status, proof, caught.
+jq	https://github.com/jqlang/jq.git	94b00aa807a51a8f97bc9345c03e32982e344678	README.md	56	FAIL	libjq.so.1	no
+goreleaser	https://github.com/goreleaser/goreleaser.git	a9fb415389a2e55906ae457d9f76bb77b3cb6056	www/content/getting-started/quick-start.md	138	FAIL	doesn't contain any tags	no
+pyenv	https://github.com/pyenv/pyenv.git	7d65a4683c91b29f7501da4c8737d4e786f8cad2	README.md	187	DRIFT|FAIL	--install	no
+shellcheck	https://github.com/koalaman/shellcheck.git	cd9072643932ee2008e454e2cd990e25c1dc9d49	README.md	412	FAIL	exec foo; echo "Done!"	no
+shellcheck	https://github.com/koalaman/shellcheck.git	cd9072643932ee2008e454e2cd990e25c1dc9d49	README.md	451	FAIL	cat file | grep foo	no

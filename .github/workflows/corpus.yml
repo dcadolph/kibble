@@ -172,3 +172,66 @@ jobs:
             echo "::endgroup::"
           done < corpus/mutations.tsv
           exit "$status"
+      # Each recall row is a real bug a person found where kibble tested
+      # nothing. A caught=no row is a score, printed and never fatal, so the
+      # misses stay visible without turning the job red for work not yet
+      # built. A caught=yes row is a regression guard: losing that catch fails
+      # the job. KIBBLE and WORK let the same loop run on a laptop.
+      - name: Run kibble against the recall corpus
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          KIBBLE="${KIBBLE:-/tmp/kibble}"
+          WORK="${WORK:-/tmp/recall}"
+          test -x "$KIBBLE" || go build -o "$KIBBLE" .
+          mkdir -p "$WORK"
+          status=0
+          rows=0
+          caught=0
+          while IFS=$'\t' read -r name url sha doc line want proof expect; do
+            case "$name" in ""|\#*) continue ;; esac
+            rows=$((rows + 1))
+            dir="$WORK/${name}-${sha:0:12}"
+            out="$WORK/${name}-${sha:0:12}.json"
+            # Two rows can name one repository. It runs once.
+            if [ ! -s "$out" ]; then
+              echo "::group::${name} at ${sha:0:12}"
+              if [ ! -d "$dir/.git" ]; then
+                git init -q "$dir"
+                git -C "$dir" fetch -q --depth 1 "$url" "$sha"
+                git -C "$dir" checkout -q FETCH_HEAD
+              fi
+              rc=0
+              "$KIBBLE" -json "$dir" > "$out" || rc=$?
+              # Exit 1 reports failures and exit 3 reports nothing tested.
+              # Both are verdicts. Anything else is kibble unable to run.
+              if { [ "$rc" -gt 1 ] && [ "$rc" -ne 3 ]; } || ! jq -e 'type=="array"' "$out" >/dev/null 2>&1; then
+                echo "${name}: kibble itself failed (exit ${rc})"
+                rm -f "$out"
+              fi
+              echo "::endgroup::"
+            fi
+            hit=0
+            if [ -s "$out" ]; then
+              hit=$(jq -r --arg doc "$doc" --arg want "$want" --arg proof "$proof" '
+                ($want | split("|")) as $ws
+                | [ (.[] | select((.status as $s | $ws | index($s)) and ((.detail // "") | contains($proof)))),
+                    (.[] | .steps[]? | select((.doc // "") | endswith($doc)) | .lines[]
+                         | select((.status as $s | $ws | index($s))
+                                  and (((.cmd // "") + "\n" + (.detail // "")) | contains($proof)))) ]
+                | length' "$out")
+            fi
+            where="${name} ${doc}:${line} ${want} naming \"${proof}\""
+            if [ "$hit" -gt 0 ]; then
+              caught=$((caught + 1))
+              echo "${where}: caught"
+            elif [ "$expect" = "yes" ]; then
+              echo "::error::${where}: no longer caught, and the row says it was"
+              status=1
+            else
+              echo "${where}: not caught yet"
+            fi
+          done < corpus/recall.tsv
+          echo "${caught} of ${rows} recall rows caught"
+          exit "$status"
