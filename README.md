@@ -189,12 +189,15 @@ it, so a CI log can always say which kibble produced its verdict.
 
 The exit code tells a script what happened:
 
-- `0` means at least one check ran and none failed.
+- `0` means at least one documented claim was tested and none failed.
 - `1` means the run failed. `-strict` widens what counts as a failure.
 - `2` means a usage error, such as no path and no README in the current directory,
   Docker unavailable, or less than 2 GiB free in Docker.
-- `3` means nothing was checked: every row is a skip, so no install ran and no example
-  could run either. The action fails on purpose, since a check that ran nothing must not pass.
+- `3` means nothing was tested: no row and no example line reached `VERIFIED`, `FAIL`,
+  `GAP`, or `DRIFT`. A brew formula lookup, a recipe with no binary to smoke-test, a
+  timeout, and a skip all leave the documents unchecked, and the summary names up to three
+  of those causes. The action fails on purpose, since a check that tested nothing must not
+  pass.
 - `130` means the run was interrupted.
 
 ## What it has found

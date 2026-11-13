@@ -50,7 +50,7 @@ jobs:
               rc=0
               /tmp/kibble -json "$dir" > "/tmp/${name}.json" || rc=$?
               # Exit 1 is kibble reporting failures and exit 3 is kibble
-              # reporting that every row is a skip. Both are verdicts with a
+              # reporting that it tested no claim. Both are verdicts with a
               # JSON array behind them, and a 0,0,0 pin is exactly the shape
               # that exits 3. Any other nonzero is kibble unable to do its job,
               # and blaming the corpus for that would be the same mistake as

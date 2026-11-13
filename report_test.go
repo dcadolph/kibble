@@ -241,6 +241,72 @@ func TestReportNoInstallRoute(t *testing.T) {
 	}
 }
 
+// TestUntestedLine checks the summary line a run prints when it tested no
+// claim: install causes before the example skips they cause, each cut at its
+// first semicolon, no cause twice, and at most three.
+func TestUntestedLine(t *testing.T) {
+	t.Parallel()
+	row := func(kind string, s Status, detail string) Result {
+		return Result{Step: InstallStep{Repo: "r", Kind: kind, doc: "README.md"}, Status: s, Detail: detail}
+	}
+	examples := row("example", StatusSkipped, "no documented install puts a binary on PATH; examples not run")
+	apt := row("os-package", StatusSkipped, "kibble does not run system package installs; verify this one by hand")
+	brew := row("brew", StatusExists, "README.md: formula exists (install not attempted)")
+	ran := row("git-clone", StatusRan, "recipe exited 0 but produced no binary to smoke-test")
+	tests := []struct {
+		Results    []Result
+		WantResult string
+	}{{ // Test 0: shellcheck's shape, the example skip listed after the installs.
+		Results: []Result{brew, brew, examples, apt, apt},
+		WantResult: "Nothing was tested: formula exists (install not attempted); " +
+			"kibble does not run system package installs; " +
+			"no documented install puts a binary on PATH.",
+	}, { // Test 1: four causes are cut to three, installs first.
+		Results: []Result{examples, apt, brew, ran},
+		WantResult: "Nothing was tested: kibble does not run system package installs; " +
+			"formula exists (install not attempted); " +
+			"recipe exited 0 but produced no binary to smoke-test.",
+	}, { // Test 2: a row with no detail is named by its status and kind.
+		Results:    []Result{{Step: InstallStep{Kind: "cargo-install"}, Status: StatusTimeout}},
+		WantResult: "Nothing was tested: timeout cargo-install.",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(test.WantResult, untestedLine(test.Results)); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestReportTableUntested checks the table prints the nothing-tested line only
+// when no row settled a claim.
+func TestReportTableUntested(t *testing.T) {
+	t.Parallel()
+	brew := Result{Step: InstallStep{Repo: "r", Kind: "brew"}, Status: StatusExists,
+		Detail: "formula exists (install not attempted)"}
+	tests := []struct {
+		Results  []Result
+		WantLine bool
+	}{{ // Test 0: a brew lookup alone tested nothing.
+		Results: []Result{brew}, WantLine: true,
+	}, { // Test 1: a verified row beside it is a tested claim.
+		Results: []Result{brew, {Step: InstallStep{Repo: "r", Kind: "go-install"}, Status: StatusVerified}},
+	}, { // Test 2: an empty run prints no cause line.
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			var b bytes.Buffer
+			reportTable(&b, test.Results)
+			if got := strings.Contains(b.String(), "Nothing was tested"); got != test.WantLine {
+				t.Errorf("line printed = %v, want %v:\n%s", got, test.WantLine, b.String())
+			}
+		})
+	}
+}
+
 // TestSharedCauseKeyIgnoresVersion checks the version fields do not split a shared cause.
 func TestSharedCauseKeyIgnoresVersion(t *testing.T) {
 	t.Parallel()

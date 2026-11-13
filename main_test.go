@@ -54,10 +54,20 @@ func TestAnyFail(t *testing.T) {
 }
 
 // TestExitCode checks the process exit status, including the code that says a
-// run checked nothing because no repository had an install route kibble runs.
+// run tested nothing: no row and no example line settled a documented claim.
 func TestExitCode(t *testing.T) {
 	t.Parallel()
 	res := func(s Status) Result { return Result{Status: s} }
+	exampleWith := func(lines ...Status) Result {
+		step := exampleStep{}
+		for _, s := range lines {
+			step.Lines = append(step.Lines, lineResult{Status: s})
+		}
+		return Result{
+			Step: InstallStep{Kind: "example"}, Status: StatusBlocked,
+			example: &exampleRun{Steps: []exampleStep{step}},
+		}
+	}
 	noRoute := Result{Step: InstallStep{Kind: "install"}, Status: StatusSkipped, Reason: ReasonNoInstallRoute}
 	exampleSkip := Result{Step: InstallStep{Kind: "example"}, Status: StatusSkipped}
 	aptSkip := Result{Step: InstallStep{Kind: "os-package"}, Status: StatusSkipped, Reason: ReasonUnsupportedMethod}
@@ -84,12 +94,31 @@ func TestExitCode(t *testing.T) {
 		Results: []Result{aptSkip, exampleSkip}, WantCode: 3,
 	}, { // Test 8: an error elsewhere outranks nothing checked.
 		Results: []Result{noRoute, res(StatusError)}, WantCode: 1,
-	}, { // Test 9: a formula lookup is a check, so a brew row beside skips passes.
-		Results: []Result{res(StatusExists), exampleSkip}, WantCode: 0,
+	}, { // Test 9: a formula lookup tests no claim, so a brew row beside skips is nothing tested.
+		Results: []Result{res(StatusExists), exampleSkip}, WantCode: 3,
 	}, { // Test 10: strict does not turn nothing checked into a failure.
 		Results: []Result{noRoute, exampleSkip}, Strict: true, WantCode: 3,
 	}, { // Test 11: an empty run exits zero.
 		WantCode: 0,
+	}, { // Test 12: a brew lookup alone is nothing tested.
+		Results: []Result{res(StatusExists)}, WantCode: 3,
+	}, { // Test 13: a recipe that ran with no binary is nothing tested.
+		Results: []Result{res(StatusRan), exampleSkip}, WantCode: 3,
+	}, { // Test 14: a timeout beside skips is nothing tested.
+		Results: []Result{res(StatusTimeout), exampleSkip}, WantCode: 3,
+	}, { // Test 15: built without a passing smoke test is nothing tested.
+		Results: []Result{res(StatusBuilt), res(StatusCrossArch), res(StatusBlocked)}, WantCode: 3,
+	}, { // Test 16: drift settles a claim, so the run tested something.
+		Results: []Result{res(StatusExists), res(StatusDrift)}, WantCode: 0,
+	}, { // Test 17: a gap settles a claim too.
+		Results: []Result{res(StatusRan), res(StatusGap)}, WantCode: 0,
+	}, { // Test 18: one verified example line inside a blocked session is a tested claim.
+		Results: []Result{res(StatusRan), exampleWith(StatusBlocked, StatusVerified)}, WantCode: 0,
+	}, { // Test 19: an example session whose lines all went unsettled is nothing tested.
+		Results:  []Result{res(StatusRan), exampleWith(StatusBlocked, StatusSkipped)},
+		WantCode: 3,
+	}, { // Test 20: an error outranks nothing tested.
+		Results: []Result{res(StatusExists), res(StatusError)}, WantCode: 1,
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
