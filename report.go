@@ -212,6 +212,9 @@ func reportTable(w io.Writer, results []Result) {
 		countVerdict(r.Status, &pass, &fail, &gap, &other)
 	}
 	_, _ = fmt.Fprintf(w, "\n%s\n", verdictLine(c, fail, gap, other+blocked))
+	if len(results) > 0 && !anyTested(results) {
+		_, _ = fmt.Fprintf(w, "%s\n", c.yellow(untestedLine(results)))
+	}
 	_, _ = fmt.Fprintf(w, "%s\n", summaryLine(c, pass, fail, gap, other, len(results), total))
 	_, _ = fmt.Fprintf(w, "%s\n", evidenceLine(c, results))
 }
@@ -264,6 +267,36 @@ func verdictLine(c palette, fail, gap, other int) string {
 	default:
 		return c.strong(ansiGreen, "VERIFIED") + c.dim("  every documented line ran and worked")
 	}
+}
+
+// untestedLine says that a run tested nothing and why, naming up to three
+// distinct causes from the row details. Install rows come first, since an
+// example skipped for want of a binary is the consequence of an install that
+// did not run. Each cause is cut at its first semicolon so the causes can be
+// joined on one line without running together.
+func untestedLine(results []Result) string {
+	var installs, examples []string
+	for _, r := range results {
+		cause := r.Detail
+		if r.Step.doc != "" {
+			cause = strings.TrimPrefix(cause, r.Step.doc+": ")
+		}
+		cause, _, _ = strings.Cut(cause, ";")
+		cause = strings.TrimSpace(cause)
+		if cause == "" {
+			cause = strings.ToLower(string(r.Status)) + " " + r.Step.Kind
+		}
+		if r.Step.Kind == "example" {
+			examples = append(examples, cause)
+		} else {
+			installs = append(installs, cause)
+		}
+	}
+	causes := dedupe(append(installs, examples...))
+	if len(causes) > 3 {
+		causes = causes[:3]
+	}
+	return "Nothing was tested: " + strings.Join(causes, "; ") + "."
 }
 
 // blockedLines counts the documented lines of a result that ran without

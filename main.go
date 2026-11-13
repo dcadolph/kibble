@@ -763,24 +763,52 @@ func gib(n int64) string {
 }
 
 // exitCode is the process exit status for a finished run: 1 when anyFail says
-// the run failed, 3 when nothing was checked, else 0. Nothing was checked when
-// every row is a skip: no install ran or was looked up, so no example could
-// run either, whether the documents hold no install route at all or only
-// routes kibble does not run. A check that ran nothing must not read as a
-// pass, and it is not a failure of the documents either.
+// the run failed, 3 when nothing was tested, else 0. Nothing was tested when no
+// row and no example line reached a verdict on a documented claim. A brew
+// formula lookup, a recipe that ran with no binary to smoke-test, a timeout,
+// and a skip each leave every claim unsettled, and a run made only of those
+// used to read as a pass. A check that tested nothing
+// must not read as a pass, and it is not a failure of the documents either.
 func exitCode(results []Result, strict bool) int {
 	if anyFail(results, strict) {
 		return 1
 	}
-	for _, r := range results {
-		if r.Status != StatusSkipped {
-			return 0
-		}
-	}
-	if len(results) == 0 {
+	if len(results) == 0 || anyTested(results) {
 		return 0
 	}
 	return 3
+}
+
+// anyTested reports whether any result, or any example line inside one,
+// settled a documented claim.
+func anyTested(results []Result) bool {
+	for _, r := range results {
+		if tested(r.Status) {
+			return true
+		}
+		if r.example == nil {
+			continue
+		}
+		for _, s := range r.example.Steps {
+			for _, l := range s.Lines {
+				if tested(l.Status) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// tested reports whether a status is a verdict on a documented claim: it
+// worked, it failed, the document left a gap, or the document drifted from the
+// binary. Every other status says the claim went unsettled.
+func tested(s Status) bool {
+	switch s {
+	case StatusVerified, StatusFail, StatusGap, StatusDrift:
+		return true
+	}
+	return false
 }
 
 // anyFail reports whether the run should exit non-zero. A build failure always
