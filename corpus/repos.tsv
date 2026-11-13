@@ -34,20 +34,24 @@
 ripgrep	https://github.com/BurntSushi/ripgrep.git	3fce3b5bb0236da2df6d99672afb8a719642eca7	3,0,0
 # nodemon once expected 2,0,0. Its README installs it globally and, further down,
 # with npm install --save-dev nodemon. Since kibble runs a local npm install for
-# a package the checkout publishes (7554920), that second line is a route of its
+# a package the checkout publishes (4a053e6), that second line is a route of its
 # own and both installs verify. The two routes print the same help, and equal
-# check rows of one binary collapse to one (5b80b1a), so the flag check still
+# check rows of one binary collapse to one (e420bc0), so the flag check still
 # counts once.
-# Run on the same commit, kibble before 7554920 reads 2,0,0, at 7554920 4,0,0
+# Run on the same commit, kibble before 4a053e6 reads 2,0,0, at 4a053e6 4,0,0
 # with the flag check doubled, and with the collapse 3,0,0. The extra install is
 # the whole difference.
 nodemon	https://github.com/remy/nodemon.git	5de021f6cd5c71814b6c2d1c60af3cc01fa2cc69	3,0,0
-# fd is the one row that moves on a quiet network. Its npm package fetches a
-# prebuilt binary, and when that fetch fails the two checks reading the
-# installed tool have nothing to read, so 6,0,0 becomes 4,0,0. That is now an
-# ERROR naming the fetch rather than a FAIL naming the document, and a run
-# whose only drift is this deserves a rerun before it deserves a bug hunt.
-fd	https://github.com/sharkdp/fd.git	cdea7f56331ebc7bb799aa9f718a6eee9a4a1cfc	6,0,0
+# fd once expected 6,0,0. Its cargo and npm installs both verify and print the
+# same help, so before e420bc0 the flag check counted twice. With equal rows of
+# one binary collapsed, it counts once and fd reads 5,0,0. The collapse is the
+# whole difference: the run that first read 5,0,0 had no ERROR row.
+# fd is also the one row that moves on a quiet network. Its npm package fetches
+# a prebuilt binary, and when that fetch fails the npm install has nothing to
+# verify and the count drops below the pin. That is an ERROR naming the fetch
+# rather than a FAIL naming the document, and a run whose only drift is this
+# deserves a rerun before it deserves a bug hunt.
+fd	https://github.com/sharkdp/fd.git	cdea7f56331ebc7bb799aa9f718a6eee9a4a1cfc	5,0,0
 # glow and rich-cli each held one gap until 2026-10-26: example lines naming a
 # file the README never creates (glow's mystyle.json, rich-cli's loop.py and
 # its siblings). A missing file is now checked when the line runs, and when an
