@@ -9,6 +9,14 @@ memory and process counts, `no-new-privileges`, and every Linux capability dropp
 the handful `apt` needs to install the packages the docs depend on. Nothing from the host
 is mounted in; the repository is streamed in as a tar of its working tree.
 
+A documented source build (`./configure`, `make`, `make install`) is the one case that
+receives more than the working tree. It is sent the objects and refs of the checkout's
+`.git` directory, so the container can restore the committed tree and resolve submodules
+the way a fresh clone does. That is the repository's local history, including commits and
+stashes that were never pushed. Nothing else in `.git` is sent: not `config`, where a CI
+checkout stores the token it fetched with and a remote URL can carry a password, not
+hooks, not reflogs, and not a submodule's git directory.
+
 The boundary that stays open is the network, because verifying an install *is* fetching
 it: `go install`, `cargo install`, and `npm install -g` are network operations. A
 malicious documented command can therefore reach out from inside the container.

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	kplan "github.com/dcadolph/kibble/internal/plan"
@@ -208,31 +209,90 @@ func sessionBudget(plan *kplan.Plan, install time.Duration) time.Duration {
 // for a small cap, and what is left is a runaway guard.
 const repoStreamCap = 512 << 20
 
+// treeSpec says which part of a checkout an archive carries.
+type treeSpec struct {
+	// sub is the directory under the checkout that is walked, empty for all of
+	// it. Archive names stay relative to the checkout either way.
+	sub string
+	// skip holds the directory names left out.
+	skip map[string]bool
+	// maxFile is the size above which a file is left out, 0 for no limit.
+	maxFile int64
+	// dirs reports whether directories get entries of their own, so that an
+	// empty one, such as a git ref directory, exists after extraction.
+	dirs bool
+	// only holds the names directly under the walked directory that are
+	// carried, nil for all of them.
+	only map[string]bool
+}
+
+// leftOut reports whether the entry at path, under the walked directory root,
+// is outside what the spec carries.
+func (s treeSpec) leftOut(root, path string, d fs.DirEntry) bool {
+	if d.IsDir() && s.skip[d.Name()] {
+		return true
+	}
+	if s.only == nil || path == root {
+		return false
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return true
+	}
+	top, _, _ := strings.Cut(filepath.ToSlash(rel), "/")
+	return !s.only[top]
+}
+
+// sessionTree is what an example session receives: the working tree without
+// generated directories and without files over 2 MB, so documented example
+// files exist in the container.
+var sessionTree = treeSpec{skip: tarSkipDirs, maxFile: 2 << 20}
+
+// gitTree is what a source build receives: the objects and refs of the
+// checkout's git directory, from which the container restores the committed
+// tree. Nothing else in that directory is sent. Its config is where a CI
+// checkout keeps the token it fetched with and where a remote URL can hold a
+// password, and its hooks are programs from the host, so neither may reach a
+// container that runs documented commands with the network open.
+var gitTree = treeSpec{sub: ".git", dirs: true, only: map[string]bool{
+	"HEAD": true, "objects": true, "refs": true, "packed-refs": true, "shallow": true,
+}}
+
 // repoFits reports whether the working tree is small enough to stream, and is
 // a stat-only walk so the answer is known before a container starts. Deciding
 // after the fact is not an option: a partially streamed repository makes a
 // document look broken when the missing piece is kibble's.
 func repoFits(dir string) bool {
+	return treeFits(dir, sessionTree)
+}
+
+// treeFits reports whether the part of dir that spec selects fits under
+// [repoStreamCap], walking stat-only.
+func treeFits(dir string, spec treeSpec) bool {
 	if dir == "" {
 		return true
 	}
 	total := int64(0)
 	fits := true
-	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	root := filepath.Join(dir, spec.sub)
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if d.IsDir() {
-			if tarSkipDirs[d.Name()] {
+		if spec.leftOut(root, path, d) {
+			if d.IsDir() {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if d.IsDir() {
 			return nil
 		}
 		if !d.Type().IsRegular() {
 			return nil
 		}
 		info, err := d.Info()
-		if err != nil || info.Size() > 2<<20 {
+		if err != nil || (spec.maxFile > 0 && info.Size() > spec.maxFile) {
 			return nil
 		}
 		if total += info.Size(); total > repoStreamCap {
@@ -244,32 +304,52 @@ func repoFits(dir string) bool {
 	return fits
 }
 
-// repoTar packs the repo working tree for the session, without generated
-// directories and without files over 2 MB, so documented example files exist
-// in the container. Call [repoFits] first: this writes whatever it walks and
-// does not decide whether the result is complete.
+// repoTar packs the repo working tree for the session. Call [repoFits] first:
+// this writes whatever it walks and does not decide whether the result is
+// complete.
 func repoTar(dir string) ([]byte, bool) {
 	var buf bytes.Buffer
 	truncated, _ := repoTarTo(&buf, dir)
 	return buf.Bytes(), truncated
 }
 
-// repoTarTo writes the same archive to w as it walks, so nothing larger than
-// one file is held at once.
+// repoTarTo writes the session archive to w as it walks, so nothing larger
+// than one file is held at once.
 func repoTarTo(w io.Writer, dir string) (bool, error) {
+	return treeTarTo(w, dir, sessionTree)
+}
+
+// treeTarTo writes the part of dir that spec selects to w as a tar stream,
+// one file at a time, and reports whether [repoStreamCap] cut it short.
+func treeTarTo(w io.Writer, dir string, spec treeSpec) (bool, error) {
 	if dir == "" {
 		return false, nil
 	}
 	truncated := false
 	tw := tar.NewWriter(w)
 	total := int64(0)
-	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	root := filepath.Join(dir, spec.sub)
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if d.IsDir() {
-			if tarSkipDirs[d.Name()] {
+		rel, rerr := filepath.Rel(dir, path)
+		if rerr != nil {
+			return nil
+		}
+		if spec.leftOut(root, path, d) {
+			if d.IsDir() {
 				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			if spec.dirs && rel != "." {
+				if err := tw.WriteHeader(&tar.Header{
+					Typeflag: tar.TypeDir, Name: filepath.ToSlash(rel) + "/", Mode: 0o755,
+				}); err != nil {
+					return filepath.SkipAll
+				}
 			}
 			return nil
 		}
@@ -277,36 +357,56 @@ func repoTarTo(w io.Writer, dir string) (bool, error) {
 			return nil
 		}
 		info, err := d.Info()
-		if err != nil || info.Size() > 2<<20 {
+		if err != nil || (spec.maxFile > 0 && info.Size() > spec.maxFile) {
 			return nil
 		}
 		if total += info.Size(); total > repoStreamCap {
 			truncated = true
 			return filepath.SkipAll
 		}
-		rel, err := filepath.Rel(dir, path)
+		f, err := os.Open(path)
 		if err != nil {
 			return nil
 		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
+		defer func() { _ = f.Close() }()
 		hdr := &tar.Header{
 			Name: filepath.ToSlash(rel),
 			Mode: int64(info.Mode().Perm()),
-			Size: int64(len(b)),
+			Size: info.Size(),
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return filepath.SkipAll
 		}
-		if _, err := tw.Write(b); err != nil {
+		if err := copyPadded(tw, f, info.Size()); err != nil {
 			return filepath.SkipAll
 		}
 		return nil
 	})
 	err := tw.Close()
 	return truncated, err
+}
+
+// copyPadded writes exactly size bytes to w, taken from r and then from zeros
+// when r runs short. A file that shrank after its tar header was written still
+// owes the archive its declared length, and stopping there would cut every
+// later file out of the stream and leave a partial repository behind one file
+// that changed mid-walk.
+func copyPadded(w io.Writer, r io.Reader, size int64) error {
+	n, err := io.CopyN(w, r, size)
+	if err == nil {
+		return nil
+	}
+	_, err = io.CopyN(w, zeroReader{}, size-n)
+	return err
+}
+
+// zeroReader reads as an endless run of zero bytes.
+type zeroReader struct{}
+
+// Read fills p with zeros.
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }
 
 // tarSkipDirs are directories a build produces or a package manager fills.

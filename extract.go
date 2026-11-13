@@ -50,6 +50,9 @@ type InstallStep struct {
 	// doc is the document an example step replays, relative to the repository
 	// root. Empty on every other kind of step.
 	doc string
+	// loaderNote is the loader step, such as ldconfig, that the document names
+	// outside a source-build recipe. Empty when it names none there.
+	loaderNote string
 }
 
 // Extractor finds install steps in README markdown.
@@ -197,6 +200,16 @@ func ExtractorWith(owned repoNames) Extractor {
 				}
 				steps = append(steps, s)
 			}
+			if s, ok := sourceBuildStep(repo, block); ok {
+				// Two builds can end on the same install line, one from git
+				// and one from a tarball, so the whole recipe is the key.
+				key := repo + "|source|" + strings.Join(s.Block, "\n")
+				if !seen[key] {
+					seen[key] = true
+					s.loaderNote = loaderNoteOutside(markdown, s.Block)
+					steps = append(steps, s)
+				}
+			}
 		}
 		// A tap documented anywhere in the document covers every brew step,
 		// since a reader adds it once and installs many formulas from it.
@@ -285,6 +298,103 @@ func installRecipe(lines []string) []string {
 		out = append(out, l)
 	}
 	return out
+}
+
+var (
+	// reConfigure matches the configure step of an autotools build.
+	reConfigure = regexp.MustCompile(`^(?:sh\s+)?\./configure(\s|$)`)
+	// reCMakeGenerate matches a cmake call that generates a build tree, which
+	// is any cmake call that does not build, install, or run a script.
+	reCMakeGenerate = regexp.MustCompile(`^cmake\s+(?:[^-]|-[^-EP])`)
+	// reBuildInstall matches the step that installs what a configured build
+	// produced. The space before install keeps make uninstall out.
+	reBuildInstall = regexp.MustCompile(`^(?:make|ninja)\b.*\sinstall\b|^cmake\s+--install\b`)
+	// reLeadingSudo matches a sudo opening a command, which the container,
+	// already root and without sudo installed, drops.
+	reLeadingSudo = regexp.MustCompile(`(^|&&\s*|;\s*)sudo\s+(?:-E\s+)?`)
+)
+
+// reLoaderStep matches the ways a document tells a reader to make an installed
+// shared library findable.
+var reLoaderStep = regexp.MustCompile(`\bldconfig\b|\bLD_LIBRARY_PATH\b`)
+
+// loaderNoteOutside returns the loader step, such as ldconfig, that a document
+// names somewhere other than in the recipe, or empty when the recipe runs one
+// itself or the document names none. A recipe that ran the step and still left
+// a binary unable to start has no excuse. One that left it for a later
+// sentence was run without it, and that is kibble's gap, not the document's.
+func loaderNoteOutside(markdown string, recipe []string) string {
+	if reLoaderStep.MatchString(strings.Join(recipe, "\n")) {
+		return ""
+	}
+	return reLoaderStep.FindString(markdown)
+}
+
+// sourceBuildStep returns the install route a block documents by building the
+// checkout from source: an autotools `./configure` or a cmake generate step,
+// followed in the same block by `make install`, `ninja install`, or `cmake
+// --install`. jq documents only this route, so kibble tested nothing in jq and
+// missed that the binary `make install` leaves cannot find its own library
+// until ldconfig runs. The recipe is the block from its first command through
+// the install line, and on past it to the first blank line, comment, or
+// teardown, since a block that follows the install with `sudo ldconfig`
+// documents a working install and must be run whole. Every line runs as
+// written apart from a leading sudo. A block that clones is the clone route's
+// recipe, and one that installs system packages or pipes a remote script needs
+// the routes kibble refuses, so neither is a source build. A recipe holding a
+// placeholder is recorded unrun.
+func sourceBuildStep(repo string, block docblock.Block) (InstallStep, bool) {
+	if block.Span || !docblock.ShellLangs[block.Lang] {
+		return InstallStep{}, false
+	}
+	var recipe []string
+	var step *InstallStep
+	configured := false
+	for _, raw := range docblock.PrepareLines(block.Lines) {
+		raw = strings.TrimPrefix(strings.TrimSpace(raw), "$ ")
+		written := strings.TrimSpace(stripComment(raw))
+		refused := reGitClone.MatchString(written) || reOSPackage.MatchString(written) ||
+			reScriptInstall.MatchString(written)
+		if step != nil && (written == "" || strings.HasPrefix(written, "#") ||
+			reTeardown.MatchString(written) || refused) {
+			break
+		}
+		if written == "" || strings.HasPrefix(written, "#") {
+			continue
+		}
+		if refused {
+			return InstallStep{}, false
+		}
+		l := reLeadingSudo.ReplaceAllString(written, "$1")
+		recipe = append(recipe, l)
+		if step != nil {
+			continue
+		}
+		for _, seg := range splitSegments(l) {
+			seg = strings.TrimSpace(seg)
+			if reConfigure.MatchString(seg) || reCMakeGenerate.MatchString(seg) {
+				configured = true
+				continue
+			}
+			if configured && reBuildInstall.MatchString(seg) {
+				step = &InstallStep{Repo: repo, Kind: "source-build", Raw: written}
+				if block.Line > 0 {
+					step.Line = docblock.SourceLineIndex(block)(raw)
+				}
+				break
+			}
+		}
+	}
+	if step == nil {
+		return InstallStep{}, false
+	}
+	step.Block, step.Run = recipe, true
+	for _, r := range recipe {
+		if docblock.HasPlaceholder(docblock.CommandHead(r)) {
+			step.Run = false
+		}
+	}
+	return *step, true
 }
 
 // classifyLine matches one code line against the known install patterns. A

@@ -256,6 +256,63 @@ printf 'SMOKECODE=%%d\n' "$scode"
 printf 'SMOKELINE=%%s\n' "$(printf '%%s' "$sout" | head -n1 | cut -c1-70)"
 `
 
+// sourceScriptFor builds the container script for a source-build recipe. The
+// checkout's git history arrives on stdin, so the build runs on the committed
+// tree with its submodules reachable, as a reader's clone would, rather than
+// on whatever build output the host's working tree holds.
+func sourceScriptFor(step InstallStep, timeoutSecs int) string {
+	body := strings.ReplaceAll(strings.Join(step.Block, "\n"), "'", `'\''`)
+	name := ""
+	if kplan.IsSimpleWord(step.Repo) {
+		name = step.Repo
+	}
+	return fmt.Sprintf(sourceScript, timeoutSecs, body, name)
+}
+
+// sourceScript restores the checkout from the git history on stdin, runs the
+// documented build and install, and smoke-tests the binary the install put on
+// PATH, in a process of its own after the recipe's shell has exited. That is
+// what a reader does next, and it is where jq's installed binary fails to find
+// the library `make install` placed beside it. Only a binary written during
+// the recipe counts, so a same-named tool the image already ships is never the
+// one tested. The stream holds objects and refs only, so the repository they
+// land in is one the container made itself, with a config of its own. It
+// prints the same markers as installScript.
+const sourceScript = `set -u
+mkdir -p /work/repo
+cd /work/repo
+if ! git init -q . 2>/dev/null || ! tar -xf - 2>/dev/null ||
+  ! git config --global --add safe.directory '*' || ! git reset -q --hard HEAD 2>/dev/null; then
+  printf 'kibble could not restore the checkout from its git history\n'
+  exit 0
+fi
+touch /tmp/kibble-mark
+out=$(timeout %[1]d bash -ec '%[2]s' 2>&1); code=$?
+if [ "$code" -ne 0 ]; then
+  printf 'BUILDCODE=%%d\n' "$code"
+  printf '%%s\n' "$out" | grep -iE 'error(\[[A-Z]|:| )' | head -n 4
+  printf '%%s\n' "$out" | tail -n 10
+  exit 0
+fi
+printf 'BUILDCODE=0\n'
+bin=''
+if [ -n '%[3]s' ]; then
+  bin=$(command -v '%[3]s' 2>/dev/null || true)
+  case "$bin" in /*) [ "$bin" -nt /tmp/kibble-mark ] || bin='' ;; *) bin='' ;; esac
+fi
+if [ -z "$bin" ]; then
+  bin=$(IFS=:; find $PATH -maxdepth 1 -type f -perm -u+x -newer /tmp/kibble-mark 2>/dev/null | head -n1)
+fi
+if [ -z "$bin" ]; then
+  printf 'NOBIN=1\n'
+  exit 0
+fi
+sout=$(cd / && timeout 15 "$bin" --version 2>&1); scode=$?
+if [ "$scode" -ne 0 ]; then sout=$(cd / && timeout 15 "$bin" --help 2>&1); scode=$?; fi
+printf 'SMOKECODE=%%d\n' "$scode"
+printf 'SMOKELINE=%%s\n' "$(printf '%%s' "$sout" | head -n1 | cut -c1-160)"
+`
+
 // installScript builds, then smoke-tests, one module inside the container. It
 // prints BUILDCODE, SMOKECODE, and SMOKELINE markers for the parent to read. A
 // build timeout surfaces as BUILDCODE=124 so it is not mistaken for a failure.
