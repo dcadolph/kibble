@@ -46,6 +46,11 @@ type Plan struct {
 	// nothing, such as witr's "2 not found". A documented binary exiting with
 	// one of them reports an empty result rather than a broken command.
 	NotFoundCodes []int `json:"notFoundCodes,omitempty"`
+	// Unrun are the commands of code blocks the plan leaves out, of two words
+	// or more. A failure that tells the reader to run one of them first, as
+	// headscale's Makefile says to run `nix develop`, failed for want of a
+	// step the documents give and the session could not take.
+	Unrun []string `json:"unrun,omitempty"`
 	// RootGoFiles are the Go files at the top of the checkout before the
 	// session starts. A Go build that finds a document's file beside one of
 	// them met the repository's own package, which the document never wrote.
@@ -68,6 +73,10 @@ type PlanInstall struct {
 	Binary string
 	// Bootstrap installs the package manager itself when the image lacks it.
 	Bootstrap string
+	// FromCheckout marks an install kibble made up because no documented one
+	// gave the session a binary: the tool built from the checkout. Examples
+	// run against it say so, and the documented install stays untested.
+	FromCheckout bool `json:"fromCheckout,omitempty"`
 }
 
 // PlanStep is one documented code block prepared for execution.
@@ -411,6 +420,7 @@ func (pl *planner) addBlock(block docblock.Block) {
 	}
 	if !pl.qualifies(lines) {
 		pl.plan.Excluded++
+		pl.noteUnrun(lines)
 		if pl.unplanned == "" && !packageManagerOnly(lines) {
 			pl.unplanned = blockLocation(block)
 		}
@@ -763,6 +773,27 @@ func (pl *planner) addFileBlock(block docblock.Block, path string) {
 	pl.created[path] = true
 }
 
+// maxUnrun bounds the commands recorded from blocks the plan leaves out.
+const maxUnrun = 200
+
+// noteUnrun records the commands of a block the plan leaves out. A one-word
+// command is not recorded, since a bare name such as make turns up in a
+// tool's output for reasons that have nothing to do with a missing step, and
+// neither is a line holding a placeholder.
+func (pl *planner) noteUnrun(lines []string) {
+	for _, ln := range lines {
+		if len(pl.plan.Unrun) >= maxUnrun {
+			return
+		}
+		flat := strings.TrimSpace(docblock.StripComment(docblock.Flatten(ln)))
+		if !strings.Contains(flat, " ") || len(flat) > 80 || docblock.HasPlaceholder(flat) ||
+			slices.Contains(pl.plan.Unrun, flat) {
+			continue
+		}
+		pl.plan.Unrun = append(pl.plan.Unrun, flat)
+	}
+}
+
 // resolvedToolPaths returns a block's raw lines with a stand-in path to a
 // documented binary in command position replaced by the binary, so
 // `path/to/pyenv --install bash` plans as the pyenv line it documents. The
@@ -881,6 +912,9 @@ func (p *Plan) Merge(doc string, other *Plan) {
 	}
 	slices.Sort(p.NotFoundCodes)
 	p.RootGoFiles = mergeUnique(p.RootGoFiles, other.RootGoFiles)
+	if p.Unrun = mergeUnique(p.Unrun, other.Unrun); len(p.Unrun) > maxUnrun {
+		p.Unrun = p.Unrun[:maxUnrun]
+	}
 	if p.Env == nil && len(other.Env) > 0 {
 		p.Env = map[string]string{}
 	}

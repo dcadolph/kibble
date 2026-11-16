@@ -124,7 +124,8 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 	cmd.Cancel = sandbox.RemoveFunc(cmd, name)
 	// Decided before the container starts, by a stat-only walk, so a repository
 	// that cannot be streamed whole never gets a partial one.
-	if !repoFits(step.dir) {
+	spec := sessionSpec(plan, step.dir)
+	if !treeFits(step.dir, spec) {
 		return Result{
 			Step: step, Status: StatusError, Duration: time.Since(start),
 			Detail: fmt.Sprintf("working tree exceeds the %d MB kibble will stream, so the examples have no verdict",
@@ -135,7 +136,7 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 	// kept the cap small enough to exclude ordinary projects.
 	pr, pw := io.Pipe()
 	go func() {
-		_, err := repoTarTo(pw, step.dir)
+		_, err := treeTarTo(pw, step.dir, spec)
 		_ = pw.CloseWithError(err)
 	}()
 	defer func() { _ = pr.Close() }()
@@ -218,6 +219,8 @@ type treeSpec struct {
 	skip map[string]bool
 	// maxFile is the size above which a file is left out, 0 for no limit.
 	maxFile int64
+	// whole reports whether a file git tracks is carried whatever its size.
+	whole bool
 	// dirs reports whether directories get entries of their own, so that an
 	// empty one, such as a git ref directory, exists after extraction.
 	dirs bool
@@ -227,26 +230,73 @@ type treeSpec struct {
 }
 
 // leftOut reports whether the entry at path, under the walked directory root,
-// is outside what the spec carries.
-func (s treeSpec) leftOut(root, path string, d fs.DirEntry) bool {
-	if d.IsDir() && s.skip[d.Name()] {
-		return true
-	}
-	if s.only == nil || path == root {
+// is outside what the spec carries. kept holds what git tracks, whose
+// directories are carried whatever they are named. The root itself is always
+// carried: a checkout cloned into a directory called build is still the
+// checkout.
+func (s treeSpec) leftOut(root, path string, d fs.DirEntry, kept trackedSet) bool {
+	if path == root {
 		return false
 	}
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		return true
 	}
-	top, _, _ := strings.Cut(filepath.ToSlash(rel), "/")
+	rel = filepath.ToSlash(rel)
+	if d.IsDir() && s.skip[d.Name()] && !kept.dirs[rel] {
+		return true
+	}
+	if s.only == nil {
+		return false
+	}
+	top, _, _ := strings.Cut(rel, "/")
 	return !s.only[top]
+}
+
+// kept returns what git tracks under dir, for a spec with a skip list. Such
+// a spec carries a skip-named directory anyway when git tracks files in it.
+// The skip list names what a build produces, and a name is only a guess:
+// goreleaser keeps source in internal/pipe/dist and k6 in internal/build, and
+// leaving those out made the tool unbuildable in the session. What git tracks
+// is source by definition.
+func (s treeSpec) kept(dir string) trackedSet {
+	if len(s.skip) == 0 || s.sub != "" {
+		return trackedSet{}
+	}
+	return tracked(dir)
+}
+
+// tooBig reports whether the spec leaves a file out for its size. rel is the
+// file's slash-separated path under the checkout.
+func (s treeSpec) tooBig(rel string, size int64, kept trackedSet) bool {
+	if s.maxFile <= 0 || size <= s.maxFile {
+		return false
+	}
+	return !s.whole || !kept.files[rel]
 }
 
 // sessionTree is what an example session receives: the working tree without
 // generated directories and without files over 2 MB, so documented example
 // files exist in the container.
 var sessionTree = treeSpec{skip: tarSkipDirs, maxFile: 2 << 20}
+
+// checkoutTree is what a session that builds the tool from the checkout
+// receives: the session tree, with every file git tracks whatever its size.
+// The size limit keeps stray output out of the budget, and a build needs the
+// source whole: k6 vendors a 4.9 MB table of golang.org/x/text and does not
+// compile without it.
+var checkoutTree = treeSpec{skip: tarSkipDirs, maxFile: 2 << 20, whole: true}
+
+// sessionSpec returns the tree an example session of plan receives from dir.
+// A session that builds from the checkout takes the tracked files whole when
+// that fits under [repoStreamCap], and the plain session tree otherwise, so a
+// repository with heavy tracked assets still gets a session.
+func sessionSpec(plan *kplan.Plan, dir string) treeSpec {
+	if fromCheckout(plan) && treeFits(dir, checkoutTree) {
+		return checkoutTree
+	}
+	return sessionTree
+}
 
 // gitTree is what a source build receives: the objects and refs of the
 // checkout's git directory, from which the container restores the committed
@@ -275,11 +325,12 @@ func treeFits(dir string, spec treeSpec) bool {
 	total := int64(0)
 	fits := true
 	root := filepath.Join(dir, spec.sub)
+	kept := spec.kept(dir)
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if spec.leftOut(root, path, d) {
+		if spec.leftOut(root, path, d, kept) {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -292,7 +343,8 @@ func treeFits(dir string, spec treeSpec) bool {
 			return nil
 		}
 		info, err := d.Info()
-		if err != nil || (spec.maxFile > 0 && info.Size() > spec.maxFile) {
+		rel, rerr := filepath.Rel(dir, path)
+		if err != nil || rerr != nil || spec.tooBig(filepath.ToSlash(rel), info.Size(), kept) {
 			return nil
 		}
 		if total += info.Size(); total > repoStreamCap {
@@ -329,6 +381,7 @@ func treeTarTo(w io.Writer, dir string, spec treeSpec) (bool, error) {
 	tw := tar.NewWriter(w)
 	total := int64(0)
 	root := filepath.Join(dir, spec.sub)
+	kept := spec.kept(dir)
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -337,7 +390,7 @@ func treeTarTo(w io.Writer, dir string, spec treeSpec) (bool, error) {
 		if rerr != nil {
 			return nil
 		}
-		if spec.leftOut(root, path, d) {
+		if spec.leftOut(root, path, d, kept) {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -357,7 +410,7 @@ func treeTarTo(w io.Writer, dir string, spec treeSpec) (bool, error) {
 			return nil
 		}
 		info, err := d.Info()
-		if err != nil || (spec.maxFile > 0 && info.Size() > spec.maxFile) {
+		if err != nil || spec.tooBig(filepath.ToSlash(rel), info.Size(), kept) {
 			return nil
 		}
 		if total += info.Size(); total > repoStreamCap {
@@ -411,7 +464,8 @@ func (zeroReader) Read(p []byte) (int, error) {
 
 // tarSkipDirs are directories a build produces or a package manager fills.
 // Streaming them wastes the budget on output nobody documents, and on a big
-// repository it pushes the source a document needs past the cap.
+// repository it pushes the source a document needs past the cap. One that
+// holds files git tracks is carried all the same, see kept.
 var tarSkipDirs = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true, "dist": true,
 	"build": true, "target": true, "out": true, ".gradle": true, ".idea": true,

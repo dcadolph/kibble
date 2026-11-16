@@ -187,6 +187,25 @@ func TestSharedOperandAfterLineNotPassed(t *testing.T) {
 			{Cmd: "python3 scripts/bench.py --engine one", Status: StatusFail, output: "error"},
 		}}},
 		WantStatus: []Status{StatusBlocked, StatusFail},
+	}, { // Test 7: A file an earlier blocked line would have written pairs, ./ or not.
+		Steps: []exampleStep{{ID: "b1", Doc: "README.md", Lines: []lineResult{
+			{Cmd: `jq '.name = "x"' in.cdx.json > out.cdx.json`, Status: StatusBlocked},
+			{Cmd: "dbtool sbom ./out.cdx.json", Status: StatusFail, output: "error: unable to open"},
+		}}},
+		WantStatus: []Status{StatusBlocked, StatusBlocked},
+		WantDetail: "names ./out.cdx.json, which `jq '.name = \"x\"' in.cdx.json > out.cdx.json` also named and did not pass",
+	}, { // Test 8: The same reader after the writer passed stays a failure.
+		Steps: []exampleStep{{ID: "b1", Doc: "README.md", Lines: []lineResult{
+			{Cmd: `jq '.name = "x"' in.cdx.json > out.cdx.json`, Status: StatusVerified},
+			{Cmd: "dbtool sbom ./out.cdx.json", Status: StatusFail, output: "error: unable to open"},
+		}}},
+		WantStatus: []Status{StatusVerified, StatusFail},
+	}, { // Test 9: A file the earlier line only read from standard input does not pair.
+		Steps: []exampleStep{{ID: "b1", Doc: "README.md", Lines: []lineResult{
+			{Cmd: "dbtool load < other.json", Status: StatusBlocked},
+			{Cmd: "dbtool sbom ./out.cdx.json", Status: StatusFail, output: "error: unable to open"},
+		}}},
+		WantStatus: []Status{StatusBlocked, StatusFail},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

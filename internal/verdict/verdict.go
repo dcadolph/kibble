@@ -167,4 +167,9 @@ const (
 	// exists, a project manager read the checkout's project, or a Go build
 	// found a file the document wrote beside the checkout's own package.
 	ReasonCheckoutState Reason = "checkout-state"
+	// ReasonEnvironmentChanged marks a crash after which the documented tool no
+	// longer starts, though it started when the session began. Something the
+	// session ran changed the environment the tool runs from, so the crash says
+	// nothing about the line as written.
+	ReasonEnvironmentChanged Reason = "environment-changed"
 )

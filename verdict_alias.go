@@ -25,6 +25,7 @@ const (
 	ReasonAlreadyProven      = verdict.ReasonAlreadyProven
 	ReasonCheckoutState      = verdict.ReasonCheckoutState
 	ReasonDependsOnSkipped   = verdict.ReasonDependsOnSkipped
+	ReasonEnvironmentChanged = verdict.ReasonEnvironmentChanged
 	ReasonInheritedState     = verdict.ReasonInheritedState
 	ReasonInteractive        = verdict.ReasonInteractive
 	ReasonLongRunning        = verdict.ReasonLongRunning

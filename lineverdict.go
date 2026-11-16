@@ -73,7 +73,15 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 			lr.Detail = "ran against " + strings.Join(lr.Synthetic, ", ") +
 				", which kibble fabricated because no documented step creates it"
 		}
-	case l.NonzeroOK && documentedNonzeroCode(o.code) && !reCrash.MatchString(o.output):
+	case rePlatformGone.MatchString(o.output):
+		// Read before a documented exit is honored: a tool that found nothing
+		// to run on this platform never did the work whose exit the document
+		// describes. The words are the tool's own, so they excuse nothing.
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonOtherPlatform
+		lr.Detail = "found nothing for this platform, which the container's architecture " +
+			"may explain or the document may misname: " + tail
+	case l.NonzeroOK && documentedNonzeroCode(o.code) && !crashed(o.output):
 		// A crash stays a failure even where the document blesses a nonzero exit.
 		lr.Status = StatusVerified
 		lr.Detail = fmt.Sprintf("exit %d is documented behavior", o.code)
@@ -83,11 +91,11 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Status = StatusVerified
 		lr.Detail = fmt.Sprintf("exit %d is documented behavior: the document shows this output",
 			o.code)
-	case reCrash.MatchString(o.output) && crashWantsInput(o.output):
+	case crashed(o.output) && crashWantsInput(o.output):
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonInteractive
 		lr.Detail = "waited for input, and the session's stdin is closed: " + tail
-	case reCrash.MatchString(o.output) && crashMissingName(o.output) != "":
+	case crashed(o.output) && crashMissingName(o.output) != "":
 		// The one crash that is not unexplained. A traceback whose last line
 		// names the file or program that was missing is the tool saying what
 		// it lacked, so it is settled the way a plain exit naming it would be.
@@ -95,7 +103,17 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		// traceback did not end the process, and a crash ending any other way
 		// still convicts below.
 		lr = settleMissing(lr, crashMissingName(o.output), tail, o)
-	case reCrash.MatchString(o.output):
+	case crashed(o.output) && o.toolGone:
+		// The tool started when the session began and no longer does, so the
+		// session changed what it runs from, and this crash is that change
+		// showing rather than the line as written. A crash the tool survives
+		// still convicts below.
+		lr.Status = StatusBlocked
+		lr.Reason = ReasonEnvironmentChanged
+		lr.Detail = fmt.Sprintf("crashed with exit %d, and afterwards the tool no longer starts, "+
+			"though it did when the session began, so something the session ran changed its "+
+			"environment: %s", o.code, tail)
+	case crashed(o.output):
 		// Checked before every excuse: a process that died did not report a
 		// condition kibble can forgive, whatever else it printed first.
 		lr.Status = StatusFail
@@ -374,9 +392,12 @@ var (
 			`|no .{0,20}configured|please set|must set)\b` +
 			`|\bset [A-Z][A-Z0-9_*]{2,}`)
 	// reNetErr matches errors that mean the command needed a network
-	// service the container does not run.
+	// service the container does not run. A client that waits out its own
+	// deadline says the same thing more slowly: headscale's commands answer
+	// "context deadline exceeded" when no server is listening.
 	reNetErr = regexp.MustCompile(
-		`(?i)connection refused|no such host|dial tcp|network is unreachable|could not connect|cannot connect`)
+		`(?i)connection refused|no such host|dial tcp|network is unreachable|could not connect|cannot connect` +
+			`|context deadline exceeded|i/o timeout`)
 	// reNoData matches a query that ran correctly and found nothing, which a
 	// fresh session often cannot avoid: the docs query dates and terms that
 	// have no entries yet.
@@ -412,9 +433,11 @@ var (
 	// name after a colon is not one they read.
 	reUnknownNameless = regexp.MustCompile(
 		`(?i)\bunknown (` + registeredNouns + `)\b( +'?[^\s'"]|\s*:\s*'?[^\s'"])?`)
-	// reRegisteredNotFound matches the same refusal worded as a name not found.
+	// reRegisteredNotFound matches the same refusal worded as a name not found
+	// or one that does not exist, in either quote: trivy answers a cluster name
+	// with `context "cluster" does not exist`.
 	reRegisteredNotFound = regexp.MustCompile(
-		`(?i)\b(` + registeredNouns + `) '([^']+)' not found`)
+		`(?i)\b(` + registeredNouns + `) ['"]([^'"]+)['"] (?:not found|does not exist)`)
 	// reNoSuchRegistered matches the same refusal worded as no such noun, with
 	// the name after it optional and optionally quoted.
 	reNoSuchRegistered = regexp.MustCompile(
@@ -497,10 +520,13 @@ var (
 	// installed, such as vhs requiring ffmpeg. The wording is not proof of
 	// the container's gap: a tool says the same words about its own plugins,
 	// extensions, and optional components, which are steps the document owes
-	// the reader. The line is therefore blocked rather than skipped.
+	// the reader. The line is therefore blocked rather than skipped. navi
+	// words it "Please make sure it's correctly installed" about fzf, and
+	// poetry's installer answers an uninstall with "Poetry is not currently
+	// installed." when no documented install ran before it.
 	reMissingDep = regexp.MustCompile(
-		`(?i)\bis not installed\b|\b(please|must) install\b` +
-			`|\brequires? \S+ to be installed\b`)
+		`(?i)\bis not (?:currently )?installed\b|\b(please|must) install\b` +
+			`|\brequires? \S+ to be installed\b|\bmake sure [^.\n]{0,40}\binstalled\b`)
 	// reCrash matches a process dying rather than reporting. A crash convicts
 	// whatever else the output happens to say, so it is checked before any
 	// rule that excuses a line: a tool that panicked after printing "no
@@ -509,6 +535,13 @@ var (
 		`(?im)(^(panic|fatal error):|(^|\s)traceback \(most recent call last\):)` +
 			`|\bsegmentation fault\b|\bassertion failed\b|\bstack overflow\b` +
 			`|\bunhandled exception\b|\bthread '.*' panicked at\b`)
+	// reFramed matches a line a tool drew a frame around, a table row or a
+	// quoted block, which opens with a vertical bar after any indentation.
+	reFramed = regexp.MustCompile(`^\s*[|│┃║]`)
+	// rePlatformGone matches a tool saying what it was asked to fetch offers
+	// nothing for the platform it runs on, as trivy says "platform not found"
+	// of a plugin with no build for the container's architecture.
+	rePlatformGone = regexp.MustCompile(`(?i)\bplatform not found\b`)
 	// reGitNoHistory matches git reporting that the repository it was handed
 	// has no commits, in the three wordings git uses for an unborn HEAD.
 	reGitNoHistory = regexp.MustCompile(
@@ -642,6 +675,25 @@ func reportedMissing(output string) string {
 		return names[0]
 	}
 	return ""
+}
+
+// crashed reports whether the output holds a process dying in its own words.
+// A runtime writes a panic or a traceback bare, so a crash word on a line the
+// tool framed is the tool showing something it read, alive and reporting.
+// trivy prints "openssl: Segmentation fault in SSL_check_chain" in a table
+// cell, and poetry quotes the traceback of a build backend it ran behind a
+// bar before saying in its own words that the build failed.
+func crashed(output string) bool {
+	if !reCrash.MatchString(output) {
+		return false
+	}
+	var bare []string
+	for _, line := range strings.Split(output, "\n") {
+		if !reFramed.MatchString(line) {
+			bare = append(bare, line)
+		}
+	}
+	return reCrash.MatchString(strings.Join(bare, "\n"))
 }
 
 // crashMissingName returns the file or program a crash's last line names as

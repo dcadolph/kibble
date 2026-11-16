@@ -533,3 +533,78 @@ func TestSessionScriptFile(t *testing.T) {
 		t.Errorf("content mismatch (-want +got):\n%s", diff)
 	}
 }
+
+// TestSessionScriptProbe runs the generated `--version` probe in bash with a
+// stand-in tool that breaks on cue, so the marker is checked by a shell. Only
+// a line that ran a documented binary and exited nonzero is probed, and only
+// for a binary whose probe passed when the session began.
+func TestSessionScriptProbe(t *testing.T) {
+	t.Parallel()
+	for _, tool := range []string{"bash", "timeout"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not installed", tool)
+		}
+	}
+	plan := &kplan.Plan{
+		Repo: "repo", Binaries: []string{"tool"},
+		Steps: []kplan.PlanStep{{ID: "b1", Doc: "README.md", Lines: []kplan.PlanLine{
+			{Cmd: "tool sync --only dev"}, {Cmd: "make all"},
+		}}},
+	}
+	script, _ := sessionScript(plan, 240, 90)
+	var probe strings.Builder
+	writeProbe(&probe, "b1", 0, "tool")
+	if !strings.Contains(script, probe.String()) {
+		t.Fatalf("script lacks the probe after the tool's line:\n%s", script)
+	}
+	if strings.Contains(script, "KIBBLE-PROBE b1:1") {
+		t.Errorf("script probes a line that runs no documented binary:\n%s", script)
+	}
+	pipecode := regexp.MustCompile(`(?s)__pipecode\(\) \{\n.*?\n\}\n`).FindString(script)
+	baseline := regexp.MustCompile(`(?s)__kprobe=" "\n.*?\ndone\n`).FindString(script)
+	if pipecode == "" || baseline == "" {
+		t.Fatalf("script lacks __pipecode or the baseline probe:\n%s", script)
+	}
+	tests := []struct {
+		WantResult    string
+		BrokenAtStart bool
+		BreakAfter    bool
+		Code          string
+	}{{ // Test 0: the tool stopped starting after the line, so the probe fails.
+		BreakAfter: true, Code: "1", WantResult: "KIBBLE-PROBE b1:0 CODE=1",
+	}, { // Test 1: the tool still starts, so the probe passes.
+		Code: "1", WantResult: "KIBBLE-PROBE b1:0 CODE=0",
+	}, { // Test 2: a tool that never passed its probe is never asked again.
+		BrokenAtStart: true, BreakAfter: true, Code: "1", WantResult: "",
+	}, { // Test 3: a line that passed is not probed.
+		BreakAfter: true, Code: "0", WantResult: "",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			stub := "#!/bin/sh\n[ -e \"" + dir + "/broken\" ] && exit 1\nexit 0\n"
+			if err := os.WriteFile(filepath.Join(dir, "tool"), []byte(stub), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			body := pipecode
+			if test.BrokenAtStart {
+				body += "touch '" + dir + "/broken'\n"
+			}
+			body += baseline
+			if test.BreakAfter {
+				body += "touch '" + dir + "/broken'\n"
+			}
+			body += "__ps=(" + test.Code + ")\n" + probe.String()
+			cmd := exec.Command("bash", "-c", body)
+			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(test.WantResult, strings.TrimSpace(string(out))); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

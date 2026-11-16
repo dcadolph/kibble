@@ -53,9 +53,12 @@ func resolveMissingBinaries(run *exampleRun, plan *kplan.Plan, have map[string]b
 // the session is no longer a clean test of this line, which is why these
 // become blocked rather than skipped: the cascade stops being reported as
 // several broken lines without any of them being called fine. A gap counts as
-// not having run, since the document's own hole stopped the line. A Go build
+// not having run, since the document's own hole stopped the line. So does a
+// command in a block the plan left out: headscale's `make test` fails telling
+// the reader to run `nix develop`, which the README shows and no container has. A Go build
 // that finds the document's file beside the checkout's own package is blocked
 // here too, since it takes the earlier file writes of the run to see it. So is
+// a failure after a scaffold line the checkout's own files stopped. So is
 // a documented tool saying the top of the checkout is not a repository of its
 // own kind, since it takes the document's earlier lines to see none made one.
 func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
@@ -107,6 +110,22 @@ func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 		}
 		for li := range s.Lines {
 			l := &s.Lines[li]
+			if l.Status == StatusVerified && l.Code > 0 {
+				// A nonzero exit the documents bless says the tool answered the
+				// project it read. After a stopped scaffold that is the
+				// checkout's project, so the blessing tested nothing:
+				// goreleaser's `check` exits 1 on the checkout's own Pro
+				// configuration and passed as documented behavior.
+				if init := stoppedScaffold(l, prior[s.Doc], bins); init != "" {
+					l.Status = StatusBlocked
+					l.Reason = ReasonCheckoutState
+					l.Detail = fmt.Sprintf("follows `%s`, which the repository's own files stopped, "+
+						"so its exit %d answered the checkout's project and not the one the document "+
+						"creates", init, l.Code)
+					prior[s.Doc] = append(prior[s.Doc], *l)
+					continue
+				}
+			}
 			if l.Status != StatusFail {
 				m := reFileWrite.FindStringSubmatch(l.Cmd)
 				if m != nil && l.Status == StatusVerified && l.cwd == sessionRepoDir {
@@ -130,10 +149,25 @@ func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 					"not tested as written: %s", bin, bin, l.Detail)
 				continue
 			}
+			if init := stoppedScaffold(l, prior[s.Doc], bins); init != "" {
+				l.Status = StatusBlocked
+				l.Reason = ReasonCheckoutState
+				l.Detail = fmt.Sprintf("follows `%s`, which the repository's own files stopped, so it "+
+					"read the checkout's project and not the one the document creates: %s",
+					init, l.Detail)
+				continue
+			}
 			if cited := citedSkipped(l.output, skippedCmds); cited != "" {
 				l.Status = StatusBlocked
 				l.Reason = ReasonDependsOnSkipped
 				l.Detail = fmt.Sprintf("failed naming `%s`, which did not run", cited)
+				continue
+			}
+			if cited := citedSkipped(l.output, plan.Unrun); cited != "" {
+				l.Status = StatusBlocked
+				l.Reason = ReasonDependsOnSkipped
+				l.Detail = fmt.Sprintf("failed naming `%s`, which the documents show in a block kibble "+
+					"did not run", cited)
 				continue
 			}
 			if word := skippedProvider(s.Lines[:li], l.output); word != "" {
@@ -237,7 +271,7 @@ func notItsRepository(l *lineResult, earlier []lineResult, bins map[string]bool)
 			return ""
 		}
 	}
-	if reUsageError.MatchString(out) || reCrash.MatchString(out) {
+	if reUsageError.MatchString(out) || crashed(out) {
 		return ""
 	}
 	for _, p := range earlier {
@@ -246,6 +280,31 @@ func notItsRepository(l *lineResult, earlier []lineResult, bins map[string]bool)
 		}
 	}
 	return bin
+}
+
+// stoppedScaffold returns the command of an earlier line of the same document
+// that was to create what the document's later lines work on and that the
+// checkout stopped by already holding it, when the failing line runs the same
+// documented binary. goreleaser's quick start runs `goreleaser init` and then
+// builds from the configuration that wrote. In the checkout the init refuses,
+// since goreleaser's own configuration is there, and every build after it
+// reads that file instead. A usage error is the tool's answer to the line as
+// written, and a crash convicts whatever the line read, so both stand.
+func stoppedScaffold(l *lineResult, earlier []lineResult, bins map[string]bool) string {
+	bin, _ := kplan.InvokedBinary(l.Cmd, bins)
+	if bin == "" {
+		return ""
+	}
+	if out := stripANSI(l.output); reUsageError.MatchString(out) || crashed(out) {
+		return ""
+	}
+	for _, p := range earlier {
+		if p.Status == StatusBlocked && p.Reason == ReasonCheckoutState &&
+			reAlreadyExists.MatchString(p.output) && runsBinary(p.Cmd, bin) {
+			return p.Cmd
+		}
+	}
+	return ""
 }
 
 // runsBinary reports whether any command of a line runs bin, stepping over
@@ -313,9 +372,12 @@ func skippedProvider(earlier []lineResult, output string) string {
 }
 
 // sharedOperandNotPassed returns a file-shaped operand of a failing line and
-// the first earlier line of the same document that also named it and was
-// skipped, blocked, or stopped by a gap. A query on a database whose load was
-// blocked is the same hole surfacing again. An earlier failure does not count,
+// the first earlier line of the same document that also named it, or wrote it
+// through a redirect, and was skipped, blocked, or stopped by a gap. A query on
+// a database whose load was blocked is the same hole surfacing again, and so is
+// trivy's `trivy sbom ./rpms-res.cdx.json` after the `jq ... > rpms-res.cdx.json`
+// that makes the file could not run. Names are compared as paths, so a leading
+// ./ on one side does not hide the match. An earlier failure does not count,
 // since a break repeated on several lines of one file is still several
 // reports. Like the other rules here it is not causal: the earlier line still
 // reports, and the later ones stop counting as separate breaks.
@@ -325,8 +387,8 @@ func sharedOperandNotPassed(prior []lineResult, cmd string) (operand, earlier st
 			if p.Status == StatusVerified || p.Status == StatusFail {
 				continue
 			}
-			for _, pop := range fileOperands(p.Cmd) {
-				if pop == op {
+			for _, pop := range append(fileOperands(p.Cmd), shell.Writes(p.Cmd)...) {
+				if path.Clean(pop) == path.Clean(op) {
 					return op, docblock.Flatten(p.Cmd)
 				}
 			}

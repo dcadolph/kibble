@@ -254,6 +254,14 @@ verdict claims the documented step works:
   tool itself that kibble extracts. The detail names the README, how many install
   documents were read, and the routes seen. It is not a `GAP`, since the documents may
   describe routes kibble does not run, such as apt or brew.
+- An example row whose detail opens with "built from the checkout, the documented
+  install was not tested" ran against the tool kibble built itself, because no
+  documented install gave the session a binary. kibble builds only a tool it can name:
+  a Go main package at the root or under `cmd/`, a Rust package's one binary, or a
+  Python project's one console script, or whichever of these is named for the
+  repository. The examples' verdicts stand, but a release can differ from the checkout,
+  and the install rows keep their own verdicts. A checkout that does not build reads
+  `BLOCKED`, since the failure is kibble's stand-in and not the document.
 - `BLOCKED` with the reason `inherited-state` means a line that would have been a plain
   `FAIL` ran in a directory an earlier section entered with `cd`, `pushd`, or `popd`.
   Documents `cd` once in setup and stay there, so the failure may come from what that
@@ -266,7 +274,16 @@ verdict claims the documented step works:
   already held the other. So does a documented tool saying the top of the checkout is not
   a repository of its own kind and naming its own init command, when no earlier line of
   the document that passed made or cloned one. That line was not tested, and it is not
-  counted as passing.
+  counted as passing. When a scaffold line such as `goreleaser init` is stopped this way,
+  the same tool's later lines in that document read the checkout's project and not the
+  one the document creates, so their failures and their documented nonzero exits read
+  `checkout-state` as well. A usage error or a crash still stands.
+- `BLOCKED` with the reason `environment-changed` means a line crashed and afterwards
+  the documented tool failed `--version`, though it passed when the session began.
+  Something the session ran changed the environment the tool runs from, as a project
+  command can remove the tool's own dependencies, so the crash says nothing about the
+  line. A crash the tool survives stays `FAIL`. A tool whose `--version` fails from the
+  start is never probed.
 - A passing line that writes a titled fence to its file reads `VERIFIED` "wrote X as the
   document shows it". The document supplied the content, so only the write is claimed.
 - An install whose product is a shell function the documented sourcing defines is

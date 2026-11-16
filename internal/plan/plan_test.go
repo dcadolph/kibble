@@ -553,6 +553,16 @@ func TestFindingFlagNonzeroOK(t *testing.T) {
 	}, { // Test 5: a flag marks its own line and does not spread.
 		Markdown: "```sh\ntool run --check\n```\ntext\n```sh\ntool run\n```\n",
 		Binary:   "tool", Want: []bool{true, false},
+	}, { // Test 6: a flag that sets a nonzero exit on a finding asks for that exit.
+		Markdown: "```sh\ntool image --exit-code 1 alpine\n```\n", Binary: "tool", Want: []bool{true},
+	}, { // Test 7: the same flag written with an equals sign counts.
+		Markdown: "```sh\ntool image --exit-on-eol=2 alpine\n```\n", Binary: "tool", Want: []bool{true},
+	}, { // Test 8: an exit code of zero asks for nothing.
+		Markdown: "```sh\ntool image --exit-code 0 alpine\n```\n", Binary: "tool", Want: []bool{false},
+	}, { // Test 9: a flag of the family with no number asks for nothing.
+		Markdown: "```sh\ntool scan --exit-zero src\n```\n", Binary: "tool", Want: []bool{false},
+	}, { // Test 10: a number that belongs to another flag is not the exit code.
+		Markdown: "```sh\ntool image --exit-code=0 --depth 1 alpine\n```\n", Binary: "tool", Want: []bool{false},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -567,6 +577,34 @@ func TestFindingFlagNonzeroOK(t *testing.T) {
 			}
 			if diff := cmp.Diff(test.Want, got); diff != "" {
 				t.Errorf("NonzeroOK mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestPlanRecordsUnrunBlocks checks that the commands of a block the plan
+// leaves out are recorded, so a failure asking for one can be read as a step
+// the session could not take, and that a block the plan runs records nothing.
+func TestPlanRecordsUnrunBlocks(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Markdown string
+		Want     []string
+	}{{ // Test 0: a block of a command kibble does not know is recorded.
+		Markdown: "```sh\nnix develop\n```\n\n```sh\ntool run\n```\n", Want: []string{"nix develop"},
+	}, { // Test 1: a one-word command, a placeholder line, and a repeat are not.
+		Markdown: "```sh\nnixshell\nnix develop <flake>\nnix develop  # enter the shell\n```\n\n" +
+			"```sh\nnix develop\n```\n",
+		Want: []string{"nix develop"},
+	}, { // Test 2: a block the plan runs records nothing.
+		Markdown: "```sh\ntool run --fast\n```\n", Want: nil,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := BuildPlan("repo", "", test.Markdown, []string{"tool"}, nil, nil, testRecognizer())
+			if diff := cmp.Diff(test.Want, plan.Unrun, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("unrun mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -944,6 +982,20 @@ func TestSkipReasonReaderFile(t *testing.T) {
 	}
 }
 
+// TestMergeKeepsUnrun checks that the commands of blocks a document's plan
+// left out survive the merge into the session plan, once each, since a
+// failure in one document may name a command only another one shows.
+func TestMergeKeepsUnrun(t *testing.T) {
+	t.Parallel()
+	merged := &Plan{}
+	merged.Merge("README.md", &Plan{Unrun: []string{"nix develop"}})
+	merged.Merge("docs/dev.md", &Plan{Unrun: []string{"nix develop", "direnv allow"}})
+	merged.Merge("docs/none.md", &Plan{})
+	if diff := cmp.Diff([]string{"nix develop", "direnv allow"}, merged.Unrun); diff != "" {
+		t.Errorf("unrun mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestReaderNamedOperand checks the operands the reader is expected to
 // replace, and the ones that are real: example values such as foo, file
 // names, output paths, flags, and names the repo provides.
@@ -976,6 +1028,10 @@ func TestReaderNamedOperand(t *testing.T) {
 		Tree: map[string]bool{"my-app": true}, Line: `tool my-app`, WantResult: "",
 	}, { // Test 10: an ordinary word is not a stand-in.
 		Line: `tool build`, WantResult: "",
+	}, { // Test 11: a your-prefixed name is a stand-in.
+		Line: `trivy plugin run kubectl pod your-pod -- --exit-code 1`, WantResult: "your-pod",
+	}, { // Test 12: a word that only starts with your is not one.
+		Line: `tool greet yourself`, WantResult: "",
 	}}
 
 	for testNum, test := range tests {
