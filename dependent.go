@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/dcadolph/kibble/internal/docblock"
@@ -190,6 +191,11 @@ func resolveDependentFailures(run *exampleRun, plan *kplan.Plan) {
 				l.Status = StatusBlocked
 				l.Reason = ReasonDependsOnSkipped
 				l.Detail = fmt.Sprintf("names %s, which `%s` also named and did not pass", op, earlier)
+			} else if host, earlier := unresolvedHostNotRun(prior[s.Doc], l.Cmd, l.output); host != "" {
+				l.Status = StatusBlocked
+				l.Reason = ReasonDependsOnSkipped
+				l.Detail = fmt.Sprintf("could not resolve host %s, which `%s` also named and did not pass",
+					host, earlier)
 			}
 			prior[s.Doc] = append(prior[s.Doc], *l)
 		}
@@ -391,6 +397,44 @@ func sharedOperandNotPassed(prior []lineResult, cmd string) (operand, earlier st
 				if path.Clean(pop) == path.Clean(op) {
 					return op, docblock.Flatten(p.Cmd)
 				}
+			}
+		}
+	}
+	return "", ""
+}
+
+var (
+	// reUnresolvedHost matches a client reporting that a host name did not
+	// resolve.
+	reUnresolvedHost = regexp.MustCompile(`(?i)could not resolve host|unable to resolve host|` +
+		`no such host|name or service not known|temporary failure in name resolution|` +
+		`name does not resolve`)
+	// reURLHost matches an http or https URL and captures its host.
+	reURLHost = regexp.MustCompile(`\bhttps?://([A-Za-z0-9][A-Za-z0-9._-]*)`)
+)
+
+// unresolvedHostNotRun returns the host of a URL the failing line could not
+// resolve and the first earlier line of the same document that named that
+// host as a word of its own and was skipped, blocked, or stopped by a gap.
+// tailscale's Kubernetes guide runs `curl http://nginx` against a service its
+// skipped kubectl and make lines set up, so the name has nothing to resolve
+// to. A host no earlier line names, or one named only by lines that passed,
+// keeps the failure, since a dead domain in a document is a real break.
+func unresolvedHostNotRun(prior []lineResult, cmd, output string) (host, earlier string) {
+	if !reUnresolvedHost.MatchString(output) {
+		return "", ""
+	}
+	for _, m := range reURLHost.FindAllStringSubmatch(cmd, -1) {
+		h := m[1]
+		if !strings.Contains(output, h) {
+			continue
+		}
+		for _, p := range prior {
+			if p.Status == StatusVerified || p.Status == StatusFail {
+				continue
+			}
+			if words := strings.Fields(docblock.Flatten(p.Cmd)); len(words) > 1 && slices.Contains(words[1:], h) {
+				return h, docblock.Flatten(p.Cmd)
 			}
 		}
 	}

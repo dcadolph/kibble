@@ -253,7 +253,10 @@ with one exception. A tool that reports a file the line passed as missing is rea
 `inherited-state` too, since the file's absence from that directory says nothing about the
 directory the document meant. Resetting the working directory at every heading was
 rejected, because it would break every document that changes directory once in setup and
-invent failures.
+invent failures. A section is a heading, or the outermost collapsed `<details>` element
+under it, since a README offers alternative setups as sibling details under one heading:
+glance's template setup enters a directory, and its manual setup's `mkdir config` then met
+the template's own `config` there.
 
 A `cd` the planner skips, because its target is a placeholder or a name the reader fills
 in, loses the directory for the rest of its section. A document keeps one shell, so every
@@ -343,6 +346,13 @@ break, not four. An earlier `FAIL` does not pair, so one real break repeated on 
 lines stays several reports, and an operand ending in a script extension such as `.py` or
 `.sh` is the program an interpreter runs rather than data, so two runs of one script never
 pair. Like the other causal downgrades it suppresses the cascade without claiming cause.
+
+A request that fails because a URL's host did not resolve is read the same way when an
+earlier line of the same document named that host as a word of its own and was skipped,
+blocked, or a gap. tailscale's Kubernetes guide runs `curl http://nginx` against a service
+its skipped `kubectl` and `make` lines set up, so the name has nothing to resolve to. A
+host named only by lines that passed, or by none, keeps the `FAIL`, since a dead domain in
+a document is a real break.
 
 A titled fence whose title is a plain relative file path is a file the document writes. The
 planner turns it into a line that writes the block's content, so a later line reading that

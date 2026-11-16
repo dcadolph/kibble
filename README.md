@@ -265,7 +265,9 @@ verdict claims the documented step works:
 - `BLOCKED` with the reason `inherited-state` means a line that would have been a plain
   `FAIL` ran in a directory an earlier section entered with `cd`, `pushd`, or `popd`.
   Documents `cd` once in setup and stay there, so the failure may come from what that
-  directory holds rather than from what the line says.
+  directory holds rather than from what the line says. Each collapsed `<details>` element
+  is a section of its own, since a README offers alternative setups that way under one
+  heading and a reader opens only one.
 - `BLOCKED` with the reason `checkout-state` means a line that would have been a plain
   `FAIL` ran in the repository's own checkout and its output says the target already
   exists or is already initialized. The collision is with the checkout kibble chose, so
