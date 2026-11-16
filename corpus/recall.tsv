@@ -20,7 +20,7 @@
 # The first four came from the 2026-10-22 hand check of ten repositories
 # kibble had run nothing on. Columns are tab-separated:
 # name, clone URL, pinned commit, document, line, wanted status, proof, caught.
-jq	https://github.com/jqlang/jq.git	94b00aa807a51a8f97bc9345c03e32982e344678	README.md	56	FAIL	libjq.so.1	no
+jq	https://github.com/jqlang/jq.git	94b00aa807a51a8f97bc9345c03e32982e344678	README.md	56	FAIL	libjq.so.1	yes
 goreleaser	https://github.com/goreleaser/goreleaser.git	a9fb415389a2e55906ae457d9f76bb77b3cb6056	www/content/getting-started/quick-start.md	138	FAIL	doesn't contain any tags	no
 pyenv	https://github.com/pyenv/pyenv.git	7d65a4683c91b29f7501da4c8737d4e786f8cad2	README.md	187	DRIFT|FAIL	--install	no
 shellcheck	https://github.com/koalaman/shellcheck.git	cd9072643932ee2008e454e2cd990e25c1dc9d49	README.md	412	FAIL	exec foo; echo "Done!"	no
