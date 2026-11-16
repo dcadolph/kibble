@@ -54,11 +54,20 @@ type Block struct {
 	// Item is the 1-based index of the outermost list's item the block sits
 	// in, and is 0 outside a list.
 	Item int
+	// Details numbers the outermost HTML details element the block sits in,
+	// in document order from 1, and is 0 outside one. A README offers
+	// alternative setups as collapsed details under one heading, and each is
+	// its own section to a reader who opens only one.
+	Details int
 }
 
 // reFenceTitle matches a title attribute in a fence's info string, in double
 // or single quotes.
 var reFenceTitle = regexp.MustCompile(`\btitle=(?:"([^"]*)"|'([^']*)')`)
+
+// reDetailsTag matches an opening or closing HTML details tag and captures
+// the slash of a closing one.
+var reDetailsTag = regexp.MustCompile(`(?i)<(/?)details\b`)
 
 // admonitionMarker matches the first line of a MkDocs admonition, whose indented
 // body is prose that markdown parsers read as an indented code block.
@@ -94,7 +103,24 @@ func CodeBlocks(markdown string) []Block {
 	var heading, intro, lead string
 	leadEnd := 0
 	lists, depth, list, item := 0, 0, 0, 0
+	detailsSeen, detailsDepth, details := 0, 0, 0
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if h, ok := n.(*ast.HTMLBlock); ok && entering {
+			for _, m := range reDetailsTag.FindAllStringSubmatch(htmlBlockText(h, src), -1) {
+				switch {
+				case m[1] == "":
+					if detailsDepth == 0 {
+						detailsSeen++
+						details = detailsSeen
+					}
+					detailsDepth++
+				case detailsDepth > 0:
+					if detailsDepth--; detailsDepth == 0 {
+						details = 0
+					}
+				}
+			}
+		}
 		switch n.(type) {
 		case *ast.List:
 			if entering {
@@ -122,7 +148,7 @@ func CodeBlocks(markdown string) []Block {
 			}
 			return ast.WalkContinue, nil
 		}
-		b := Block{Heading: heading, Intro: intro, List: list, Item: item}
+		b := Block{Heading: heading, Intro: intro, List: list, Item: item, Details: details}
 		switch node := n.(type) {
 		case *ast.Heading:
 			heading = spanText(node, src)
@@ -147,7 +173,11 @@ func CodeBlocks(markdown string) []Block {
 		case *ast.CodeBlock:
 			lead = ""
 			if admonitionMarker.MatchString(intro) {
-				blocks = append(blocks, admonitionBlocks(node, src, heading, intro)...)
+				nested := admonitionBlocks(node, src, heading, intro)
+				for i := range nested {
+					nested[i].Details = details
+				}
+				blocks = append(blocks, nested...)
 				return ast.WalkContinue, nil
 			}
 			b.Lines = strings.Split(BlockText(node, src), "\n")
@@ -163,6 +193,20 @@ func CodeBlocks(markdown string) []Block {
 		return ast.WalkContinue, nil
 	})
 	return blocks
+}
+
+// htmlBlockText returns the raw text of an HTML block, its closing line
+// included.
+func htmlBlockText(h *ast.HTMLBlock, src []byte) string {
+	var b strings.Builder
+	for i := 0; i < h.Lines().Len(); i++ {
+		seg := h.Lines().At(i)
+		b.Write(seg.Value(src))
+	}
+	if h.HasClosure() {
+		b.Write(h.ClosureLine.Value(src))
+	}
+	return b.String()
 }
 
 // admonitionBlocks parses an admonition body as markdown and returns the code

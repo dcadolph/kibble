@@ -92,6 +92,10 @@ type PlanStep struct {
 	Doc string `json:"doc,omitempty"`
 	// Heading is the section heading the block appears under.
 	Heading string `json:"heading,omitempty"`
+	// Details numbers the outermost HTML details element the block sits in,
+	// 0 outside one. Collapsed details under one heading are separate
+	// sections, often alternative setups.
+	Details int `json:"details,omitempty"`
 	// Lines are the logical shell lines of the block.
 	Lines []PlanLine `json:"lines"`
 	// Background runs the step behind the session and kills it at the end.
@@ -429,6 +433,7 @@ func (pl *planner) addBlock(block docblock.Block) {
 	step := PlanStep{
 		ID:      fmt.Sprintf("b%d", len(pl.plan.Steps)+1),
 		Heading: block.Heading,
+		Details: block.Details,
 	}
 	scopedTo := otherPlatform(block.Intro)
 	if scopedTo == "" {

@@ -316,3 +316,120 @@ func TestCrashAfterToolGone(t *testing.T) {
 		})
 	}
 }
+
+// TestFailureOnUnresolvedHost checks that a request to a host that did not
+// resolve is blocked when an earlier line of its document named that host and
+// did not pass, as tailscale's Kubernetes guide does with services its skipped
+// kubectl lines set up, and that a dead host with no such line still fails.
+func TestFailureOnUnresolvedHost(t *testing.T) {
+	t.Parallel()
+	const curl = "curl: (6) Could not resolve host: nginx"
+	skipped := lineResult{Cmd: "kubectl logs nginx ts-sidecar", Status: StatusSkipped,
+		Reason: ReasonMissingDependency}
+	tests := []struct {
+		Earlier    lineResult
+		EarlierDoc string
+		Cmd        string
+		Output     string
+		WantStatus Status
+		WantDetail string
+	}{{ // Test 0: the service a skipped line named has nothing to resolve to.
+		Earlier: skipped, Cmd: "curl http://nginx", Output: curl, WantStatus: StatusBlocked,
+		WantDetail: "could not resolve host nginx, which `kubectl logs nginx ts-sidecar` also named",
+	}, { // Test 1: a Go client's lookup error with a port reads the same.
+		Earlier: lineResult{Cmd: "make proxy | kubectl apply -f-", Status: StatusSkipped},
+		Cmd:     "tool get http://proxy:8080/health", Output: "dial tcp: lookup proxy: no such host",
+		WantStatus: StatusBlocked, WantDetail: "could not resolve host proxy",
+	}, { // Test 2: a line that named the host and passed leaves the failure standing.
+		Earlier: lineResult{Cmd: "kubectl logs nginx ts-sidecar", Status: StatusVerified},
+		Cmd:     "curl http://nginx", Output: curl, WantStatus: StatusFail,
+	}, { // Test 3: a dead domain no earlier line names is a real break.
+		Earlier: skipped, Cmd: "curl https://downloads.example.org/tool.tgz",
+		Output:     "curl: (6) Could not resolve host: downloads.example.org",
+		WantStatus: StatusFail,
+	}, { // Test 4: a refused connection is not a name that failed to resolve.
+		Earlier: skipped, Cmd: "curl http://nginx",
+		Output:     "curl: (7) Failed to connect to nginx port 80: Connection refused",
+		WantStatus: StatusFail,
+	}, { // Test 5: the host inside a longer word is not the host.
+		Earlier: lineResult{Cmd: "kubectl logs nginx-proxy", Status: StatusSkipped},
+		Cmd:     "curl http://nginx", Output: curl, WantStatus: StatusFail,
+	}, { // Test 6: a skipped line in another document says nothing about this one.
+		Earlier: skipped, EarlierDoc: "docs/other.md", Cmd: "curl http://nginx", Output: curl,
+		WantStatus: StatusFail,
+	}, { // Test 7: the earlier line's program is not a name it set up.
+		Earlier: lineResult{Cmd: "nginx -t", Status: StatusSkipped},
+		Cmd:     "curl http://nginx", Output: curl, WantStatus: StatusFail,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			doc := "docs/k8s/README.md"
+			if test.EarlierDoc == "" {
+				test.EarlierDoc = doc
+			}
+			run := &exampleRun{Steps: []exampleStep{
+				{ID: "b1", Doc: test.EarlierDoc, Lines: []lineResult{test.Earlier}},
+				{ID: "b2", Doc: doc, Lines: []lineResult{
+					{Cmd: test.Cmd, Status: StatusFail, Code: 6, Detail: "exited 6", output: test.Output},
+				}},
+			}}
+			resolveDependentFailures(run, &kplan.Plan{Binaries: []string{"tailscale"}})
+			got := run.Steps[1].Lines[0]
+			if diff := cmp.Diff(test.WantStatus, got.Status); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s\ndetail: %s", diff, got.Detail)
+			}
+			if !strings.Contains(got.Detail, test.WantDetail) {
+				t.Errorf("detail = %q, want it to contain %q", got.Detail, test.WantDetail)
+			}
+		})
+	}
+}
+
+// TestInheritedAcrossDetails checks that a collapsed details element is a
+// section of its own, so a setup that ran in the directory a sibling setup
+// under the same heading entered is blocked, read end to end from the
+// session's markers. glance's README offers a template setup that enters a
+// directory beside a manual one that then met the template's files.
+func TestInheritedAcrossDetails(t *testing.T) {
+	t.Parallel()
+	const exists = "mkdir: cannot create directory 'config': File exists"
+	tests := []struct {
+		First, Second int
+		WantStatus    Status
+		WantReason    Reason
+	}{{ // Test 0: sibling details under one heading are separate sections.
+		First: 1, Second: 2, WantStatus: StatusBlocked, WantReason: ReasonInheritedState,
+	}, { // Test 1: both blocks in one details element are one section that entered it.
+		First: 1, Second: 1, WantStatus: StatusFail,
+	}, { // Test 2: outside any details, one heading is one section as before.
+		First: 0, Second: 0, WantStatus: StatusFail,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := &kplan.Plan{Repo: "glance", Steps: []kplan.PlanStep{
+				{ID: "b1", Doc: "README.md", Heading: "Installation", Details: test.First,
+					Lines: []kplan.PlanLine{{Cmd: "mkdir glance && cd glance"}}},
+				{ID: "b2", Doc: "README.md", Heading: "Installation", Details: test.Second,
+					Lines: []kplan.PlanLine{{Cmd: "mkdir config"}}},
+			}}
+			out := sessionOut("KIBBLE-BUILD CODE=0",
+				"KIBBLE-STEP b1 START", "KIBBLE-LINE b1:0 CODE=0 CWD=/work/repo/glance",
+				"KIBBLE-STEP b2 START", exists, "KIBBLE-LINE b2:0 CODE=1 CWD=/work/repo/glance",
+				"KIBBLE-DONE")
+			res := classifyExample(InstallStep{Repo: "glance", Kind: "example"}, plan, out, nil, 0,
+				lineTimeout, sessionEnd{})
+			if res.example == nil {
+				t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+			}
+			got := res.example.Steps[1].Lines[0]
+			if diff := cmp.Diff(test.WantStatus, got.Status); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s\ndetail: %s", diff, got.Detail)
+			}
+			if diff := cmp.Diff(test.WantReason, got.Reason); diff != "" {
+				t.Errorf("reason mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

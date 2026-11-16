@@ -366,3 +366,31 @@ func TestCodeBlocksList(t *testing.T) {
 		t.Errorf("list positions mismatch (-want +got):\n%s", diff)
 	}
 }
+
+// TestCodeBlocksDetails checks that each block carries the number of the
+// outermost details element it sits in, that a nested details element keeps
+// its parent's number, and that a block after the close is outside any.
+func TestCodeBlocksDetails(t *testing.T) {
+	t.Parallel()
+	in := "`make`\n\n" +
+		"<details>\n<summary>Template</summary>\n\n```bash\ncd glance\n```\n\n" +
+		"<details>\n<summary>More</summary>\n\n```bash\nvi glance.yml\n```\n\n</details>\n\n" +
+		"```bash\ndocker compose up\n```\n\n</details>\n\n" +
+		"<details>\n<summary>Manual</summary>\n\n```bash\nmkdir config\n```\n\n</details>\n\n" +
+		"```bash\ngo build .\n```\n"
+	type pos struct {
+		Text    string
+		Details int
+	}
+	want := []pos{
+		{"make", 0}, {"cd glance", 1}, {"vi glance.yml", 1}, {"docker compose up", 1},
+		{"mkdir config", 2}, {"go build .", 0},
+	}
+	var got []pos
+	for _, b := range CodeBlocks(in) {
+		got = append(got, pos{strings.TrimSpace(strings.Join(b.Lines, " ")), b.Details})
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("details positions mismatch (-want +got):\n%s", diff)
+	}
+}

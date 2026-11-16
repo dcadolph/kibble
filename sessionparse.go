@@ -262,9 +262,12 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 	for _, b := range plan.Binaries {
 		bins[b] = true
 	}
-	// entered holds the sections, by document and heading, that ran a cd. A
-	// document keeps one shell, so a directory one section enters is where
-	// every later section of that document runs.
+	// entered holds the sections, by document, heading, and details element,
+	// that ran a cd. A document keeps one shell, so a directory one section
+	// enters is where every later section of that document runs. Collapsed
+	// details under one heading are sections of their own: glance's README
+	// offers a template setup that enters a directory and a manual setup
+	// beside it, and the manual one then ran inside the template's.
 	entered := map[string]bool{}
 	// pending holds, per document, the paths earlier lines were to create and
 	// did not, each with the first such line's command.
@@ -274,7 +277,7 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 	members := map[string]bool{}
 	for _, s := range plan.Steps {
 		es := exampleStep{ID: s.ID, Doc: s.Doc, Heading: s.Heading}
-		section := s.Doc + "\x00" + s.Heading
+		section := fmt.Sprintf("%s\x00%s\x00%d", s.Doc, s.Heading, s.Details)
 		for i, l := range s.Lines {
 			key := fmt.Sprintf("%s:%d", s.ID, i)
 			lr := lineResult{Cmd: docblock.Flatten(l.Cmd), Code: -1, Line: l.Line, Synthetic: l.Synthetic}
