@@ -63,6 +63,9 @@ type lineOutcome struct {
 	// creators maps each path an earlier line of the same document was to
 	// create, and did not pass, to that line's command.
 	creators map[string]string
+	// toolGone marks a line after which the documented binary it ran failed
+	// its `--version` probe, though the probe passed when the session began.
+	toolGone bool
 }
 
 // sessionRepoDir is the directory every document's shell starts in.
@@ -75,6 +78,9 @@ var (
 	// reInitializedAt matches the line uv prints for a new project, capturing
 	// the project name and the directory it was created in.
 	reInitializedAt = regexp.MustCompile("Initialized project `([^`]+)` at `([^`]+)`")
+	// reProbeMarker parses a KIBBLE-PROBE marker into step ID, line index, and
+	// the exit code of the `--version` probe that followed the line.
+	reProbeMarker = regexp.MustCompile(`KIBBLE-PROBE (\S+):(\d+) CODE=(-?\d+)$`)
 )
 
 // markerTail splits a line on a session marker, returning the output that
@@ -112,7 +118,8 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 	absent := map[string]bool{}
 	var chunk []string
 	aborted, done, noBin := false, false, false
-	pkgCode := 0
+	pkgCode, buildCode := 0, 0
+	var buildTail []string
 	cut := false
 	keep := func(s string) {
 		switch {
@@ -141,13 +148,24 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 			pkgCode, _ = strconv.Atoi(strings.TrimSpace(code))
 			chunk, cut = nil, false
 		case strings.Contains(line, "KIBBLE-BUILD CODE="):
+			_, code, _ := markerTail(line, "KIBBLE-BUILD CODE=")
+			buildCode, _ = strconv.Atoi(strings.TrimSpace(code))
 			chunk, cut = nil, false
 		case strings.Contains(line, "KIBBLE-ABORT"):
 			aborted = true
+			buildTail = chunk
 		case strings.Contains(line, "KIBBLE-STEP "):
 			chunk, cut = nil, false
 		case strings.Contains(line, "KIBBLE-DONE"):
 			done = true
+		case reProbeMarker.MatchString(line):
+			m := reProbeMarker.FindStringSubmatch(line)
+			keep(line[:len(line)-len(m[0])])
+			if o, ok := outcomes[m[1]+":"+m[2]]; ok {
+				o.toolGone = m[3] != "0"
+				outcomes[m[1]+":"+m[2]] = o
+			}
+			chunk, cut = nil, false
 		case reLineMarker.MatchString(line):
 			m := reLineMarker.FindStringSubmatch(line)
 			keep(line[:len(line)-len(m[0])])
@@ -168,12 +186,30 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 			keep(line)
 		}
 	}
-	if aborted {
+	built := fromCheckout(plan)
+	switch {
+	case aborted && built:
+		// The build is kibble's stand-in for an install the docs never let it
+		// run, so its failure says nothing about the document.
+		res.Status = StatusBlocked
+		res.Reason = ReasonMissingDependency
+		res.Detail = "building the tool from the checkout failed, so the examples did not run; " + checkoutNote
+		switch {
+		case buildCode == 124:
+			res.Detail += ": the build timed out"
+		case len(buildTail) > 0:
+			res.Detail += ": " + util.Truncate(buildFailLine(buildTail), 160)
+		}
+		return res
+	case aborted:
 		res.Status = StatusSkipped
 		res.Detail = "documented install failed in the session; examples not run"
 		return res
-	}
-	if noBin {
+	case noBin && built:
+		res.Status = StatusSkipped
+		res.Detail = "the tool built from the checkout is not on PATH under the expected name; examples not run"
+		return res
+	case noBin:
 		res.Status = StatusSkipped
 		res.Detail = "installed tool is not on PATH under any documented name; examples not run"
 		return res
@@ -195,6 +231,9 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 			first, _, _ := strings.Cut(end.err.Error(), "\n")
 			res.Detail += ": " + util.Truncate(first, 120)
 		}
+	}
+	if built && res.Status != StatusError {
+		res.Detail = strings.TrimSuffix(checkoutNote+"; "+res.Detail, "; ")
 	}
 	return res
 }

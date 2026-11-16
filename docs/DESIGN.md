@@ -41,6 +41,16 @@ reports which steps a brand-new user could actually complete.
   `LD_LIBRARY_PATH` outside the block, the same error is `BUILT`: the reader was told, and
   kibble ran only the block. Any other failed smoke test stays `BUILT`. A block that also
   clones, installs system packages, or pipes a remote script is not a source build.
+- Builds the tool from the checkout when no documented install gives the example session
+  a binary, so one missing install route no longer costs every example in the
+  repository. Go uses `go install` of the root or of the `cmd/` directory named for the
+  repository or the only one there, Rust uses `cargo install --path .` of the one
+  binary or the one named for the repository, `--locked` when a lock file exists, and
+  Python uses `pip install .` for the one console script or the one named for it, into
+  a virtual environment of its own with the script linked onto PATH, so an example that
+  manages packages cannot remove the tool's own dependencies. A checkout that offers no
+  such name builds nothing. Every example result says it was built from the checkout and
+  the documented install was not tested, and a build that fails reads `BLOCKED`.
 - Picks the image from the toolchain the step assumes, so a Rust project builds with
   `cargo` and a Node project with `npm`, and finds the installed binary wherever that
   toolchain puts it, even when it is not named after the package.
@@ -167,7 +177,13 @@ same reason. A repository too large to stream whole is an `ERROR` too: a file ki
 failed to deliver is indistinguishable from one the docs never create, and guessing
 between them is the one mistake this tool must not make. Generated directories such as
 `node_modules`, `vendor`, `build`, and `target` are left out of that stream, so the
-budget goes to source a document might actually name.
+budget goes to source a document might actually name. The name is only a guess, so a
+directory that holds files git tracks is streamed whatever it is called: goreleaser keeps
+source in `internal/pipe/dist` and k6 in `internal/build`. The git index says what is
+tracked, and a checkout without one falls back to the names alone. A session that builds
+the tool from the checkout also takes every tracked file whatever its size, where a file
+over 2 MB is otherwise left out: k6 vendors a 4.9 MB table and does not compile without it.
+If that pushes the tree past the stream cap, the size limit comes back.
 
 ## What the container is, and is not
 
@@ -278,6 +294,23 @@ project manager's failure is never read as a query that found no data, since its
 says "No solution found" when it fails. The same holds for installers such as pipx and uvx,
 whose resolver speaks the same words. Output that is a vocabulary error, an unknown or
 unexpected flag, option, argument, or subcommand, stays `FAIL`.
+
+A scaffold line the checkout stopped, such as `goreleaser init` refusing because
+goreleaser's own configuration is already there, taints the same tool's later lines in
+that document: they read the checkout's project, not the one the document creates. Their
+failures are `checkout-state`, and so is a nonzero exit the documents bless, since that
+exit answered the wrong project. goreleaser's `check` exits 1 on the checkout's GoReleaser
+Pro configuration and would otherwise pass as documented behavior. A usage error and a
+crash keep the failure, as does a scaffold stopped in another document.
+
+The session asks each documented binary for `--version` once at the start. After a line
+that ran one of them exited nonzero, it asks again, but only for a binary that passed the
+first time. A crash followed by a failed probe is `BLOCKED` with the reason
+`environment-changed`: the session changed the environment the tool runs from, and the
+crash shows that change rather than the line. poetry's documents turn off virtualenv
+creation, and a later `poetry sync --only dev` then removed poetry's own dependencies from
+the environment it ran in, after which every poetry line crashed on a missing module. A
+crash the tool survives still convicts, and a plain nonzero exit is never read this way.
 
 A file a line reads that the planner sees no earlier line create no longer skips the line
 at plan time. The plan records it as the line's need, and the session checks whether the
@@ -407,10 +440,18 @@ check mode for that document. The inference is by subcommand, never by binary, s
 linter run over a bad configuration exits nonzero too and blessing the binary would turn
 that into a hollow pass. A flag the page says implies one of the check-mode flags, as in
 "`--format sarif` implies `--fix=false`", is a check-mode flag for that document, read with
-its value as written, and an explicit `--fix` beside it turns fixing back on. A nonzero
-exit from either is the tool working. A crash stays a
+its value as written, and an explicit `--fix` beside it turns fixing back on. A flag that
+sets the exit code for a finding, written `--exit-` and a name with a nonzero number as
+its value, as in trivy's `--exit-code 1` and `--exit-on-eol 1`, asks for that exit in so
+many words and is read the same way. A nonzero
+exit from any of these is the tool working. A crash stays a
 failure, and the classifier now enforces it: a check-mode line whose output holds a
-traceback or a panic falls through to the crash rules. Output the document shows under a
+traceback or a panic falls through to the crash rules. A crash is read only from lines the
+tool printed bare. A runtime writes its panic or traceback straight to the terminal, so a
+crash word on a line that opens with a vertical bar, a table row or a quoted block, is the
+tool showing something it read: a vulnerability table whose cell says "Segmentation fault
+in SSL_check_chain", or a package manager quoting the traceback of a build it ran before
+reporting the failure in its own words. Output the document shows under a
 command as a comment, which the tool then printed, is documented behavior as well: a
 nonzero ordinary exit whose output contains a shown line of at least twelve characters,
 with or without its leading program prefix, is `VERIFIED`, and the match needs the tool to

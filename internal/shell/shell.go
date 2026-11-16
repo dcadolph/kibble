@@ -266,6 +266,39 @@ func ArgWords(cmd string) ([]string, bool) {
 	return out, true
 }
 
+// Writes returns the files a line redirects output into, as written, wherever
+// in the line the redirect sits. A target whose name depends on an expansion
+// is left out, since its real value is unknown until it runs.
+func Writes(cmd string) []string {
+	parser := syntax.NewParser(syntax.KeepComments(false), syntax.Variant(syntax.LangBash))
+	file, err := parser.Parse(strings.NewReader(cmd), "")
+	if err != nil {
+		return nil
+	}
+	var out []string
+	syntax.Walk(file, func(node syntax.Node) bool {
+		stmt, ok := node.(*syntax.Stmt)
+		if !ok {
+			return true
+		}
+		for _, r := range stmt.Redirs {
+			switch r.Op {
+			case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.RdrClob:
+			default:
+				continue
+			}
+			if r.Word == nil {
+				continue
+			}
+			if text, literal := wordText(r.Word); literal && text != "" {
+				out = append(out, text)
+			}
+		}
+		return true
+	})
+	return out
+}
+
 // Operands returns every word of a line that is not a command name, so
 // a rule about a line's arguments never trips over the program itself. A
 // tool named `pattern` is the command in `pattern build` and a placeholder in

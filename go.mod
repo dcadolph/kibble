@@ -12,7 +12,12 @@ require (
 
 require gopkg.in/yaml.v3 v3.0.1
 
-require mvdan.cc/sh/v3 v3.14.1
+require (
+	github.com/go-git/go-git/v5 v5.19.3
+	mvdan.cc/sh/v3 v3.14.1
+)
+
+require github.com/pjbgf/sha1cd v0.7.0 // indirect
 
 require (
 	github.com/google/jsonschema-go v0.4.3 // indirect

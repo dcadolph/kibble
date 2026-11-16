@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -665,6 +666,145 @@ func TestRepoTar(t *testing.T) {
 	want := []string{"README.md", "wasm/main.go"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("streamed files mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestRepoTarKeepsTrackedDirs checks that a directory named like build output
+// is streamed when git tracks files in it, since goreleaser keeps source in
+// internal/pipe/dist and k6 in internal/build, and that the same names stay out
+// when nothing in them is tracked. A checkout cloned into a directory that is
+// itself named like build output is still streamed.
+func TestRepoTarKeepsTrackedDirs(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "build")
+	tracked := map[string]string{
+		"main.go":                  "package main",
+		"internal/build/build.go":  "package build",
+		"internal/pipe/dist/d.go":  "package dist",
+		"vendor/dep/dep.go":        "package dep",
+		"docs/guide.md":            "# G",
+		"internal/build/sub/s.txt": "s",
+	}
+	untracked := map[string]string{
+		"dist/app.tar.gz":           "bin",
+		"node_modules/pkg/index.js": "x",
+		"cmd/tool/build/out.o":      "obj",
+		"internal/build/cache.bin":  "generated beside tracked source",
+	}
+	write := func(files map[string]string) {
+		for name, body := range files {
+			full := filepath.Join(dir, name)
+			if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+				t.Fatalf("write %s: %v", name, err)
+			}
+		}
+	}
+	write(tracked)
+	for _, args := range [][]string{
+		{"init", "-q"}, {"add", "-A"},
+		{"-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "init"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	write(untracked)
+	names := func() []string {
+		data, _ := repoTar(dir)
+		var got []string
+		tr := tar.NewReader(bytes.NewReader(data))
+		for {
+			h, err := tr.Next()
+			if err != nil {
+				break
+			}
+			got = append(got, h.Name)
+		}
+		sort.Strings(got)
+		return got
+	}
+	want := []string{
+		"docs/guide.md", "internal/build/build.go", "internal/build/cache.bin",
+		"internal/build/sub/s.txt", "internal/pipe/dist/d.go", "main.go", "vendor/dep/dep.go",
+	}
+	if diff := cmp.Diff(want, names()); diff != "" {
+		t.Errorf("streamed files mismatch (-want +got):\n%s", diff)
+	}
+	if !repoFits(dir) {
+		t.Error("small tree reported as not fitting")
+	}
+	// Without an index there is nothing to say a name is source, so the skip
+	// list decides alone, as it does for a source tarball.
+	if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff([]string{"docs/guide.md", "main.go"}, names()); diff != "" {
+		t.Errorf("streamed files without an index mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestCheckoutTreeCarriesTrackedFilesWhole checks that a session building from
+// the checkout receives a tracked file over the size limit, since k6 vendors a
+// 4.9 MB source table and does not compile without it, that an untracked file
+// of the same size stays out, and that a session with a documented install
+// keeps the limit for both.
+func TestCheckoutTreeCarriesTrackedFilesWhole(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	big := bytes.Repeat([]byte("x"), 3<<20)
+	write := func(name string, body []byte) {
+		full := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, body, 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write("main.go", []byte("package main"))
+	write("vendor/dep/tables.go", big)
+	for _, args := range [][]string{
+		{"init", "-q"}, {"add", "-A"},
+		{"-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "init"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	write("core.dump", big)
+	built := &kplan.Plan{Installs: []kplan.PlanInstall{{FromCheckout: true}}}
+	tests := []struct {
+		Plan      *kplan.Plan
+		WantNames []string
+	}{{ // Test 0: a checkout build takes the tracked file whole and no stray one.
+		Plan: built, WantNames: []string{"main.go", "vendor/dep/tables.go"},
+	}, { // Test 1: a documented install keeps the size limit.
+		Plan: &kplan.Plan{Installs: []kplan.PlanInstall{{}}}, WantNames: []string{"main.go"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			if _, err := treeTarTo(&buf, dir, sessionSpec(test.Plan, dir)); err != nil {
+				t.Fatalf("treeTarTo: %v", err)
+			}
+			var got []string
+			tr := tar.NewReader(&buf)
+			for {
+				h, err := tr.Next()
+				if err != nil {
+					break
+				}
+				got = append(got, h.Name)
+			}
+			sort.Strings(got)
+			if diff := cmp.Diff(test.WantNames, got); diff != "" {
+				t.Errorf("streamed files mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 

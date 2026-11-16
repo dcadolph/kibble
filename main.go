@@ -314,6 +314,17 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 		// where install and usage steps go once the front page fills up, and
 		// it rots faster because nobody reads it on the way past, so every
 		// document that walks a reader through commands gets its own session.
+		// No documented install gave the session a binary, so the tool is
+		// built from the checkout and the examples run against that, labeled.
+		// Skipping them cost every example in the repository for want of one
+		// install route, and the documented install rows keep their own
+		// statuses either way.
+		if len(installs) == 0 {
+			if in, ok := checkoutBuild(p, repo); ok {
+				installs = []kplan.PlanInstall{in}
+				bins = append(bins, in.Binary)
+			}
+		}
 		sessionBins := sessionBinaries(repo, bins, installs)
 		// Settings are documented once for a repository, often in the README,
 		// and every document's session inherits them. Reading only the

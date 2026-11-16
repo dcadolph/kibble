@@ -198,7 +198,12 @@ for kb in %s; do
   if command -v "$kb" >/dev/null 2>&1; then have=1; printf '\nKIBBLE-HAVE %%s\n' "$kb"; fi
 done
 if [ "$have" -eq 0 ]; then printf '\nKIBBLE-NOBIN\n'; exit 0; fi
-`, strings.Join(quoted, " "))
+__kprobe=" "
+for kb in %s; do
+  command -v "$kb" >/dev/null 2>&1 || continue
+  timeout %d "$kb" --version >/dev/null 2>&1 && __kprobe="$__kprobe$kb "
+done
+`, strings.Join(quoted, " "), strings.Join(quoted, " "), probeSecs)
 		// The copy is only of use at a document boundary, so a session with
 		// one document is left exactly as it was. Only a regular file on an
 		// absolute path is kept. A function's name is not a path, and a link
@@ -240,6 +245,10 @@ done
 	// repository, and each document after the first starts with a repository
 	// as new as the one the first was given, in a working tree as the install
 	// and the fixtures left it.
+	bins := map[string]bool{}
+	for _, b := range plan.Binaries {
+		bins[b] = true
+	}
 	doc, opened := "", false
 	for _, s := range plan.Steps {
 		if !opened || s.Doc != doc {
@@ -305,6 +314,9 @@ done
 			fmt.Fprintf(&b,
 				"printf '"+markerLead+"KIBBLE-LINE %s:%d CODE=%%d CWD=%%s\\n' "+
 					"\"$(__pipecode \"${__ps[@]}\")\" \"$__cwd\"\n", s.ID, i)
+			if bin, _ := kplan.InvokedBinary(docblock.Flatten(l.Cmd), bins); bin != "" {
+				writeProbe(&b, s.ID, i, bin)
+			}
 		}
 	}
 	if opened {
@@ -313,6 +325,26 @@ done
 	b.WriteString(`printf '\nKIBBLE-DONE\n'
 `)
 	return b.String(), wrapped
+}
+
+// probeSecs bounds one `--version` probe of a documented binary.
+const probeSecs = 20
+
+// writeProbe asks, after a line that ran bin and exited nonzero, whether bin
+// still starts. Only a binary whose `--version` passed when the session began
+// is asked, so a tool without that flag is never read as broken. poetry's
+// `poetry sync --only dev`, run with virtualenv creation turned off by an
+// earlier document, removed poetry's own dependencies, and 39 lines after it
+// crashed on a missing module for a reason no document wrote.
+func writeProbe(b *strings.Builder, step string, i int, bin string) {
+	q := shellSafe(bin)
+	fmt.Fprintf(b, `if [ "$(__pipecode "${__ps[@]}")" -ne 0 ]; then
+  case "${__kprobe:-}" in *' %s '*)
+    timeout %d '%s' --version >/dev/null 2>&1
+    printf '`+markerLead+`KIBBLE-PROBE %s:%d CODE=%%d\n' "$?" ;;
+  esac
+fi
+`, q, probeSecs, q, step, i)
 }
 
 // documentCount returns how many documents the plan's steps come from.

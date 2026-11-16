@@ -374,12 +374,13 @@ func firstWord(flat string) string {
 }
 
 // reReaderNamed matches an operand docs use as a stand-in name the reader
-// replaces: a my-prefixed name such as my-project, or a noun with a number
-// such as repo1. Both are a naming convention that says "yours goes here".
+// replaces: a my-prefixed name such as my-project, a your-prefixed one such
+// as your-pod, or a noun with a number such as repo1. Each is a naming
+// convention that says "yours goes here".
 // Words such as foo are not in the class, since docs use them as real example
 // values, and a token with an extension is not either.
 var reReaderNamed = regexp.MustCompile(
-	`^(my[-_]?[\w-]+|(repo|file|dir|group|project|plugin|package|app)\d+)$`)
+	`^(my[-_]?[\w-]+|your[-_][\w-]+|(repo|file|dir|group|project|plugin|package|app)\d+)$`)
 
 // readerNamedOperand returns the first operand of a line that reads as a
 // name the reader supplies, or empty when none does. A name the repo or an
@@ -442,6 +443,13 @@ func (pl *planner) findingFlagged(flat string) bool {
 		if findingFlags[f] {
 			return true
 		}
+		next := ""
+		if i+1 < len(words) {
+			next = words[i+1]
+		}
+		if setsFindingExit(f, next) {
+			return true
+		}
 		if fixFlags[f] {
 			return false
 		}
@@ -453,6 +461,28 @@ func (pl *planner) findingFlagged(flat string) bool {
 		}
 	}
 	return implied
+}
+
+// reExitFlag matches a flag that sets the code a tool exits with when it finds
+// something, such as trivy's --exit-code and --exit-on-eol, and captures a
+// value written after an equals sign.
+var reExitFlag = regexp.MustCompile(`^--exit-[a-z][a-z-]*(?:=(\d+))?$`)
+
+// setsFindingExit reports whether a flag, with the word after it, tells the
+// tool to exit with a nonzero code on a finding. `trivy image --exit-code 1`
+// asks for exit 1 when it finds a vulnerability, so that exit is the line
+// working. A flag of the same family with no number, or with zero, asks for
+// nothing of the kind.
+func setsFindingExit(flag, next string) bool {
+	m := reExitFlag.FindStringSubmatch(flag)
+	if m == nil {
+		return false
+	}
+	value := m[1]
+	if value == "" && !strings.Contains(flag, "=") {
+		value = next
+	}
+	return value != "" && strings.Trim(value, "0123456789") == "" && strings.Trim(value, "0") != ""
 }
 
 // fixFlags are flags that turn fixing back on, so a line carrying one next to

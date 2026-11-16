@@ -164,3 +164,32 @@ func TestMatchesWords(t *testing.T) {
 		})
 	}
 }
+
+// TestWrites checks which files a line is read as redirecting output into.
+func TestWrites(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In         string
+		WantResult []string
+	}{{ // Test 0: A plain redirect names its target.
+		In: "jq . in.json > out.json", WantResult: []string{"out.json"},
+	}, { // Test 1: An append and a redirect inside a pipeline both count.
+		In: "tool list >> all.txt | sort > sorted.txt", WantResult: []string{"all.txt", "sorted.txt"},
+	}, { // Test 2: An input redirect writes nothing.
+		In: "tool load < in.json", WantResult: nil,
+	}, { // Test 3: A target that depends on an expansion is unknown.
+		In: `tool dump > "$(tool path)"`, WantResult: nil,
+	}, { // Test 4: A greater-than sign inside quotes is not a redirect.
+		In: `tool query "a > b"`, WantResult: nil,
+	}, { // Test 5: A line bash cannot parse writes nothing kibble can name.
+		In: "tool 'unterminated > x", WantResult: nil,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(test.WantResult, Writes(test.In), cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

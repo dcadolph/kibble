@@ -226,6 +226,18 @@ func (rn repoNames) npmBinary(name string) (string, bool) {
 // section is a name, as in a scripts table. An array-of-tables header such as
 // [[bin]] is looked up with its inner brackets, as "[bin]".
 func (rn *repoNames) addSections(body []byte, keys map[string]string) {
+	for _, v := range sectionValues(body, keys) {
+		rn.declare(v)
+	}
+}
+
+// sectionValues returns, in manifest order and exactly as written, the values
+// keys selects from a TOML manifest: for a section mapped to a key name, that
+// key's value, and for a section mapped to "*", every key in it, as in a
+// scripts table. An array-of-tables header such as [[bin]] is looked up with
+// its inner brackets, as "[bin]".
+func sectionValues(body []byte, keys map[string]string) []string {
+	var out []string
 	section := ""
 	sc := bufio.NewScanner(strings.NewReader(string(body)))
 	for sc.Scan() {
@@ -246,11 +258,12 @@ func (rn *repoNames) addSections(body []byte, keys map[string]string) {
 		v = strings.Trim(strings.TrimSpace(v), `"'`)
 		switch want {
 		case "*":
-			rn.declare(k)
+			out = append(out, k)
 		case k:
-			rn.declare(v)
+			out = append(out, v)
 		}
 	}
+	return out
 }
 
 // owns reports whether a documented install puts the repository's own tool on
