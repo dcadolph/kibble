@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 // errNotLocal stands in for an image the client has not pulled.
@@ -152,5 +154,112 @@ esac
 	}
 	if got, err := serverArch(ctx); err != nil || got != "arm64" {
 		t.Errorf("serverArch = %q, %v, want arm64", got, err)
+	}
+}
+
+// TestPlatform checks which platform a run is said to have reached its verdict
+// on. The report used to name the architecture kibble was compiled for, so an
+// amd64 image emulated on an arm64 Mac was reported as linux/arm64.
+func TestPlatform(t *testing.T) {
+	tests := []struct {
+		WantPlatform Platform
+		WantString   string
+		Images       map[string]string
+		Image        string
+		Requested    string
+		WantEmulated bool
+	}{{ // Test 0: an amd64 image on an arm64 daemon ran emulated.
+		Images: map[string]string{"buildpack-deps:stable": "amd64"}, Image: "buildpack-deps:stable",
+		WantPlatform: Platform{Arch: "amd64", Host: "arm64"}, WantEmulated: true,
+		WantString: "linux/amd64 (emulated on arm64)",
+	}, { // Test 1: a native image ran native.
+		Images: map[string]string{"golang:1.26": "arm64"}, Image: "golang:1.26",
+		WantPlatform: Platform{Arch: "arm64", Host: "arm64"}, WantString: "linux/arm64",
+	}, { // Test 2: an image that cannot be read falls back to the daemon.
+		Image: "gone", WantPlatform: Platform{Arch: "arm64", Host: "arm64"}, WantString: "linux/arm64",
+	}, { // Test 3: a requested platform is the one the run used.
+		Images: map[string]string{"golang:1.26": "arm64"}, Image: "golang:1.26", Requested: "linux/amd64",
+		WantPlatform: Platform{Arch: "amd64", Host: "arm64"}, WantEmulated: true,
+		WantString: "linux/amd64 (emulated on arm64)",
+	}, { // Test 4: a requested platform with a variant still names its architecture.
+		Image: "golang:1.26", Requested: "linux/arm64/v8",
+		WantPlatform: Platform{Arch: "arm64", Host: "arm64"}, WantString: "linux/arm64",
+	}, { // Test 5: no image is the daemon's own platform.
+		WantPlatform: Platform{Arch: "arm64", Host: "arm64"}, WantString: "linux/arm64",
+	}, { // Test 6: kernel names from the image compare equal to Go names.
+		Images: map[string]string{"rust:1": "aarch64"}, Image: "rust:1",
+		WantPlatform: Platform{Arch: "arm64", Host: "arm64"}, WantString: "linux/arm64",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Setenv("DOCKER_DEFAULT_PLATFORM", test.Requested)
+			got := testArchCheck("aarch64", test.Images).Platform(context.Background(), test.Image)
+			if diff := cmp.Diff(test.WantPlatform, got); diff != "" {
+				t.Errorf("platform mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantEmulated, got.Emulated()); diff != "" {
+				t.Errorf("emulated mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.WantString, got.String()); diff != "" {
+				t.Errorf("string mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestPlatformAfterPull checks that an image not local when the warning
+// looked it up is read once the run has pulled it, rather than the failed
+// lookup being kept and the daemon's architecture reported.
+func TestPlatformAfterPull(t *testing.T) {
+	t.Setenv("DOCKER_DEFAULT_PLATFORM", "")
+	images := map[string]string{}
+	c := testArchCheck("arm64", images)
+	ctx := context.Background()
+	if w := c.Warning(ctx, "img"); w != "" {
+		t.Fatalf("image not local warned: %q", w)
+	}
+	images["img"] = "amd64"
+	if got := c.Platform(ctx, "img"); !got.Emulated() {
+		t.Errorf("Platform after pull = %+v, want amd64 emulated on arm64", got)
+	}
+}
+
+// TestPlatformAfterDeadline checks that a run whose context expired, as a
+// TIMEOUT does, still has its platform read. The emulated jq build that timed
+// out is the run that most needed it named.
+func TestPlatformAfterDeadline(t *testing.T) {
+	t.Setenv("DOCKER_DEFAULT_PLATFORM", "")
+	c := &ArchCheck{
+		ImageArch: func(ctx context.Context, _ string) (string, error) {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+			return "amd64", nil
+		},
+		ServerArch: func(ctx context.Context) (string, error) {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+			return "arm64", nil
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	want := Platform{Arch: "amd64", Host: "arm64"}
+	if diff := cmp.Diff(want, c.Platform(ctx, "img")); diff != "" {
+		t.Errorf("platform mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestPlatformName checks the unknown architecture renders as the OS alone
+// rather than as a claim about an architecture.
+func TestPlatformName(t *testing.T) {
+	t.Parallel()
+	var p Platform
+	if diff := cmp.Diff("linux", p.Name()); diff != "" {
+		t.Errorf("name mismatch (-want +got):\n%s", diff)
+	}
+	if p.Emulated() {
+		t.Error("zero platform reads as emulated")
 	}
 }

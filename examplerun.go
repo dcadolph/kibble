@@ -154,6 +154,7 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 	}
 	end := sessionEnd{expired: errors.Is(ctx.Err(), context.DeadlineExceeded), err: err}
 	res = classifyExample(step, plan, string(out), wrapped, time.Since(start), d.lineBudget(), end)
+	res.platform = sandbox.ImagePlatform(ctx, image)
 	if image != d.Image {
 		res.Image = image
 	}

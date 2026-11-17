@@ -155,6 +155,7 @@ func main() {
 	results = append(results, docCoverageChecks(results)...)
 	annotateVersions(results, <-tags)
 	results = append(results, problems...)
+	fillPlatforms(results, sandbox.HostPlatform(ctx))
 
 	report(os.Stdout, results, cfg.JSON, cfg.Triage)
 	if os.Getenv("GITHUB_ACTIONS") == "true" {
@@ -696,6 +697,17 @@ func runAll(ctx context.Context, r Runner, steps []InstallStep, workers int) []R
 	}
 	wg.Wait()
 	return results
+}
+
+// fillPlatforms gives every result no container ran for the daemon's own
+// platform, so each verdict names where it was reached. A skip decided before
+// any run was decided on this host, not in an image.
+func fillPlatforms(results []Result, host sandbox.Platform) {
+	for i := range results {
+		if results[i].platform == (sandbox.Platform{}) {
+			results[i].platform = host
+		}
+	}
 }
 
 // unrunResult is the result for a step kibble records but does not run. A

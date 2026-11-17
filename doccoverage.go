@@ -167,6 +167,7 @@ func docCoverageChecks(results []Result) []Result {
 				Repo: r.Step.Repo, Kind: "doc-coverage", Binary: r.Step.Binary,
 				dir: r.Step.dir, readme: r.Step.readme,
 			},
+			platform: r.platform,
 		}
 		if len(cmds) == 0 {
 			check.Status = StatusSkipped

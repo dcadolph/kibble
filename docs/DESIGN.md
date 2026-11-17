@@ -202,6 +202,11 @@ environment cannot speak to either way. kibble answers one question well, whethe
 documented steps work from zero in a reproducible environment, and declines the larger
 question it cannot settle.
 
+An image already pulled for another architecture, or one built only for another, runs
+emulated. Each verdict names the platform its container ran on, read from the image rather than assumed,
+and marks an emulated one, since a step that times out there may be meeting the emulation
+and not the document.
+
 ## SKIP, BLOCKED, GAP, and FAIL
 
 A `SKIP` says kibble decided not to run the line, and decided it beforehand, on
