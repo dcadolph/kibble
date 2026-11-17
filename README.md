@@ -298,7 +298,11 @@ verdict claims the documented step works:
 - `TIMEOUT` and `ERROR` keep slow networks and kibble's own trouble out of your verdict.
 
 When a tool reports a missing file, program, git history, preset, or configuration,
-kibble reads that as evidence. If the document named the file, the verdict is `GAP`.
+kibble reads that as evidence. If the document named the file and the path points into
+the repository, the verdict is `GAP`. A path that starts nowhere in the checkout, such as
+the chart a flag example scans or an absolute path, is the reader's own input and the
+verdict is `SKIP`, unless its first part is one letter off a name at the top of the
+checkout, which is a typo and stays `GAP`.
 If the tool reached for something the document never mentions, the verdict is
 `BLOCKED`, since the document may be incomplete or the tool may have a bug and kibble
 cannot tell which. If the container lacks a program, the verdict is `SKIP`. An operand
@@ -345,7 +349,7 @@ nodemon: 3,0,0 as expected
 fd: 5,0,0 as expected
 glow: 5,0,0 as expected
 httpie: 0,0,0 as expected
-rich-cli: 2,0,1 as expected
+rich-cli: 3,0,0 as expected
 ripgrep: FAIL=1 naming ripgreppp as expected
 rich-cli: FAIL=1 naming richhh as expected
 ripgrep: GAP=1 naming READMEE.md as expected

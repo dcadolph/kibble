@@ -250,6 +250,20 @@ it, not by asserting one. A setting is read on the line that says it is missing,
 line that advises (hint, help, note, tip, info, warning) never names one, so a tool that
 mentions how to opt out of something has not said the setting is required.
 
+A missing file is the document's gap only when the document points into its own
+repository. trivy's docs scan `examples/misconf/mixed`, under a directory the checkout
+tracks, and the subdirectory is gone: that is a hole a reader falls into. The same docs
+show `--cf-params params.json`, `--helm-set ... ./charts/mySql`, and `/workspace/project`
+to illustrate a flag on input the reader brings, and `cd vuln-list-update` in a guide that
+spans three repositories. Every gap of that second kind in the 2026-11-11 sweep was false,
+and none pointed into its checkout. So a name whose first part is not at the top of the
+checkout, and an absolute, home, or `../` path, reads `SKIP` with the reason
+`missing-fixture`, naming it as the reader's. A first part one edit off a top-level name
+(a swap of two letters counts as one) stays `GAP`, since a typo of the repository's own
+file is the most common rot there is. The mutation corpus plants `READMEE.md` for that
+reason. A relative name read after the session left the checkout's top keeps `GAP`,
+because the top-level names cannot place it.
+
 A line that would otherwise be a plain `FAIL` is `BLOCKED` with the reason
 `inherited-state` when it ran in a directory an earlier section entered with `cd`,
 `pushd`, or `popd`. Documents change directory once in a setup section and stay there, so

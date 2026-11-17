@@ -55,6 +55,12 @@ type Plan struct {
 	// session starts. A Go build that finds a document's file beside one of
 	// them met the repository's own package, which the document never wrote.
 	RootGoFiles []string `json:"rootGoFiles,omitempty"`
+	// Roots are the names at the top of the checkout, .git aside. A path a
+	// line names that starts with one of them points into the repository, so
+	// its absence is the document's gap. A path that starts nowhere in the
+	// checkout is the reader's own input, such as the chart or the parameters
+	// file a flag example scans.
+	Roots []string `json:"roots,omitempty"`
 }
 
 // PlanInstall is one documented install the session runs before replaying
@@ -204,7 +210,7 @@ func (r *Recognizer) provides(flat string) string {
 
 func BuildPlan(repo, dir, markdown string, binaries []string, installs []PlanInstall, cfg *config.ExamplesConfig, rec *Recognizer) *Plan {
 	p := &Plan{Repo: repo, Installs: installs, Binaries: binaries,
-		NotFoundCodes: docblock.NotFoundCodes(markdown), RootGoFiles: rootGoFiles(dir)}
+		NotFoundCodes: docblock.NotFoundCodes(markdown), RootGoFiles: rootGoFiles(dir), Roots: rootEntries(dir)}
 	pl := &planner{
 		rec:      rec,
 		plan:     p,
@@ -917,6 +923,7 @@ func (p *Plan) Merge(doc string, other *Plan) {
 	}
 	slices.Sort(p.NotFoundCodes)
 	p.RootGoFiles = mergeUnique(p.RootGoFiles, other.RootGoFiles)
+	p.Roots = mergeUnique(p.Roots, other.Roots)
 	if p.Unrun = mergeUnique(p.Unrun, other.Unrun); len(p.Unrun) > maxUnrun {
 		p.Unrun = p.Unrun[:maxUnrun]
 	}

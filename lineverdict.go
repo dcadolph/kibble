@@ -881,6 +881,8 @@ func settleNamed(lr lineResult, name, tail string, o lineOutcome) lineResult {
 		lr.Reason = ReasonDependsOnSkipped
 		lr.Detail = fmt.Sprintf("references %s, which an earlier line that did not pass may create: %s",
 			name, creator)
+	case readerSupplied(name, o.cwd, o.roots):
+		lr = readerSuppliedResult(lr, name, tail)
 	default:
 		lr.Status = StatusGap
 		lr.Detail = fmt.Sprintf("references %s, which no documented step creates: %s", name, tail)
