@@ -461,6 +461,7 @@ func (pl *planner) addBlock(block docblock.Block) {
 	if scopedTo == "" {
 		scopedTo = platformHeading(block.Heading)
 	}
+	project := pl.otherProject(block.Lead)
 	lineIn := docblock.SourceLineIndex(block)
 	shownErr := docblock.ShownFailures(block)
 	nonzero := false
@@ -503,6 +504,10 @@ func (pl *planner) addBlock(block docblock.Block) {
 		line.Synthetic = pl.synthetic
 		if line.Skip == "" {
 			line.Need = pl.need
+		}
+		if line.Skip == "" && project != "" {
+			line.Skip = fmt.Sprintf("runs in %s, another repository the docs link to", project)
+			line.SkipReason = verdict.ReasonMissingFixture
 		}
 		if line.Skip == "" && scopedTo != "" {
 			line.Skip = fmt.Sprintf("documented for %s rather than this container", scopedTo)
