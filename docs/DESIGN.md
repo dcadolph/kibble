@@ -377,7 +377,14 @@ a document is a real break.
 A titled fence whose title is a plain relative file path is a file the document writes. The
 planner turns it into a line that writes the block's content, so a later line reading that
 file does not need it, and a path the checkout already holds is never overwritten. A caption
-title such as "Terminal" is not a file.
+title such as "Terminal" is not a file. A prompted block that opens with `$ cat <file>` and
+the file's lines under it is the same thing told another way: trivy's filtering guide shows
+`.trivyignore` like that and then scans with it. The planner writes the file as shown and
+runs the rest of the block, unless the checkout holds the file or an earlier line made it.
+Only the block's first command counts, since a cat after another command shows what that
+command made. For the same reason a cat block right after a block that ran the tool, under
+the same paragraph, is left to run: katana's README runs `katana -store-response` and then
+shows `$ cat katana_response/index.txt`, a file katana writes.
 
 A session that ends before it finishes, with time left on the clock, is an `ERROR` and
 the examples get no verdict. The lines it never reached are `BLOCKED`, never `TIMEOUT`.
