@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -98,6 +97,7 @@ func reportJSON(w io.Writer, results []Result) {
 	// Saying so is what makes a verdict auditable rather than trusted.
 	type evidenceRow struct {
 		Platform    string   `json:"platform"`
+		Emulated    bool     `json:"emulated,omitempty"`
 		Image       string   `json:"image,omitempty"`
 		Network     string   `json:"network"`
 		Credentials string   `json:"credentials"`
@@ -148,7 +148,7 @@ func reportJSON(w io.Writer, results []Result) {
 			}
 		}
 		out.Evidence = evidenceRow{
-			Platform: "linux/" + runtime.GOARCH, Image: r.Image,
+			Platform: r.platform.Name(), Emulated: r.platform.Emulated(), Image: r.Image,
 			Network: "enabled", Credentials: "none",
 			Synthetic: dedupe(synthetic), RanAt: ranAt,
 		}
@@ -238,12 +238,35 @@ func evidenceLine(c palette, results []Result) string {
 			}
 		}
 	}
-	line := fmt.Sprintf("established on linux/%s, network enabled, no credentials",
-		runtime.GOARCH)
+	line := fmt.Sprintf("established on %s, network enabled, no credentials", platformList(results))
 	if n := len(dedupe(synthetic)); n > 0 {
 		line += fmt.Sprintf(", %s", pluralFiles(n))
 	}
 	return c.dim(line)
+}
+
+// platformList names each distinct platform the results ran on, in the order
+// first met. A run can use several images, and one emulated among native ones
+// is the one a reader most needs named.
+func platformList(results []Result) string {
+	var names []string
+	seen := map[string]bool{}
+	for _, r := range results {
+		name := r.platform.String()
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	switch len(names) {
+	case 0:
+		return "linux"
+	case 1:
+		return names[0]
+	case 2:
+		return names[0] + " and " + names[1]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
 }
 
 // pluralFiles renders the fabricated-input count as a phrase, since a verdict

@@ -344,6 +344,7 @@ func flagChecks(results []Result) []Result {
 				Repo: r.Step.Repo, Kind: "flag-check", Binary: r.Step.Binary,
 				dir: r.Step.dir, readme: r.Step.readme,
 			},
+			platform: r.platform,
 		}
 		known := helpFlags(r.helpText)
 		if len(known) == 0 && len(r.helpByFlag) == 0 {

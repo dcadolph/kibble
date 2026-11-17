@@ -419,5 +419,6 @@ func (d *DockerRunner) runBrewInstall(ctx context.Context, step InstallStep) Res
 	}
 	res := classify(step, string(out), time.Since(start))
 	res.Image = brewImage
+	res.platform = sandbox.ImagePlatform(ctx, brewImage)
 	return res
 }

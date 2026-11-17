@@ -46,6 +46,9 @@ type Result struct {
 	// Image is the container image kibble selected for the step's toolchain,
 	// empty when the step ran in the configured default.
 	Image string
+	// platform is the platform the step's container ran on, zero until a run
+	// or the report fills it.
+	platform sandbox.Platform
 	// helpText is the help output collected for flag checking.
 	helpText string
 	// helpRoot is the binary's own help screen, before any subcommand probe.
@@ -189,6 +192,7 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 		}
 	}
 	res := classify(step, string(out), time.Since(start))
+	res.platform = sandbox.ImagePlatform(ctx, image)
 	if image != d.Image {
 		res.Image = image
 	}
