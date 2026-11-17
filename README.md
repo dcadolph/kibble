@@ -119,7 +119,10 @@ go install github.com/dcadolph/kibble@latest
 ```
 
 Requires Docker on the host. A drop-in replacement that speaks docker's command line,
-such as Podman, works through `KIBBLE_DOCKER=podman`.
+such as Podman, works through `KIBBLE_DOCKER=podman`. kibble warns when an image it is
+about to run is already pulled for another architecture than Docker's and
+`DOCKER_DEFAULT_PLATFORM` is unset, since Docker then runs it emulated and a slow source
+build can time out for that reason alone.
 
 ## Usage
 
