@@ -279,6 +279,16 @@ func BuildPlan(repo, dir, markdown string, binaries []string, installs []PlanIns
 			pl.addFileBlock(block, path)
 			continue
 		}
+		if path, body, rest := catTranscript(block); path != "" && !pl.tree[path] && !pl.created[path] &&
+			pl.toolBlock != block.Heading+"\x00"+block.Intro {
+			shown := block
+			shown.Lines = body
+			pl.addFileBlock(shown, path)
+			if len(rest.Lines) == 0 {
+				continue
+			}
+			block = rest
+		}
 		pl.addBlock(block)
 	}
 	for pkg := range pl.packages {
@@ -335,6 +345,12 @@ func (pl *planner) spreadNonzeroOK() {
 
 // planner accumulates plan state as blocks are processed in document order.
 type planner struct {
+	// toolBlock holds the heading and intro of the last planned block when
+	// that block ran a documented binary, and is empty otherwise. A cat
+	// transcript right after it, under the same intro, shows what the tool
+	// wrote: katana's README runs `katana -store-response` and then shows
+	// `$ cat katana_response/index.txt`.
+	toolBlock string
 	// rec answers whether a line clones or installs, so the planner does not
 	// have to carry every ecosystem's install patterns itself.
 	rec *Recognizer
@@ -542,6 +558,13 @@ func (pl *planner) addBlock(block docblock.Block) {
 		}
 	}
 	pl.plan.Steps = append(pl.plan.Steps, step)
+	pl.toolBlock = ""
+	for _, l := range step.Lines {
+		if bin, _ := InvokedBinary(docblock.Flatten(l.Cmd), pl.binaries); bin != "" {
+			pl.toolBlock = block.Heading + "\x00" + block.Intro
+			break
+		}
+	}
 }
 
 // restoresDir reports whether a line in a later block than a skipped cd opens
@@ -756,6 +779,59 @@ func fileBodyBlock(block docblock.Block) (string, []string) {
 	return path, body
 }
 
+// catTranscript reads a prompted block that opens by showing a file, as
+// trivy's filtering guide does with `$ cat .trivyignore` and the file's lines
+// under it, and returns the file's path, its body, and what the block holds
+// after the body. The document is showing the reader a file to make, so the
+// plan writes it as it would a titled block, and a later line that reads it
+// runs against what the document showed. Only a block's first command
+// counts: a cat after another command shows what that command made. The cat
+// must name one file and do nothing else, and the body must not be empty.
+func catTranscript(block docblock.Block) (string, []string, docblock.Block) {
+	first := -1
+	for i, ln := range block.Lines {
+		if strings.TrimSpace(ln) != "" {
+			first = i
+			break
+		}
+	}
+	if first < 0 {
+		return "", nil, block
+	}
+	cmd, ok := strings.CutPrefix(strings.TrimSpace(block.Lines[first]), "$ ")
+	if !ok {
+		return "", nil, block
+	}
+	cmd = strings.TrimSpace(docblock.StripComment(cmd))
+	words, parsed := shell.Words(cmd)
+	if !parsed || len(words) != 2 || words[0] != "cat" || strings.ContainsAny(cmd, "|<>;&$`") ||
+		docblock.HasPlaceholder(words[1]) {
+		return "", nil, block
+	}
+	path := fileTitle(words[1])
+	if path == "" {
+		return "", nil, block
+	}
+	end := len(block.Lines)
+	for i := first + 1; i < len(block.Lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(block.Lines[i]), "$ ") {
+			end = i
+			break
+		}
+	}
+	body := block.Lines[first+1 : end]
+	for len(body) > 0 && strings.TrimSpace(body[len(body)-1]) == "" {
+		body = body[:len(body)-1]
+	}
+	if len(body) == 0 {
+		return "", nil, block
+	}
+	rest := block
+	rest.Lines = block.Lines[end:]
+	rest.Line = block.Line + end
+	return path, body, rest
+}
+
 // addFileBlock plans a titled block as the document writing the file it names.
 // A path the checkout already holds is never written, since overwriting the
 // repository's own file would test kibble's copy rather than the project's.
@@ -781,6 +857,7 @@ func (pl *planner) addFileBlock(block docblock.Block, path string) {
 		Heading: block.Heading,
 		Lines:   []PlanLine{{Cmd: cmd, File: path, Line: block.Line}},
 	})
+	pl.toolBlock = ""
 	pl.created[path] = true
 }
 
