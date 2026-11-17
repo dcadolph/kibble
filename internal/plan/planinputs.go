@@ -32,13 +32,25 @@ A few plain lines for the documented example to read.
 Nothing here is special; the example only needs a file to exist.
 `
 
+// reExcludeFlag matches a flag whose value names files to leave out.
+var reExcludeFlag = regexp.MustCompile(`^--?(skip|exclude|ignore)[\w-]*$`)
+
 // missingGlob returns a quoted glob argument whose fixed directory prefix
 // matches nothing in the repository, or empty. A doc line such as
 // `lint "src/util/**/*.js"` shows the shape of a command against the reader's
-// tree, and a repository without src/util cannot honestly run it.
+// tree, and a repository without src/util cannot honestly run it. A glob
+// given to a flag that leaves files out, such as trivy's `--skip-files
+// "./testdata/*/bar"`, names what not to read, so nothing it matches is needed.
 func (pl *planner) missingGlob(flat string) string {
+	words := shell.WordsOrFields(flat)
+	excluded := map[string]bool{}
+	for i := 1; i < len(words); i++ {
+		if reExcludeFlag.MatchString(words[i-1]) {
+			excluded[words[i]] = true
+		}
+	}
 	for _, tok := range shell.Operands(flat) {
-		if strings.HasPrefix(tok, "-") || strings.ContainsAny(tok, ":,") {
+		if strings.HasPrefix(tok, "-") || strings.ContainsAny(tok, ":,") || excluded[tok] {
 			continue
 		}
 		star := strings.Index(tok, "*")
