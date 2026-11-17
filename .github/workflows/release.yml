@@ -20,6 +20,21 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # GoReleaser writes name_template over the title of a release that
+      # already exists, so read the title the release was cut with and hand
+      # it back. Left unset when there is no release yet, so the name falls
+      # back to the tag.
+      - name: Keep the release title
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          title=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json name --jq .name 2>/dev/null || true)
+          if [ -n "$title" ]; then
+            delim="EOF_$(openssl rand -hex 8)"
+            printf 'RELEASE_TITLE<<%s\n%s\n%s\n' "$delim" "$title" "$delim" >> "$GITHUB_ENV"
+          fi
+          echo "Release title: ${title:-none, the tag is used}"
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
