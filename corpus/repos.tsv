@@ -68,4 +68,8 @@ httpie	https://github.com/httpie/cli.git	5b604c37c6c67e18e7c3e9aee6c88a8c22b9834
 # so they no longer stand in for a creator, and the example row is the GAP it
 # was before 3bf2ed3. kibble built from 60a68ba reads 3,0,0 and the build with
 # the planner change reads 2,0,1. The change is 86f0c79.
-rich-cli	https://github.com/Textualize/rich-cli.git	46f4d2469097be395558768714a5f07ebccf1412	2,0,1
+# rich-cli moved to 3,0,0 on 2026-11-16. "To syntax highlight a file enter rich
+# followed by a path": loop.py is the reader's own file, and nothing at the top
+# of the checkout starts with it or is one edit from it, so the line reads SKIP
+# as the reader's input rather than GAP. The change is the reader-supplied rule.
+rich-cli	https://github.com/Textualize/rich-cli.git	46f4d2469097be395558768714a5f07ebccf1412	3,0,0

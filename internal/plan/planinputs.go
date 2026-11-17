@@ -319,6 +319,26 @@ func repoTree(dir string) map[string]bool {
 	return tree
 }
 
+// rootEntries returns the names directly inside the checkout, sorted, with
+// .git left out. Like rootGoFiles it reads the directory on its own, since
+// repoTree's cap can stop before the walk returns to the top.
+func rootEntries(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.Name() != ".git" {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
 // rootGoFiles returns the names of the Go files directly inside the checkout,
 // sorted. The directory is read on its own instead of taken from repoTree,
 // whose cap can stop before the walk returns to the top of a large checkout.

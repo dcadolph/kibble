@@ -49,6 +49,8 @@ type lineOutcome struct {
 	// an installer such as pipx, whose nonzero exit is never a query that ran and
 	// found nothing.
 	resolver bool
+	// roots holds the names at the top of the checkout, from the plan.
+	roots map[string]bool
 	// missing marks a line whose needed file did not exist just before it ran.
 	missing bool
 	// notFound marks a line that invoked a documented binary and exited with a
@@ -275,6 +277,10 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 	// members holds the directories earlier lines declared members of the
 	// checkout's workspace.
 	members := map[string]bool{}
+	roots := map[string]bool{}
+	for _, r := range plan.Roots {
+		roots[r] = true
+	}
 	for _, s := range plan.Steps {
 		es := exampleStep{ID: s.ID, Doc: s.Doc, Heading: s.Heading}
 		section := fmt.Sprintf("%s\x00%s\x00%d", s.Doc, s.Heading, s.Details)
@@ -283,6 +289,7 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 			lr := lineResult{Cmd: docblock.Flatten(l.Cmd), Code: -1, Line: l.Line, Synthetic: l.Synthetic,
 				Setup: l.File != "" || shell.SetupOnly(l.Cmd)}
 			o, seen := outcomes[key]
+			o.roots = roots
 			switch {
 			case l.Skip != "":
 				lr.Status = StatusSkipped
@@ -410,6 +417,9 @@ func trackCreators(pending map[string]map[string]string, doc string, l kplan.Pla
 func settleNeed(lr lineResult, l kplan.PlanLine, o lineOutcome, blocker string, unplanned bool) lineResult {
 	lr.Code = o.code
 	lr.output, lr.cwd = o.output, o.cwd
+	if blocker == "" && readerSupplied(l.Need, o.cwd, o.roots) {
+		return readerSuppliedResult(lr, l.Need, "")
+	}
 	if blocker == "" {
 		lr.Status = StatusGap
 		lr.Reason = ReasonMissingFixture
