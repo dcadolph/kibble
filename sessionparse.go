@@ -280,7 +280,8 @@ func buildOutcomes(plan *kplan.Plan, outcomes map[string]lineOutcome, wrapped ma
 		section := fmt.Sprintf("%s\x00%s\x00%d", s.Doc, s.Heading, s.Details)
 		for i, l := range s.Lines {
 			key := fmt.Sprintf("%s:%d", s.ID, i)
-			lr := lineResult{Cmd: docblock.Flatten(l.Cmd), Code: -1, Line: l.Line, Synthetic: l.Synthetic}
+			lr := lineResult{Cmd: docblock.Flatten(l.Cmd), Code: -1, Line: l.Line, Synthetic: l.Synthetic,
+				Setup: l.File != "" || shell.SetupOnly(l.Cmd)}
 			o, seen := outcomes[key]
 			switch {
 			case l.Skip != "":
@@ -471,12 +472,18 @@ func changesDir(cmd string) bool {
 // verified lines did verify them; what they must never do is disappear, so
 // the count travels with every summary that has one.
 func summarize(run *exampleRun) (Status, string) {
-	ran, skipped, gaps, blocked, synthetic := 0, 0, 0, 0, 0
+	ran, skipped, gaps, blocked, synthetic, setup := 0, 0, 0, 0, 0, 0
 	var firstFail, firstTimeout, firstSkip, firstGap, firstBlocked string
 	for _, s := range run.Steps {
 		for _, l := range s.Lines {
 			switch l.Status {
 			case StatusVerified:
+				if l.Setup {
+					// A cd or a written file passing proves nothing about the
+					// document's claims, so it is counted apart from them.
+					setup++
+					continue
+				}
 				ran++
 				if len(l.Synthetic) > 0 {
 					synthetic++
@@ -511,6 +518,9 @@ func summarize(run *exampleRun) (Status, string) {
 	if blocked > 0 {
 		tally += fmt.Sprintf(", %d blocked", blocked)
 	}
+	if setup > 0 {
+		tally += fmt.Sprintf(", %d only set up the session", setup)
+	}
 	if synthetic > 0 {
 		// Named on the summary line rather than only in the JSON, since the
 		// summary is what a reader actually reads before believing the green.
@@ -530,6 +540,12 @@ func summarize(run *exampleRun) (Status, string) {
 		// Nothing was verified and something was tried without settling. The
 		// session has no verdict on this document and must not imply one.
 		return StatusBlocked, fmt.Sprintf("%s, first: %s", tally, firstBlocked)
+	case setup > 0:
+		detail := fmt.Sprintf("%s, and no line tested a claim", tally)
+		if firstSkip != "" {
+			detail += ": " + firstSkip
+		}
+		return StatusSkipped, detail
 	default:
 		detail := "no lines runnable"
 		if firstSkip != "" {

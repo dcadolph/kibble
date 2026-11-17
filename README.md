@@ -195,8 +195,10 @@ The exit code tells a script what happened:
   Docker unavailable, or less than 2 GiB free in Docker.
 - `3` means nothing was tested: no row and no example line reached `VERIFIED`, `FAIL`,
   `GAP`, or `DRIFT`. A brew formula lookup, a recipe with no binary to smoke-test, a
-  timeout, and a skip all leave the documents unchecked, and the summary names up to three
-  of those causes. The action fails on purpose, since a check that tested nothing must not
+  timeout, and a skip all leave the documents unchecked, and so does a line that only sets
+  up the session: a `cd`, an `export`, a `mkdir`, or a file the documents show being
+  written. Such a line is marked `setup` in the JSON. The summary names up to three of
+  those causes. The action fails on purpose, since a check that tested nothing must not
   pass.
 - `130` means the run was interrupted.
 

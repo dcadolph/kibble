@@ -81,6 +81,9 @@ func reportJSON(w io.Writer, results []Result) {
 		// consumer can tell a pass against the document's own inputs from a
 		// pass against inputs kibble invented.
 		Synthetic []string `json:"synthetic,omitempty"`
+		// Setup marks a line that only arranged the session, whose pass is
+		// not a tested claim.
+		Setup bool `json:"setup,omitempty"`
 	}
 	type stepRow struct {
 		ID      string    `json:"id"`
@@ -137,7 +140,7 @@ func reportJSON(w io.Writer, results []Result) {
 				for _, l := range s.Lines {
 					sr.Lines = append(sr.Lines, lineRow{
 						Cmd: l.Cmd, Status: string(l.Status), Reason: string(l.Reason),
-						Code: l.Code, Detail: l.Detail, Synthetic: l.Synthetic,
+						Code: l.Code, Detail: l.Detail, Synthetic: l.Synthetic, Setup: l.Setup,
 					})
 					synthetic = append(synthetic, l.Synthetic...)
 				}

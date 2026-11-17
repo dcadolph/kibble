@@ -108,7 +108,13 @@ not a `GAP`, because the documents may describe routes kibble does not run. When
 and no example line reached `VERIFIED`, `FAIL`, `GAP`, or `DRIFT`, the run exits 3 and
 the summary says nothing was tested and why, so a check that tested nothing does not read
 as a pass. A brew formula lookup (`EXISTS`), a recipe with no binary (`RAN`), and a
-`TIMEOUT` count as nothing tested: each leaves every documented claim unsettled. Before
+`TIMEOUT` count as nothing tested: each leaves every documented claim unsettled. So does
+a line that only sets up the session, such as a `cd`, an `export`, a `mkdir`, an
+assignment, or a file the documents show being written: it passes whatever the tool does.
+headscale's documents passed thirteen such lines while every line of headscale itself was
+blocked, and the run read as tested. A setup line keeps its `VERIFIED` and carries `setup`
+in the JSON, so a later line can still rely on what it made, but it is counted apart from
+the lines that ran and never makes a run tested. Before
 this rule only an all-skip run exited 3, and a repository whose rows were a formula lookup
 and skipped examples exited 0 having tested nothing.
 
