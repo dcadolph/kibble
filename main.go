@@ -802,7 +802,7 @@ func anyTested(results []Result) bool {
 		}
 		for _, s := range r.example.Steps {
 			for _, l := range s.Lines {
-				if tested(l.Status) {
+				if tested(l.Status) && !l.Setup {
 					return true
 				}
 			}

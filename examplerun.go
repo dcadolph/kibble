@@ -60,6 +60,9 @@ type lineResult struct {
 	// Synthetic names the fabricated files this line read, carried from the
 	// plan so a pass can say what it was a pass against.
 	Synthetic []string
+	// Setup marks a line that only arranges the session, a cd, an export, or a
+	// file the document shows being written. It passing settles no claim.
+	Setup bool
 	// output is what the line printed, kept for dependency analysis.
 	output string
 	// cwd is the directory the line ran in, empty when the session did not say.

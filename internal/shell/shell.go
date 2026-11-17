@@ -426,3 +426,83 @@ var reSubName = regexp.MustCompile(`^[a-z][a-z0-9_-]+$`)
 
 // IsSubcommandName reports whether a word is shaped like a subcommand.
 func IsSubcommandName(s string) bool { return reSubName.MatchString(s) }
+
+// setupNames are the commands that only arrange the shell or the file tree
+// for what a document does next. Running one proves nothing about the tool
+// the document is about.
+var setupNames = map[string]bool{
+	"cd": true, "export": true, "unset": true, "alias": true, "set": true, "shopt": true,
+	"pushd": true, "popd": true, "declare": true, "typeset": true, "readonly": true,
+	"local": true, "umask": true, "mkdir": true, "touch": true, "true": true, ":": true,
+}
+
+// writerNames are the commands that write a file when their output is
+// redirected into one, as `cat > config.yaml <<EOF` does.
+var writerNames = map[string]bool{"cat": true, "echo": true, "printf": true}
+
+// SetupOnly reports whether a line does nothing but arrange the shell or
+// write files: a cd, an export, a mkdir, an assignment, or a heredoc or echo
+// redirected into a file. Such a line passing is not a documented claim
+// settled, since it would pass whatever the tool did. A line holding a
+// command or process substitution runs something else and is never setup,
+// and neither is a line that does not parse.
+func SetupOnly(cmd string) bool {
+	parser := syntax.NewParser(syntax.KeepComments(false), syntax.Variant(syntax.LangBash))
+	file, err := parser.Parse(strings.NewReader(cmd), "")
+	if err != nil || len(file.Stmts) == 0 {
+		return false
+	}
+	setup := true
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if !setup {
+			return false
+		}
+		switch n := node.(type) {
+		case *syntax.CmdSubst, *syntax.ProcSubst, *syntax.FuncDecl:
+			setup = false
+		case *syntax.Stmt:
+			if n.Cmd == nil {
+				return true
+			}
+			switch c := n.Cmd.(type) {
+			case *syntax.CallExpr:
+				setup = setupCall(c, n.Redirs)
+			case *syntax.DeclClause:
+				setup = setupNames[c.Variant.Value]
+			case *syntax.BinaryCmd:
+				// A list of setup commands is setup, and Walk visits each side.
+				// A pipe feeds one command into another, which is work.
+				setup = c.Op == syntax.AndStmt || c.Op == syntax.OrStmt
+			default:
+				setup = false
+			}
+		}
+		return true
+	})
+	return setup
+}
+
+// setupCall reports whether one simple command, with its statement's
+// redirects, is setup.
+func setupCall(c *syntax.CallExpr, redirs []*syntax.Redirect) bool {
+	if len(c.Args) == 0 {
+		return len(c.Assigns) > 0
+	}
+	name, literal := wordText(c.Args[0])
+	if !literal {
+		return false
+	}
+	if setupNames[name] {
+		return true
+	}
+	if !writerNames[name] {
+		return false
+	}
+	for _, r := range redirs {
+		switch r.Op {
+		case syntax.RdrOut, syntax.AppOut, syntax.RdrClob:
+			return true
+		}
+	}
+	return false
+}
