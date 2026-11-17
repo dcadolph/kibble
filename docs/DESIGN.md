@@ -404,7 +404,10 @@ when the line works, and the check had never run it.
 Execution must also reproduce the reader's context before it convicts. A block whose
 introducing sentence scopes it to another operating system, the FAQ that says "if you
 are using BSD sed, the default on macOS, use the following", is skipped rather than run
-on Linux and blamed. A failing line whose error names a file the command itself asked
+on Linux and blamed. So is a block the paragraph above sends to another repository,
+as trivy's compliance guide does with `make command-id` "on [trivy-checks
+project](...)": it reads `SKIP` naming that repository, since trivy's own Makefile has no
+such target and never claimed one. A failing line whose error names a file the command itself asked
 for reads as a gap, the document assuming a file the reader brings, never as the tool
 breaking. And a pipeline whose search fed it nothing in the fresh session settles
 nothing about the document, because the same recipe on a reader's tree finds its

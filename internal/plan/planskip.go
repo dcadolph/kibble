@@ -2,6 +2,7 @@ package plan
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -608,6 +609,40 @@ func otherPlatform(intro string) string {
 		return ""
 	}
 	return m
+}
+
+// reOtherRepo matches a link to a GitHub repository placed after on, in,
+// inside, or from, as in "running the command on [trivy-checks
+// project](https://github.com/aquasecurity/trivy-checks)", and captures the
+// repository's name.
+var reOtherRepo = regexp.MustCompile(`(?i)\b(?:on|in|inside|from)\s+(?:the\s+)?\[[^\]]+\]\(https?://github\.com/[\w.-]+/([\w.-]+?)(?:\.git)?/?(?:[#?][^)]*)?\)`)
+
+// reRunWord matches the word a sentence uses to tell the reader to run
+// something.
+var reRunWord = regexp.MustCompile(`(?i)\brun(s|ning)?\b`)
+
+// otherProject returns the name of another repository the paragraph directly
+// above a block tells the reader to run it in, or empty. trivy's compliance
+// guide says to find the next command ID "by running the command on
+// [trivy-checks project](...)", and `make command-id` failed in trivy's own
+// checkout, where no such target exists. The sentence must tell the reader to
+// run something and put the link after on, in, inside, or from. A link to
+// this repository, by its directory name or its Go module path, is not
+// another project.
+func (pl *planner) otherProject(lead string) string {
+	for _, sentence := range strings.Split(lead, ". ") {
+		m := reOtherRepo.FindStringSubmatch(sentence)
+		if m == nil || !reRunWord.MatchString(sentence) {
+			continue
+		}
+		name := m[1]
+		if strings.EqualFold(name, pl.plan.Repo) ||
+			pl.module != "" && strings.EqualFold(path.Base(pl.module), name) {
+			continue
+		}
+		return name
+	}
+	return ""
 }
 
 // rePlatformHeading matches a section heading that is nothing but the name of
