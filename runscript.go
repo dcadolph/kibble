@@ -404,6 +404,7 @@ func (d *DockerRunner) runBrewInstall(ctx context.Context, step InstallStep) Res
 	ctx, cancel := context.WithTimeout(ctx, d.Timeout+2*time.Minute)
 	defer cancel()
 	script := fmt.Sprintf(brewInstallScript, int(d.Timeout.Seconds()), step.Module, step.Module)
+	warnArch(ctx, brewImage)
 	name := sandbox.Name()
 	args := append([]string{"run", "--rm", "--name", name},
 		append(sandbox.Args(), brewImage, "bash", "-c", script)...)

@@ -159,6 +159,7 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 	if blocked != "" {
 		return Result{Step: step, Status: StatusBlocked, Reason: ReasonMissingDependency, Detail: blocked}
 	}
+	warnArch(ctx, image)
 	start := time.Now()
 	name := sandbox.Name()
 	// The official Go images pin GOTOOLCHAIN=local, so a module asking for a
@@ -283,6 +284,14 @@ func (d *DockerRunner) imageFor(step InstallStep) (image, blocked string) {
 		return d.Image, ""
 	}
 	return toolchainImage(tc, step.dir)
+}
+
+// warnArch prints the sandbox's warning for an image built for another
+// architecture than the daemon's, once per image.
+func warnArch(ctx context.Context, image string) {
+	if w := sandbox.ArchWarning(ctx, image); w != "" {
+		fmt.Fprintln(os.Stderr, w)
+	}
 }
 
 // toolchainImage returns the image a toolchain's step runs in for the checkout

@@ -119,6 +119,7 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 	ctx, cancel := context.WithTimeout(ctx, sessionBudget(plan, d.Timeout))
 	defer cancel()
 
+	warnArch(ctx, image)
 	start := time.Now()
 	name := sandbox.Name()
 	args := append([]string{"run", "--rm", "-i", "--name", name},
