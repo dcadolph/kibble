@@ -313,6 +313,61 @@ printf 'SMOKECODE=%%d\n' "$scode"
 printf 'SMOKELINE=%%s\n' "$(printf '%%s' "$sout" | head -n1 | cut -c1-160)"
 `
 
+// releaseScriptFor builds the container script for a release-binary recipe:
+// the documented download, extract, and move lines run in order from /work,
+// and the binary they put in place is smoke-tested.
+func releaseScriptFor(step InstallStep, timeoutSecs int) string {
+	body := strings.ReplaceAll(strings.Join(step.Block, "\n"), "'", `'\''`)
+	name := ""
+	if kplan.IsSimpleWord(step.Repo) {
+		name = step.Repo
+	}
+	return fmt.Sprintf(releaseScript, timeoutSecs, body, name)
+}
+
+// releaseScript runs a release-binary recipe and smoke-tests what it
+// installed: the binary named for the repository on PATH, else any program
+// written to a PATH directory, else the repository's binary where the archive
+// unpacked in /work. Only a file the recipe wrote counts, so a same-named tool
+// the image already ships is never the one tested. Written is judged by the
+// inode change time, since tar and cp -a keep the archive's modification time,
+// which predates the run. It prints the same markers as installScript.
+const releaseScript = `set -u
+mkdir -p /work
+cd /work
+touch /tmp/kibble-mark
+out=$(timeout %[1]d bash -ec '%[2]s' 2>&1); code=$?
+if [ "$code" -ne 0 ]; then
+  printf 'BUILDCODE=%%d\n' "$code"
+  printf '%%s\n' "$out" | grep -iE 'error(\[[A-Z]|:| )' | head -n 4
+  printf '%%s\n' "$out" | tail -n 10
+  exit 0
+fi
+printf 'BUILDCODE=0\n'
+bin=''
+if [ -n '%[3]s' ]; then
+  bin=$(command -v '%[3]s' 2>/dev/null || true)
+  case "$bin" in
+    /*) [ -n "$(find "$bin" -maxdepth 0 -cnewer /tmp/kibble-mark 2>/dev/null)" ] || bin='' ;;
+    *) bin='' ;;
+  esac
+fi
+if [ -z "$bin" ]; then
+  bin=$(IFS=:; find $PATH -maxdepth 1 -type f -perm -u+x -cnewer /tmp/kibble-mark 2>/dev/null | head -n1)
+fi
+if [ -z "$bin" ] && [ -n '%[3]s' ]; then
+  bin=$(find /work -maxdepth 4 -type f -perm -u+x -name '%[3]s' 2>/dev/null | head -n1)
+fi
+if [ -z "$bin" ]; then
+  printf 'NOBIN=1\n'
+  exit 0
+fi
+sout=$(cd / && timeout 15 "$bin" --version 2>&1); scode=$?
+if [ "$scode" -ne 0 ]; then sout=$(cd / && timeout 15 "$bin" --help 2>&1); scode=$?; fi
+printf 'SMOKECODE=%%d\n' "$scode"
+printf 'SMOKELINE=%%s\n' "$(printf '%%s' "$sout" | head -n1 | cut -c1-70)"
+`
+
 // installScript builds, then smoke-tests, one module inside the container. It
 // prints BUILDCODE, SMOKECODE, and SMOKELINE markers for the parent to read. A
 // build timeout surfaces as BUILDCODE=124 so it is not mistaken for a failure.

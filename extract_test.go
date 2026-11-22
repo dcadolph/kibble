@@ -737,3 +737,213 @@ func TestExtractSourceBuildLine(t *testing.T) {
 		t.Errorf("line mismatch (-want +got):\n%s", diff)
 	}
 }
+
+// TestReleaseStep checks which blocks document downloading the checkout's own
+// GitHub release, what recipe each runs, and why one is recorded unrun.
+func TestReleaseStep(t *testing.T) {
+	t.Parallel()
+	const (
+		base   = "https://github.com/acme/tool/releases/download/v1.2.3/"
+		latest = "https://github.com/acme/tool/releases/latest/download/"
+		varURL = "https://github.com/acme/tool/releases/download/v${VERSION}/tool_${VERSION}_linux_arm64.tar.gz"
+		arm64  = "```sh\ncurl -LO " + base + "tool_1.2.3_linux_arm64.tar.gz\n" +
+			"tar xzf tool_1.2.3_linux_arm64.tar.gz\n```\n"
+	)
+	tests := []struct {
+		In         string
+		Origin     string
+		Arch       string
+		WantModule string
+		WantRecipe []string
+		WantNote   string
+		WantReason Reason
+		WantRun    bool
+		Want       bool
+	}{{ // Test 0: A tagged own-repo URL with tar and mv is a route, sudo dropped.
+		In: "```sh\ncurl -LO " + base + "tool_1.2.3_linux_arm64.tar.gz\n" +
+			"tar -xzf tool_1.2.3_linux_arm64.tar.gz\nsudo mv tool /usr/local/bin/\ntool serve\n```\n",
+		Arch:       "arm64",
+		WantModule: base + "tool_1.2.3_linux_arm64.tar.gz",
+		WantRecipe: []string{"curl -LO " + base + "tool_1.2.3_linux_arm64.tar.gz",
+			"tar -xzf tool_1.2.3_linux_arm64.tar.gz", "mv tool /usr/local/bin/"},
+		WantRun: true, Want: true,
+	}, { // Test 1: A releases/latest/download URL piped into tar is a route.
+		In:         "```sh\ncurl -L " + latest + "tool-linux-amd64.tar.gz | tar xz\n```\n",
+		Arch:       "amd64",
+		WantModule: latest + "tool-linux-amd64.tar.gz",
+		WantRecipe: []string{"curl -L " + latest + "tool-linux-amd64.tar.gz | tar xz"},
+		WantRun:    true, Want: true,
+	}, { // Test 2: The wget form, with cp -a into a bin directory, is a route.
+		In: "```bash\nwget " + base + "tool_1.2.3_linux_amd64.tar.gz\ntar zxvf tool_1.2.3_linux_amd64.tar.gz\n" +
+			"sudo cp -a tool_1.2.3_linux_amd64/tool /usr/local/bin/tool\n```\n",
+		Arch:       "amd64",
+		WantModule: base + "tool_1.2.3_linux_amd64.tar.gz",
+		WantRecipe: []string{"wget " + base + "tool_1.2.3_linux_amd64.tar.gz",
+			"tar zxvf tool_1.2.3_linux_amd64.tar.gz", "cp -a tool_1.2.3_linux_amd64/tool /usr/local/bin/tool"},
+		WantRun: true, Want: true,
+	}, { // Test 3: The gh release download form naming its repository is a route.
+		In: "```sh\ngh release download v1.2.3 -R acme/tool -p 'tool_linux_arm64.zip'\n" +
+			"unzip tool_linux_arm64.zip\nsudo install -m755 tool /usr/local/bin/tool\n```\n",
+		Arch:       "arm64",
+		WantModule: "gh release download v1.2.3 -R acme/tool -p 'tool_linux_arm64.zip'",
+		WantRecipe: []string{"gh release download v1.2.3 -R acme/tool -p 'tool_linux_arm64.zip'",
+			"unzip tool_linux_arm64.zip", "install -m755 tool /usr/local/bin/tool"},
+		WantRun: true, Want: true,
+	}, { // Test 4: Another repository's release is not a route.
+		In: "```sh\ncurl -LO https://github.com/other/helper/releases/download/v1/helper_linux_arm64.tar.gz\n" +
+			"tar xzf helper_linux_arm64.tar.gz\n```\n",
+		Arch: "arm64",
+	}, { // Test 5: A darwin_arm64 asset with no Linux variant in the block is skipped by platform.
+		In: "```sh\ncurl -LO " + base + "tool_1.2.3_darwin_arm64.tar.gz\n" +
+			"tar xzf tool_1.2.3_darwin_arm64.tar.gz\n```\n",
+		Arch:       "arm64",
+		WantModule: base + "tool_1.2.3_darwin_arm64.tar.gz",
+		WantRecipe: []string{"curl -LO " + base + "tool_1.2.3_darwin_arm64.tar.gz",
+			"tar xzf tool_1.2.3_darwin_arm64.tar.gz"},
+		WantNote: "release asset tool_1.2.3_darwin_arm64.tar.gz is built for darwin/arm64 and the container " +
+			"runs linux/arm64, and this block lists no linux/arm64 variant to run instead",
+		WantReason: ReasonOtherPlatform, Want: true,
+	}, { // Test 6: A block listing amd64 and arm64 builds runs the arm64 one in an arm64 container.
+		In: "```sh\n# x86_64\ncurl -LO " + base + "tool_1.2.3_linux_amd64.tar.gz\n# arm64\ncurl -LO " + base +
+			"tool_1.2.3_linux_arm64.tar.gz\ntar xzf tool_1.2.3_linux_amd64.tar.gz\n" +
+			"sudo mv tool_1.2.3_linux_amd64/tool /usr/local/bin/\n```\n",
+		Arch:       "arm64",
+		WantModule: base + "tool_1.2.3_linux_arm64.tar.gz",
+		WantRecipe: []string{"curl -LO " + base + "tool_1.2.3_linux_arm64.tar.gz",
+			"tar xzf tool_1.2.3_linux_arm64.tar.gz", "mv tool_1.2.3_linux_arm64/tool /usr/local/bin/"},
+		WantRun: true, Want: true,
+	}, { // Test 7: The same block runs the amd64 build as written in an amd64 container.
+		In: "```sh\n# x86_64\ncurl -LO " + base + "tool_1.2.3_linux_amd64.tar.gz\n# arm64\ncurl -LO " + base +
+			"tool_1.2.3_linux_arm64.tar.gz\ntar xzf tool_1.2.3_linux_amd64.tar.gz\n" +
+			"sudo mv tool_1.2.3_linux_amd64/tool /usr/local/bin/\n```\n",
+		Arch:       "amd64",
+		WantModule: base + "tool_1.2.3_linux_amd64.tar.gz",
+		WantRecipe: []string{"curl -LO " + base + "tool_1.2.3_linux_amd64.tar.gz",
+			"tar xzf tool_1.2.3_linux_amd64.tar.gz", "mv tool_1.2.3_linux_amd64/tool /usr/local/bin/"},
+		WantRun: true, Want: true,
+	}, { // Test 8: A URL holding a $VERSION the block never sets is skipped.
+		In: "```sh\ncurl -LO https://github.com/acme/tool/releases/download/v$VERSION/tool_linux_arm64.tar.gz\n" +
+			"tar xzf tool_linux_arm64.tar.gz\n```\n",
+		Arch:       "arm64",
+		WantModule: "https://github.com/acme/tool/releases/download/v$VERSION/tool_linux_arm64.tar.gz",
+		WantRecipe: []string{
+			"curl -LO https://github.com/acme/tool/releases/download/v$VERSION/tool_linux_arm64.tar.gz",
+			"tar xzf tool_linux_arm64.tar.gz"},
+		WantNote: "the release URL uses $VERSION, which this block never sets, " +
+			"so kibble does not guess its value",
+		WantReason: ReasonPlaceholder, Want: true,
+	}, { // Test 9: A block that sets VERSION=1.2.3 first and then uses ${VERSION} is a route.
+		In:         "```sh\nVERSION=1.2.3\ncurl -LO " + varURL + "\ntar xzf tool_${VERSION}_linux_arm64.tar.gz\n```\n",
+		Arch:       "arm64",
+		WantModule: varURL,
+		WantRecipe: []string{"VERSION=1.2.3", "curl -LO " + varURL, "tar xzf tool_${VERSION}_linux_arm64.tar.gz"},
+		WantRun:    true, Want: true,
+	}, { // Test 10: A download with no extract after it is not a route.
+		In: "```sh\nsudo wget " + base + "tool-linux-arm64 -O /usr/local/bin/tool\n" +
+			"sudo chmod +x /usr/local/bin/tool\n```\n",
+		Arch: "arm64",
+	}, { // Test 11: A piped installer from a release stays a script install, not this route.
+		In:   "```sh\ncurl -fsSL https://github.com/acme/tool/releases/latest/download/install.sh | sh\n```\n",
+		Arch: "arm64",
+	}, { // Test 12: With an origin remote, a same-named repository under another owner is not the checkout's.
+		In: arm64, Origin: "someone/tool", Arch: "arm64",
+	}, { // Test 13: With an origin remote that matches, the route is found.
+		In: arm64, Origin: "Acme/Tool", Arch: "arm64",
+		WantModule: base + "tool_1.2.3_linux_arm64.tar.gz",
+		WantRecipe: []string{"curl -LO " + base + "tool_1.2.3_linux_arm64.tar.gz",
+			"tar xzf tool_1.2.3_linux_arm64.tar.gz"},
+		WantRun: true, Want: true,
+	}, { // Test 14: gh release download without a repository is not a route.
+		In:   "```sh\ngh release download v1.2.3 -p 'tool_linux_arm64.zip'\nunzip tool_linux_arm64.zip\n```\n",
+		Arch: "arm64",
+	}, { // Test 15: A fence indented under a mkdocs tab, as ntfy documents it, is a route.
+		In: "=== \"arm64\"\n    ```bash\n    wget " + base + "tool_1.2.3_linux_arm64.tar.gz\n" +
+			"    tar zxvf tool_1.2.3_linux_arm64.tar.gz\n    sudo cp -a tool_1.2.3_linux_arm64/tool /usr/bin/tool\n" +
+			"    sudo tool serve\n    ```\n",
+		Arch:       "arm64",
+		WantModule: base + "tool_1.2.3_linux_arm64.tar.gz",
+		WantRecipe: []string{"wget " + base + "tool_1.2.3_linux_arm64.tar.gz",
+			"tar zxvf tool_1.2.3_linux_arm64.tar.gz", "cp -a tool_1.2.3_linux_arm64/tool /usr/bin/tool"},
+		WantRun: true, Want: true,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			type view struct {
+				Module string
+				Recipe []string
+				Note   string
+				Reason Reason
+				Run    bool
+				Found  bool
+			}
+			want := view{test.WantModule, test.WantRecipe, test.WantNote, test.WantReason, test.WantRun, test.Want}
+			var got view
+			rc := releaseContext{Origin: test.Origin, Arch: test.Arch}
+			for _, s := range extractorFor(repoNames{}, rc).Extract("tool", test.In) {
+				if s.Kind == "release-binary" {
+					got = view{s.Module, s.Block, s.skipNote, s.skipReason, s.Run, true}
+					break
+				}
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("release step mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestReleaseStepUnrunResult checks that a release step skipped by the
+// extractor reports the extractor's reason, and a placeholder the generic one.
+func TestReleaseStepUnrunResult(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In         InstallStep
+		WantReason Reason
+		WantDetail string
+	}{{ // Test 0: A platform skip carries its own reason and detail.
+		In: InstallStep{
+			Kind: "release-binary", skipNote: "built for darwin", skipReason: ReasonOtherPlatform,
+		},
+		WantReason: ReasonOtherPlatform, WantDetail: "built for darwin",
+	}, { // Test 1: A placeholder in the recipe reads as a placeholder.
+		In:         InstallStep{Kind: "release-binary"},
+		WantReason: ReasonPlaceholder, WantDetail: "docs use a placeholder the reader must fill in",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			res := unrunResult(test.In)
+			got := []string{string(res.Status), string(res.Reason), res.Detail}
+			want := []string{string(StatusSkipped), string(test.WantReason), test.WantDetail}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("result mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestGitHubRepo checks that an origin remote reduces to owner/name.
+func TestGitHubRepo(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		In       string
+		WantRepo string
+	}{{ // Test 0: An HTTPS remote with .git.
+		In: "https://github.com/acme/tool.git", WantRepo: "acme/tool",
+	}, { // Test 1: An HTTPS remote without .git.
+		In: "https://github.com/acme/tool", WantRepo: "acme/tool",
+	}, { // Test 2: Another host is not a GitHub repository.
+		In: "https://gitlab.com/acme/tool.git", WantRepo: "",
+	}, { // Test 3: An SSH remote after the rewrite every remote gets.
+		In: httpRemote("git@github.com:acme/tool.git"), WantRepo: "acme/tool",
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(test.WantRepo, githubRepo(test.In)); diff != "" {
+				t.Errorf("repo mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

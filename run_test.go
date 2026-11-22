@@ -1436,3 +1436,90 @@ func TestDockerSourceBuild(t *testing.T) {
 		t.Errorf("with ldconfig: status %s smoke %q detail %q, want VERIFIED", res.Status, res.SmokeLine, res.Detail)
 	}
 }
+
+// TestReleaseScript runs a release-binary recipe on the host and checks that
+// the binary the recipe put in place is the one smoke-tested: moved onto PATH,
+// or left where the archive unpacked, but never a same-named program that was
+// there before the recipe ran.
+func TestReleaseScript(t *testing.T) {
+	t.Parallel()
+	for _, tool := range []string{"bash", "timeout", "tar"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip("no " + tool)
+		}
+	}
+	tests := []struct {
+		Recipe    []string
+		Stale     bool
+		WantLines []string
+	}{{ // Test 0: The binary moved onto PATH is smoke-tested.
+		Recipe:    []string{"tar xzf tool.tar.gz", "mv tool_1.2.3/tool BINDIR/tool"},
+		WantLines: []string{"BUILDCODE=0", "SMOKECODE=0", "SMOKELINE=tool 1.2.3"},
+	}, { // Test 1: A same-named program already on PATH loses to the unpacked binary.
+		Recipe:    []string{"tar xzf tool.tar.gz"},
+		Stale:     true,
+		WantLines: []string{"BUILDCODE=0", "SMOKECODE=0", "SMOKELINE=tool 1.2.3"},
+	}, { // Test 2: A recipe that writes nothing reports no binary, even with one on PATH.
+		Recipe:    []string{"true"},
+		Stale:     true,
+		WantLines: []string{"BUILDCODE=0", "NOBIN=1"},
+	}, { // Test 3: A failing line fails the recipe.
+		Recipe:    []string{"exit 3"},
+		WantLines: []string{"BUILDCODE=3"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			work, bin, tools := filepath.Join(dir, "work"), filepath.Join(dir, "bin"), filepath.Join(dir, "tools")
+			stage := filepath.Join(dir, "stage", "tool_1.2.3")
+			for _, d := range []string{work, bin, tools, stage} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			timeoutBin, _ := exec.LookPath("timeout")
+			if err := os.Symlink(timeoutBin, filepath.Join(tools, "timeout")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(stage, "tool"), []byte("#!/bin/sh\necho tool 1.2.3\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tarball := exec.Command("tar", "czf", filepath.Join(work, "tool.tar.gz"), "-C",
+				filepath.Dir(stage), "tool_1.2.3")
+			if out, err := tarball.CombinedOutput(); err != nil {
+				t.Fatalf("tar: %v: %s", err, out)
+			}
+			if test.Stale {
+				stale := []byte("#!/bin/sh\necho stale 0.0.1\n")
+				if err := os.WriteFile(filepath.Join(bin, "tool"), stale, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			recipe := make([]string, 0, len(test.Recipe))
+			for _, l := range test.Recipe {
+				recipe = append(recipe, strings.ReplaceAll(l, "BINDIR", bin))
+			}
+			script := releaseScriptFor(InstallStep{Repo: "tool", Kind: "release-binary", Block: recipe}, 30)
+			script = strings.ReplaceAll(script, "/tmp/kibble-mark", filepath.Join(dir, "mark"))
+			script = strings.ReplaceAll(script, "/work", work)
+			cmd := exec.Command("bash", "-c", script)
+			cmd.Env = append(os.Environ(), "PATH="+bin+":"+tools+":/usr/bin:/bin")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("script failed: %v: %s", err, out)
+			}
+			var got []string
+			for _, l := range strings.Split(string(out), "\n") {
+				for _, p := range []string{"BUILDCODE=", "SMOKECODE=", "SMOKELINE=", "NOBIN="} {
+					if strings.HasPrefix(l, p) {
+						got = append(got, l)
+					}
+				}
+			}
+			if diff := cmp.Diff(test.WantLines, got); diff != "" {
+				t.Errorf("markers mismatch (-want +got):\n%s\noutput:\n%s", diff, out)
+			}
+		})
+	}
+}
