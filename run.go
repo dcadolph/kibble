@@ -146,6 +146,8 @@ func (d *DockerRunner) Run(ctx context.Context, step InstallStep) Result {
 			return Result{Step: step, Status: StatusSkipped, Reason: ReasonMissingDependency, Detail: blocked}
 		}
 		script = sourceScriptFor(step, int(d.Timeout.Seconds()))
+	case "release-binary":
+		script = releaseScriptFor(step, int(d.Timeout.Seconds())) + helpProbe(step)
 	default:
 		if _, isPkg := pkgKinds[step.Kind]; isPkg {
 			script = pkgScriptFor(step, int(d.Timeout.Seconds())) + helpProbe(step)

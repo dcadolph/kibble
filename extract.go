@@ -1,8 +1,14 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
 	"path"
+	"path/filepath"
 	"regexp"
+	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/dcadolph/kibble/internal/docblock"
@@ -53,6 +59,12 @@ type InstallStep struct {
 	// loaderNote is the loader step, such as ldconfig, that the document names
 	// outside a source-build recipe. Empty when it names none there.
 	loaderNote string
+	// skipNote is why a step recorded unrun is not run, when the reason is
+	// more specific than a placeholder, such as a release asset built for
+	// another platform. Empty otherwise.
+	skipNote string
+	// skipReason is the machine-readable reason that goes with skipNote.
+	skipReason Reason
 }
 
 // Extractor finds install steps in README markdown.
@@ -167,8 +179,15 @@ func cloneTarget(line string) string {
 // prose does not count as a runnable step. The repository's own names are
 // what make a local npm install a route to the tool: `npm install chalk` is
 // chalk's documented install in chalk's README and a dependency install in
-// every other one.
+// every other one. Release assets are picked for the architecture kibble was
+// built for, since no daemon is asked here.
 func ExtractorWith(owned repoNames) Extractor {
+	return extractorFor(owned, releaseContext{Arch: runtime.GOARCH})
+}
+
+// extractorFor is ExtractorWith with what the release-binary route needs to
+// know about the checkout and the container stated outright.
+func extractorFor(owned repoNames, rc releaseContext) Extractor {
 	return ExtractorFunc(func(repo, markdown string) []InstallStep {
 		seen := map[string]bool{}
 		var steps []InstallStep
@@ -207,6 +226,13 @@ func ExtractorWith(owned repoNames) Extractor {
 				if !seen[key] {
 					seen[key] = true
 					s.loaderNote = loaderNoteOutside(markdown, s.Block)
+					steps = append(steps, s)
+				}
+			}
+			if s, ok := releaseStep(repo, block, rc); ok {
+				key := repo + "|release|" + s.Module + "|" + strings.Join(s.Block, "\n")
+				if !seen[key] {
+					seen[key] = true
 					steps = append(steps, s)
 				}
 			}
@@ -740,4 +766,417 @@ func isMajorVersion(s string) bool {
 		}
 	}
 	return true
+}
+
+// releaseContext is what the release-binary route needs to know beyond the
+// document: which repository the checkout is, and what the container runs.
+type releaseContext struct {
+	// Origin is the checkout's own GitHub repository as owner/name, read from
+	// its origin remote. Empty when the checkout has none, and then a release
+	// URL counts as the checkout's own when its repository name is the
+	// checkout's name, the same test a documented clone is held to.
+	Origin string
+	// Arch is the architecture the container runs, in Go's naming.
+	Arch string
+}
+
+// originRepo returns the GitHub repository a checkout's origin remote names,
+// as owner/name, or empty when it has no such remote. Only a directory that
+// is itself a checkout is asked, so a folder inside some other repository is
+// never taken to be that repository.
+func originRepo(dir string) string {
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		return ""
+	}
+	out, err := exec.Command("git", "-C", dir, "config", "--get", "remote.origin.url").Output()
+	if err != nil {
+		return ""
+	}
+	return githubRepo(httpRemote(strings.TrimSpace(string(out))))
+}
+
+// reGitHubRepo matches a GitHub repository address and captures owner/name.
+var reGitHubRepo = regexp.MustCompile(
+	`^(?:https?://)?(?:www\.)?github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?/?$`)
+
+// githubRepo returns owner/name for a GitHub repository address, or empty
+// for any other address.
+func githubRepo(url string) string {
+	if m := reGitHubRepo.FindStringSubmatch(url); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+var (
+	// reReleaseURL matches a GitHub release asset URL, by tag or for the latest
+	// release, capturing the owner, the repository, the tag, and the asset.
+	reReleaseURL = regexp.MustCompile(`https?://github\.com/([\w.-]+)/([\w.-]+)/releases/` +
+		"(?:download/([^/\\s\"'`]+)|latest/download)/([^/\\s\"'`|;&<>()]+)")
+	// reAssignment matches a line that sets a shell variable, with or without
+	// export, and captures the variable's name.
+	reAssignment = regexp.MustCompile(`^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=`)
+	// reShellVar matches a shell variable reference, $NAME or ${NAME}.
+	reShellVar = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)`)
+	// reReleaseSudo matches a sudo opening a command anywhere in a line, a
+	// pipe into `sudo tar` included, which the container, already root and
+	// without sudo installed, drops.
+	reReleaseSudo = regexp.MustCompile(`(^|&&\s*|;\s*|\|\s*)sudo\s+(?:-E\s+)?`)
+	// reAssetWord matches one word of a block that could name a release
+	// asset: a URL is split at its slashes, and a variable reference stays
+	// inside the word it is part of.
+	reAssetWord = regexp.MustCompile("[^\\s\"'`/|;&<>()=]+")
+	// reX8664 matches the spellings of x86_64, which hold a separator that
+	// would otherwise split the one token in two.
+	reX8664 = regexp.MustCompile(`(?i)x86[_-]64`)
+	// reAlnum matches one token of an asset name.
+	reAlnum = regexp.MustCompile(`[a-z0-9]+`)
+)
+
+// releaseDownload is one documented fetch of a GitHub release asset.
+type releaseDownload struct {
+	// Owner is the GitHub account the release belongs to.
+	Owner string
+	// Name is the repository the release belongs to.
+	Name string
+	// Asset is the asset's file name, or the pattern gh is given.
+	Asset string
+	// Source is the URL fetched, or the gh invocation.
+	Source string
+}
+
+// releaseFollowUps are the commands that may follow a release download in its
+// recipe: extracting the archive, verifying it, and moving the binary into
+// place. Anything else ends the recipe, so a block that goes on to start a
+// server or edit a config file has only its install run.
+var releaseFollowUps = map[string]bool{
+	"tar": true, "unzip": true, "gunzip": true, "mv": true, "cp": true, "install": true,
+	"chmod": true, "mkdir": true, "ln": true, "cd": true, "rm": true,
+	"sha256sum": true, "shasum": true,
+}
+
+// releaseStep returns the install route a block documents by downloading one
+// of the checkout's own GitHub release assets: a curl or wget of a
+// releases/download or releases/latest/download URL, or a gh release download
+// naming its repository, followed in the same block by a tar or unzip
+// extract and optionally by moving the binary into place. ntfy documents this
+// as its Linux install, and kibble had nothing to run for it. The recipe is
+// the variable assignments before the download, the download, and the lines
+// after it up to the first command that is none of releaseFollowUps, with
+// sudo dropped. Another repository's release is a dependency, not the tool,
+// and a piped installer stays a script install. An asset built for another
+// platform than the container's is run in the container's variant only when
+// the same block names that variant, and is otherwise recorded unrun with the
+// asset's platform as the reason. So is a URL holding a variable the block
+// never sets, since guessing its value would test kibble's guess. A code
+// span is read too: a fence indented under a mkdocs tab, as ntfy writes one
+// tab per architecture, parses as a span whose first line is the language,
+// and that word sits before the download where nothing is taken from.
+func releaseStep(repo string, block docblock.Block, rc releaseContext) (InstallStep, bool) {
+	if !block.Span && !docblock.ShellLangs[block.Lang] {
+		return InstallStep{}, false
+	}
+	var prelude, recipe []string
+	assigned := map[string]bool{}
+	var dl *releaseDownload
+	raw, written := "", ""
+	extracted := false
+	for _, line := range docblock.PrepareLines(block.Lines) {
+		line = strings.TrimPrefix(strings.TrimSpace(line), "$ ")
+		w := strings.TrimSpace(stripComment(line))
+		if w == "" || strings.HasPrefix(w, "#") {
+			continue
+		}
+		l := reReleaseSudo.ReplaceAllString(w, "$1")
+		if dl == nil {
+			if m := reAssignment.FindStringSubmatch(l); m != nil {
+				assigned[m[1]] = true
+				prelude = append(prelude, l)
+				continue
+			}
+			d, ok := lineDownload(l)
+			if !ok || !ownRelease(d, repo, rc) {
+				continue
+			}
+			dl, raw, written = &d, line, w
+			recipe = append(append(recipe, prelude...), l)
+			extracted = extracts(l)
+			continue
+		}
+		if d, ok := lineDownload(l); ok {
+			if !ownRelease(d, repo, rc) {
+				break
+			}
+			// The same asset for another platform is an alternative to the
+			// download already taken, not a second step to run.
+			if d.Asset != dl.Asset && platformFree(d.Asset) == platformFree(dl.Asset) {
+				continue
+			}
+			recipe = append(recipe, l)
+			extracted = extracted || extracts(l)
+			continue
+		}
+		if !releaseFollowUp(l) {
+			break
+		}
+		recipe = append(recipe, l)
+		extracted = extracted || extracts(l)
+	}
+	if dl == nil || !extracted {
+		return InstallStep{}, false
+	}
+	step := InstallStep{
+		Repo: repo, Kind: "release-binary", Raw: written, Module: dl.Source, Block: recipe, Run: true,
+	}
+	if block.Line > 0 {
+		step.Line = docblock.SourceLineIndex(block)(raw)
+	}
+	for _, r := range recipe {
+		if docblock.HasPlaceholder(docblock.CommandHead(r)) {
+			step.Run = false
+			return step, true
+		}
+	}
+	for _, m := range reShellVar.FindAllStringSubmatch(dl.Source, -1) {
+		if !assigned[m[1]] {
+			step.Run, step.skipReason = false, ReasonPlaceholder
+			step.skipNote = fmt.Sprintf("the release URL uses $%s, which this block never sets, "+
+				"so kibble does not guess its value", m[1])
+			return step, true
+		}
+	}
+	goos, arch := assetPlatform(dl.Asset)
+	if runsOn(goos, arch, rc.Arch) {
+		return step, true
+	}
+	if v := platformVariant(block, dl.Asset, rc.Arch); v != "" {
+		from, to := assetStem(dl.Asset), assetStem(v)
+		for i := range step.Block {
+			step.Block[i] = strings.ReplaceAll(step.Block[i], from, to)
+		}
+		step.Module = strings.ReplaceAll(step.Module, from, to)
+		return step, true
+	}
+	want := "linux/" + rc.Arch
+	step.Run, step.skipReason = false, ReasonOtherPlatform
+	step.skipNote = fmt.Sprintf("release asset %s is built for %s and the container runs %s, "+
+		"and this block lists no %s variant to run instead",
+		dl.Asset, platformName(goos, arch), want, want)
+	return step, true
+}
+
+// lineDownload returns the release download a line makes, from the first
+// segment that is a curl or wget of a release asset URL or a gh release
+// download naming its repository. A gh call that names none downloads from
+// whatever repository the reader's working directory holds, which a container
+// does not have, so it is not one. A piped installer is never one.
+func lineDownload(line string) (releaseDownload, bool) {
+	if reScriptInstall.MatchString(line) {
+		return releaseDownload{}, false
+	}
+	for _, seg := range splitSegments(line) {
+		seg = strings.TrimSpace(seg)
+		switch commandWord(seg) {
+		case "curl", "wget":
+			if m := reReleaseURL.FindStringSubmatch(seg); m != nil {
+				return releaseDownload{Owner: m[1], Name: m[2], Asset: m[4], Source: m[0]}, true
+			}
+		case "gh":
+			if d, ok := ghDownload(seg); ok {
+				return d, true
+			}
+		}
+	}
+	return releaseDownload{}, false
+}
+
+// ghValueFlags are the gh release download flags that consume the next word.
+var ghValueFlags = map[string]bool{
+	"-D": true, "--dir": true, "-O": true, "--output": true, "-A": true, "--archive": true,
+}
+
+// ghDownload reads a `gh release download` segment: the repository from -R or
+// --repo and the asset from -p or --pattern, quotes removed.
+func ghDownload(seg string) (releaseDownload, bool) {
+	fields := strings.Fields(seg)
+	i := slices.Index(fields, "gh")
+	if i < 0 || i+2 >= len(fields) || fields[i+1] != "release" || fields[i+2] != "download" {
+		return releaseDownload{}, false
+	}
+	var repo, pattern string
+	for j := i + 3; j < len(fields); j++ {
+		f := fields[j]
+		next := ""
+		if j+1 < len(fields) {
+			next = unquote(fields[j+1])
+		}
+		switch {
+		case f == "-R" || f == "--repo":
+			repo, j = next, j+1
+		case strings.HasPrefix(f, "--repo="):
+			repo = unquote(strings.TrimPrefix(f, "--repo="))
+		case f == "-p" || f == "--pattern":
+			pattern, j = next, j+1
+		case strings.HasPrefix(f, "--pattern="):
+			pattern = unquote(strings.TrimPrefix(f, "--pattern="))
+		case ghValueFlags[f]:
+			j++
+		}
+	}
+	parts := strings.Split(strings.TrimSuffix(strings.TrimSuffix(repo, "/"), ".git"), "/")
+	if len(parts) < 2 || parts[len(parts)-2] == "" || parts[len(parts)-1] == "" {
+		return releaseDownload{}, false
+	}
+	return releaseDownload{
+		Owner: parts[len(parts)-2], Name: parts[len(parts)-1], Asset: pattern, Source: seg,
+	}, true
+}
+
+// commandWord returns the program a shell segment runs, past any sudo and
+// leading variable assignments, without its directory.
+func commandWord(seg string) string {
+	for _, f := range strings.Fields(seg) {
+		if f == "sudo" || f == "-E" || reAssignment.MatchString(f) {
+			continue
+		}
+		return path.Base(f)
+	}
+	return ""
+}
+
+// ownRelease reports whether a release download fetches the checkout's own
+// release. With an origin remote the owner and repository must both match it.
+// Without one the repository name must be the checkout's name.
+func ownRelease(d releaseDownload, repo string, rc releaseContext) bool {
+	if rc.Origin != "" {
+		return strings.EqualFold(d.Owner+"/"+d.Name, rc.Origin)
+	}
+	return strings.EqualFold(strings.TrimSuffix(d.Name, ".git"), repo)
+}
+
+// extracts reports whether a line unpacks an archive with tar or unzip.
+func extracts(line string) bool {
+	for _, seg := range splitSegments(line) {
+		if w := commandWord(seg); w == "tar" || w == "unzip" {
+			return true
+		}
+	}
+	return false
+}
+
+// releaseFollowUp reports whether every command in a line is one that may
+// follow a release download in its recipe.
+func releaseFollowUp(line string) bool {
+	for _, seg := range splitSegments(line) {
+		if w := commandWord(seg); w != "" && !releaseFollowUps[w] {
+			return false
+		}
+	}
+	return true
+}
+
+// osTokens maps the operating system names asset files carry to Go's names.
+var osTokens = map[string]string{
+	"linux": "linux", "darwin": "darwin", "macos": "darwin", "mac": "darwin", "osx": "darwin",
+	"apple": "darwin", "windows": "windows", "win": "windows", "win32": "windows",
+	"win64": "windows", "exe": "windows", "freebsd": "freebsd", "openbsd": "openbsd",
+	"netbsd": "netbsd", "android": "android", "illumos": "illumos", "solaris": "solaris",
+}
+
+// archTokens maps the architecture names asset files carry to Go's names.
+// "any" stands for a build that runs on every architecture, such as a macOS
+// universal binary.
+var archTokens = map[string]string{
+	"amd64": "amd64", "x64": "amd64", "64bit": "amd64", "arm64": "arm64", "aarch64": "arm64",
+	"arm": "arm", "armv5": "arm", "armv6": "arm", "armv6l": "arm", "armv7": "arm",
+	"armv7l": "arm", "armhf": "arm", "armel": "arm", "386": "386", "i386": "386",
+	"i686": "386", "x86": "386", "32bit": "386", "riscv64": "riscv64", "ppc64le": "ppc64le",
+	"ppc64": "ppc64", "s390x": "s390x", "loong64": "loong64", "mips": "mips",
+	"mips64": "mips64", "all": "any", "universal": "any",
+}
+
+// assetPlatform returns the operating system and architecture an asset name
+// says it was built for, each empty when the name does not say.
+func assetPlatform(asset string) (goos, arch string) {
+	name := reX8664.ReplaceAllString(strings.ToLower(asset), "amd64")
+	for _, tok := range reAlnum.FindAllString(name, -1) {
+		if v, ok := osTokens[tok]; ok && goos == "" {
+			goos = v
+		}
+		if v, ok := archTokens[tok]; ok && arch == "" {
+			arch = v
+		}
+	}
+	return goos, arch
+}
+
+// platformFree returns an asset name with its platform tokens blanked, so two
+// builds of one release compare equal.
+func platformFree(asset string) string {
+	name := reX8664.ReplaceAllString(strings.ToLower(asset), "amd64")
+	return reAlnum.ReplaceAllStringFunc(name, func(tok string) string {
+		if _, ok := osTokens[tok]; ok {
+			return "*"
+		}
+		if _, ok := archTokens[tok]; ok {
+			return "*"
+		}
+		return tok
+	})
+}
+
+// runsOn reports whether an asset built for goos and arch runs in a Linux
+// container of the given architecture. A name that does not say is assumed
+// to run, since the download is then whatever the document says it is.
+func runsOn(goos, arch, container string) bool {
+	return (goos == "" || goos == "linux") && (arch == "" || arch == "any" || arch == container)
+}
+
+// platformVariant returns the build of an asset for the container's platform
+// when the block names one, in a URL, a gh pattern, a comment, or any other
+// word, and empty otherwise.
+func platformVariant(block docblock.Block, asset, arch string) string {
+	want := platformFree(asset)
+	for _, line := range block.Lines {
+		for _, w := range reAssetWord.FindAllString(line, -1) {
+			if w == asset || platformFree(w) != want {
+				continue
+			}
+			if goos, a := assetPlatform(w); runsOn(goos, a, arch) {
+				return w
+			}
+		}
+	}
+	return ""
+}
+
+// platformName names the platform an asset was built for, as os/arch or as
+// whichever half the name gives.
+func platformName(goos, arch string) string {
+	switch {
+	case goos != "" && arch != "" && arch != "any":
+		return goos + "/" + arch
+	case goos != "":
+		return goos
+	}
+	return arch
+}
+
+// archiveSuffixes are the archive extensions an asset stem is found without,
+// longest first so .tar.gz is not read as .gz.
+var archiveSuffixes = []string{
+	".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tgz", ".tbz", ".txz", ".zip", ".tar",
+	".gz", ".xz", ".bz2", ".zst",
+}
+
+// assetStem returns an asset name without its archive extension. It is the
+// name the archive's top directory usually carries, so swapping it swaps every
+// line of a recipe that names the archive or what it unpacks to.
+func assetStem(asset string) string {
+	for _, suf := range archiveSuffixes {
+		if s, ok := strings.CutSuffix(asset, suf); ok && s != "" {
+			return s
+		}
+	}
+	return asset
 }

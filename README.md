@@ -90,7 +90,9 @@ tree, a getting-started, an install guide, a tutorial, a cookbook, an FAQ. Those
 faster than the front page, because they are where instructions go once it fills up and
 nobody reads them on the way past. Documents that describe the project rather than
 instruct a reader are left alone, since running a contributing guide's test commands
-proves nothing about the docs a user follows. A piped shell installer and a system
+proves nothing about the docs a user follows. A download of the repository's own GitHub
+release that the block then extracts runs as written, in the container's own platform
+variant when the block lists one. A piped shell installer and a system
 package install are recorded but not run, and reported as skips with a reason, so an
 install kibble declines to execute is still visible rather than silently missed.
 

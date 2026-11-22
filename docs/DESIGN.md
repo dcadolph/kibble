@@ -41,6 +41,16 @@ reports which steps a brand-new user could actually complete.
   `LD_LIBRARY_PATH` outside the block, the same error is `BUILT`: the reader was told, and
   kibble ran only the block. Any other failed smoke test stays `BUILT`. A block that also
   clones, installs system packages, or pipes a remote script is not a source build.
+- Runs a release-binary install when a block downloads the checkout's own GitHub release
+  asset (`curl` or `wget` of a `releases/download` or `releases/latest/download` URL, or
+  `gh release download -R owner/repo`) and extracts it with `tar` or `unzip`. The recipe is
+  the download, the extract, and the move or install lines after it, run in the default
+  image with `sudo` dropped, and the binary they put in place is smoke-tested. The
+  checkout's repository comes from its origin remote, or from its name when it has none,
+  and another repository's release is not a route. An asset built for another platform
+  than the container's runs in the container's variant only when the same block names it,
+  and is otherwise a skip naming the asset's platform. A URL holding a variable the block
+  never sets is a skip, never a guess.
 - Builds the tool from the checkout when no documented install gives the example session
   a binary, so one missing install route no longer costs every example in the
   repository. Go uses `go install` of the root or of the `cmd/` directory named for the

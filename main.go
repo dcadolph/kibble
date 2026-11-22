@@ -231,6 +231,9 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 	var out []InstallStep
 	var plans []*kplan.Plan
 	var problems []Result
+	// A release asset is picked for the platform the container runs, which is
+	// the daemon's, not the one kibble was built for.
+	arch := sandbox.HostPlatform(context.Background()).Arch
 	for _, p := range paths {
 		repo := repoName(p)
 		md, name, err := readREADME(p)
@@ -243,7 +246,7 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 			continue
 		}
 		owned := ownedNames(p, repo)
-		ex := ExtractorWith(owned)
+		ex := extractorFor(owned, releaseContext{Origin: originRepo(p), Arch: arch})
 		steps := ex.Extract(repo, md)
 		// Install instructions outlive the README they started in: a docs tree
 		// and an INSTALL file are where they go once the front page fills up,
@@ -728,8 +731,12 @@ func unrunResult(step InstallStep) Result {
 			Step: step, Status: StatusSkipped, Reason: ReasonUnsupportedMethod,
 			Detail: "kibble does not run system package installs; verify this one by hand",
 		}
+	case step.skipNote != "":
+		// The extractor said why it declined, such as a release asset built
+		// for another platform, and that is more use than a generic reason.
+		res = Result{Step: step, Status: StatusSkipped, Reason: step.skipReason, Detail: step.skipNote}
 	case step.Kind == "git-clone" || step.Kind == "go-install" || step.Kind == "brew" ||
-		step.Kind == "source-build" || pkgKinds[step.Kind].Ecosystem != "":
+		step.Kind == "source-build" || step.Kind == "release-binary" || pkgKinds[step.Kind].Ecosystem != "":
 		// These kinds run unless the line holds a placeholder, which is the
 		// only reason one is recorded unrun.
 		res = Result{
