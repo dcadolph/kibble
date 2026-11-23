@@ -262,12 +262,15 @@ func TestPythonStepImage(t *testing.T) {
 	}
 }
 
-// TestSourceBuildImage checks that a source build runs in the build image
-// whatever the runner's default is.
+// TestSourceBuildImage checks that a source build and a release download run
+// in the build image whatever the runner's default is. shellcheck's documented
+// .tar.xz failed in the Go image, which has no xz.
 func TestSourceBuildImage(t *testing.T) {
 	t.Parallel()
 	d := &DockerRunner{Image: "golang:1.26"}
-	if image, _ := d.imageFor(InstallStep{Kind: "source-build", dir: t.TempDir()}); image != sourceBuildImage {
-		t.Errorf("image = %q, want %q", image, sourceBuildImage)
+	for _, kind := range []string{"source-build", "release-binary"} {
+		if image, _ := d.imageFor(InstallStep{Kind: kind, dir: t.TempDir()}); image != sourceBuildImage {
+			t.Errorf("%s image = %q, want %q", kind, image, sourceBuildImage)
+		}
 	}
 }

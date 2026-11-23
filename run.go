@@ -279,7 +279,10 @@ func (d *DockerRunner) imageFor(step InstallStep) (image, blocked string) {
 		}
 		return d.Image, ""
 	}
-	if step.Kind == "source-build" {
+	// A release archive is unpacked with whatever its extension asks for, and
+	// the Go image has no xz, bzip2, or unzip, so a documented .tar.xz failed
+	// there for want of a tool every reader's machine has.
+	if step.Kind == "source-build" || step.Kind == "release-binary" {
 		return sourceBuildImage, ""
 	}
 	if step.Kind != "git-clone" {
