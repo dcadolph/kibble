@@ -430,6 +430,61 @@ func TestSessionInstallsClone(t *testing.T) {
 	}
 }
 
+// TestSessionInstallsRelease checks when a documented release download becomes
+// the session's install. ntfy documents its Linux install as one release
+// archive per architecture and its checkout does not build without generated
+// files, so its examples ran on nothing.
+func TestSessionInstallsRelease(t *testing.T) {
+	t.Parallel()
+	const base = "https://github.com/acme/tool/releases/download/v1.2.3/"
+	tab := func(arch string) string {
+		return "=== \"" + arch + "\"\n    ```bash\n    wget " + base + "tool_1.2.3_linux_" + arch + ".tar.gz\n" +
+			"    tar zxvf tool_1.2.3_linux_" + arch + ".tar.gz\n" +
+			"    sudo cp -a tool_1.2.3_linux_" + arch + "/tool /usr/bin/tool\n    sudo tool serve\n    ```\n\n"
+	}
+	tabs := tab("amd64") + tab("arm64")
+	arm64 := kplan.PlanInstall{
+		Cmd: "wget " + base + "tool_1.2.3_linux_arm64.tar.gz\ntar zxvf tool_1.2.3_linux_arm64.tar.gz\n" +
+			"cp -a tool_1.2.3_linux_arm64/tool /usr/bin/tool",
+		Dir: "/work", Binary: "tool", Release: base + "tool_1.2.3_linux_arm64.tar.gz",
+	}
+	tests := []struct {
+		In           string
+		Arch         string
+		WantInstalls []kplan.PlanInstall
+	}{{ // Test 0: The ntfy shape: the container's architecture tab is the session's install.
+		In: tabs, Arch: "arm64", WantInstalls: []kplan.PlanInstall{arm64},
+	}, { // Test 1: No tab for the container's platform, so every block is a platform skip and none installs.
+		In: tabs, Arch: "s390x",
+	}, { // Test 2: A URL holding a variable the block never sets is not run, so it is not the install.
+		In:   "```sh\ncurl -LO " + base + "tool_${VERSION}_linux_arm64.tar.gz\ntar xzf tool_${VERSION}_linux_arm64.tar.gz\n```\n",
+		Arch: "arm64",
+	}, { // Test 3: A Go install is a documented install too, and it keeps the session.
+		In:   "```sh\ngo install github.com/acme/tool@latest\n```\n\n" + tabs,
+		Arch: "arm64",
+		WantInstalls: []kplan.PlanInstall{{
+			Cmd: "go install github.com/acme/tool@latest", Ecosystem: "go", Binary: "tool",
+		}},
+	}, { // Test 4: A self clone recipe is documented as well, and stays ahead of a release.
+		In:   "```sh\ngit clone https://github.com/acme/tool\ncd tool && make install\n```\n\n" + tabs,
+		Arch: "arm64",
+		WantInstalls: []kplan.PlanInstall{{
+			Cmd: "git clone https://github.com/acme/tool\ncd tool && make install", Dir: "/work",
+		}},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			rc := releaseContext{Arch: test.Arch}
+			steps := extractorFor(repoNames{}, rc).Extract("tool", test.In)
+			_, got := sessionInstalls(t.TempDir(), steps)
+			if diff := cmp.Diff(test.WantInstalls, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("installs mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestReadREADMENameCase checks that a README spelled in any case is found and
 // reported under its real name, at the root and in a fallback directory.
 func TestReadREADMENameCase(t *testing.T) {

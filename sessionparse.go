@@ -189,6 +189,7 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 		}
 	}
 	built := fromCheckout(plan)
+	asset := releaseAsset(plan)
 	switch {
 	case aborted && built:
 		// The build is kibble's stand-in for an install the docs never let it
@@ -202,6 +203,11 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 		case len(buildTail) > 0:
 			res.Detail += ": " + util.Truncate(buildFailLine(buildTail), 160)
 		}
+		return res
+	case aborted && asset != "":
+		res.Status = StatusSkipped
+		res.Detail = "documented release download failed in the session; examples not run; " +
+			releaseNote(asset)
 		return res
 	case aborted:
 		res.Status = StatusSkipped
@@ -236,6 +242,9 @@ func classifyExample(step InstallStep, plan *kplan.Plan, out string, wrapped map
 	}
 	if built && res.Status != StatusError {
 		res.Detail = strings.TrimSuffix(checkoutNote+"; "+res.Detail, "; ")
+	}
+	if asset != "" && res.Status != StatusError {
+		res.Detail = strings.TrimSuffix(releaseNote(asset)+"; "+res.Detail, "; ")
 	}
 	return res
 }
