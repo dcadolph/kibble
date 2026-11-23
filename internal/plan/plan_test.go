@@ -1673,3 +1673,23 @@ func TestImpliedFindingFlag(t *testing.T) {
 		})
 	}
 }
+
+// TestDocumentedSettingNamesConfigKeys checks that a configuration key the
+// document writes as a file sets it counts as documented, and that a prose
+// label, a URL scheme, a flag, and a bare word do not. ntfy sets auth-file in
+// server.yml, and its user commands refuse to run until the reader has.
+func TestDocumentedSettingNamesConfigKeys(t *testing.T) {
+	t.Parallel()
+	md := "Set `NTFY_AUTH_FILE` or the key below.\n\n" +
+		"```yaml\n    auth-file: \"/var/lib/ntfy/user.db\"\n    # cache-file: /var/cache/ntfy/cache.db\n" +
+		"    auth-users:\n```\n\n" +
+		"```toml\ndatabase_url = \"postgres://x\"\n```\n\n" +
+		"Note: see https://example.com for more.\n" +
+		"--output-dir: the folder to write to\n" +
+		"The auth-file option is optional.\n" +
+		"listen: :80\n"
+	want := []string{"NTFY_AUTH_FILE", "auth-file", "auth-users", "cache-file", "database_url"}
+	if diff := cmp.Diff(want, DocumentedSettingNames(md)); diff != "" {
+		t.Errorf("settings mismatch (-want +got):\n%s", diff)
+	}
+}

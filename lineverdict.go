@@ -184,6 +184,13 @@ func classifyLineResult(lr lineResult, l kplan.PlanLine, o lineOutcome, wrapped 
 		lr.Status = StatusSkipped
 		lr.Reason = ReasonMissingFixture
 		lr.Detail = "needs a setting the reader supplies: " + tail
+	case documentedConfigKey(settingLines(o.output), documented) != "":
+		// The tool named a configuration key it needs, and the documents set
+		// that key in a file the reader edits, which no shell line writes.
+		lr.Status = StatusSkipped
+		lr.Reason = ReasonMissingFixture
+		lr.Detail = fmt.Sprintf("needs %s, a configuration key the documents set in a file the reader edits: %s",
+			documentedConfigKey(settingLines(o.output), documented), tail)
 	case reCredErr.MatchString(o.output):
 		// A refusal is a refusal. Whether the reader is missing an account or
 		// the document names the wrong resource produces the same 403, and
@@ -978,6 +985,30 @@ func missingSettingLine(lines []string) bool {
 		}
 	}
 	return false
+}
+
+// reConfigKeyWord matches a lowercase name joined by a hyphen or an
+// underscore, the shape of a configuration key, and captures it. The character
+// before it must not be a hyphen, so a flag such as --output-dir is never read
+// as a key: a missing flag is the document's to name.
+var reConfigKeyWord = regexp.MustCompile(`(?:^|[^-\w])([a-z][a-z0-9]*(?:[-_][a-z0-9]+)+)\b`)
+
+// documentedConfigKey returns the first configuration key a failure line
+// says is missing that the documents set as a configuration file sets it, or
+// empty when no line names one. A key the documents never set is left to the
+// line's other rules, since a lowercase word is too common to call a gap.
+func documentedConfigKey(lines []string, documented map[string]bool) string {
+	for _, line := range lines {
+		if !reMissingPhrase.MatchString(line) {
+			continue
+		}
+		for _, m := range reConfigKeyWord.FindAllStringSubmatch(line, -1) {
+			if documented[m[1]] {
+				return m[1]
+			}
+		}
+	}
+	return ""
 }
 
 // undocumentedSetting returns the first setting a failure line names as

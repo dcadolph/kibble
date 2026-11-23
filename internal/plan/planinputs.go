@@ -386,16 +386,32 @@ func rootGoFiles(dir string) []string {
 // told the reader what to supply.
 var reSettingMention = regexp.MustCompile(`\b[A-Z][A-Z0-9]{2,}(_[A-Z0-9*]+)+\b`)
 
+// reConfigKeyMention matches a configuration file key the document writes as
+// one, at the start of a line and followed by a colon or an equals sign, as a
+// YAML, TOML, or INI file sets it, commented out or not. Only a name joined by
+// a hyphen or an underscore counts, so a prose label such as "Note:" does not.
+// ntfy sets auth-file in server.yml, and its user commands refuse to run until
+// the reader has.
+var reConfigKeyMention = regexp.MustCompile(
+	`(?m)^[ \t]*(?:#[ \t]*)?([a-z][a-z0-9]*(?:[-_][a-z0-9]+)+)[ \t]*[:=](?:[ \t]|$)`)
+
 // DocumentedSettingNames collects every environment setting the document
-// mentions, in any context.
+// mentions, in any context, and every configuration key it writes as a
+// configuration file sets one.
 func DocumentedSettingNames(markdown string) []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, m := range reSettingMention.FindAllString(markdown, -1) {
+	add := func(m string) {
 		if !seen[m] {
 			seen[m] = true
 			out = append(out, m)
 		}
+	}
+	for _, m := range reSettingMention.FindAllString(markdown, -1) {
+		add(m)
+	}
+	for _, m := range reConfigKeyMention.FindAllStringSubmatch(markdown, -1) {
+		add(m[1])
 	}
 	sort.Strings(out)
 	return out

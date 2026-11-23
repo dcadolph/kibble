@@ -267,7 +267,12 @@ a run unless `-strict` is set. A brew name that no index knows lands here too: t
 document may be fine and the lookup short, and the difference is settled by installing
 it, not by asserting one. A setting is read on the line that says it is missing, and a
 line that advises (hint, help, note, tip, info, warning) never names one, so a tool that
-mentions how to opt out of something has not said the setting is required.
+mentions how to opt out of something has not said the setting is required. A lowercase
+configuration key counts as documented when the documents write it the way a config file
+sets it (`auth-file: "/var/lib/ntfy/user.db"`), and a line that fails saying that key is
+not set is `SKIP` with the reason `missing-fixture`, since the reader edits that file and
+no shell line does. A key the documents never set is left to the line's other rules, and
+a flag such as `--auth-file` is never read as a key.
 
 A missing file is the document's gap only when the document points into its own
 repository. trivy's docs scan `examples/misconf/mixed`, under a directory the checkout
