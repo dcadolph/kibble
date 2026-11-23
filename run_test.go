@@ -1466,6 +1466,13 @@ func TestReleaseScript(t *testing.T) {
 	}, { // Test 3: A failing line fails the recipe.
 		Recipe:    []string{"exit 3"},
 		WantLines: []string{"BUILDCODE=3"},
+	}, { // Test 4: With no repo-named binary, the pick among new programs is fixed, not listing order.
+		Recipe: []string{
+			"printf '#!/bin/sh\\necho zeta\\n' > BINDIR/zeta", "chmod +x BINDIR/zeta",
+			"printf '#!/bin/sh\\necho mid\\n' > BINDIR/mid", "chmod +x BINDIR/mid",
+			"printf '#!/bin/sh\\necho alpha\\n' > BINDIR/alpha", "chmod +x BINDIR/alpha",
+		},
+		WantLines: []string{"BUILDCODE=0", "SMOKECODE=0", "SMOKELINE=alpha"},
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {

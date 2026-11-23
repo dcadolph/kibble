@@ -301,7 +301,7 @@ if [ -n '%[3]s' ]; then
   case "$bin" in /*) [ "$bin" -nt /tmp/kibble-mark ] || bin='' ;; *) bin='' ;; esac
 fi
 if [ -z "$bin" ]; then
-  bin=$(IFS=:; find $PATH -maxdepth 1 -type f -perm -u+x -newer /tmp/kibble-mark 2>/dev/null | head -n1)
+  bin=$(IFS=:; find $PATH -maxdepth 1 -type f -perm -u+x -newer /tmp/kibble-mark 2>/dev/null | LC_ALL=C sort | head -n1)
 fi
 if [ -z "$bin" ]; then
   printf 'NOBIN=1\n'
@@ -353,7 +353,7 @@ if [ -n '%[3]s' ]; then
   esac
 fi
 if [ -z "$bin" ]; then
-  bin=$(IFS=:; find $PATH -maxdepth 1 -type f -perm -u+x -cnewer /tmp/kibble-mark 2>/dev/null | head -n1)
+  bin=$(IFS=:; find $PATH -maxdepth 1 -type f -perm -u+x -cnewer /tmp/kibble-mark 2>/dev/null | LC_ALL=C sort | head -n1)
 fi
 if [ -z "$bin" ] && [ -n '%[3]s' ]; then
   bin=$(find /work -maxdepth 4 -type f -perm -u+x -name '%[3]s' 2>/dev/null | head -n1)
