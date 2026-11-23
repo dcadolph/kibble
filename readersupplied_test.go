@@ -129,3 +129,54 @@ func TestReaderSuppliedInRun(t *testing.T) {
 		})
 	}
 }
+
+// TestConfigKeySetting checks that a line refused for a configuration key the
+// documents set in a file reads as a setting the reader supplies. ntfy's 24
+// user, access, token, and tier lines failed this way on the 2026-11-22 run,
+// because auth-file lives in server.yml and no shell line sets it.
+func TestConfigKeySetting(t *testing.T) {
+	t.Parallel()
+	const ntfyOut = "option database-url or auth-file not set; auth is unconfigured for this server"
+	tests := []struct {
+		Output     string
+		Settings   []string
+		WantStatus Status
+		WantReason Reason
+		WantDetail string
+	}{{ // Test 0: the documents set auth-file, so the reader supplies it.
+		Output: ntfyOut, Settings: []string{"auth-file"},
+		WantStatus: StatusSkipped, WantReason: ReasonMissingFixture,
+		WantDetail: "needs auth-file, a configuration key the documents set in a file the reader edits",
+	}, { // Test 1: a key the documents never set keeps the line's verdict.
+		Output: ntfyOut, WantStatus: StatusFail,
+	}, { // Test 2: a missing flag is never read as a key, even one the documents set.
+		Output: "error: --auth-file is required", Settings: []string{"auth-file"},
+		WantStatus: StatusFail,
+	}, { // Test 3: a key named without saying it is missing settles nothing here.
+		Output:   "error: opening auth-file /var/lib/ntfy/user.db: database is locked",
+		Settings: []string{"auth-file"}, WantStatus: StatusFail,
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			plan := &kplan.Plan{Repo: "ntfy", Binaries: []string{"ntfy"}, Settings: test.Settings,
+				Steps: []kplan.PlanStep{{ID: "b1", Doc: "docs/config.md",
+					Lines: []kplan.PlanLine{{Cmd: "ntfy user list"}}}}}
+			out := sessionOut("KIBBLE-BUILD CODE=0", "KIBBLE-STEP b1 START", test.Output,
+				"KIBBLE-LINE b1:0 CODE=1 CWD=/work/repo", "KIBBLE-DONE")
+			res := classifyExample(InstallStep{Repo: "ntfy", Kind: "example"}, plan, out,
+				nil, 0, lineTimeout, sessionEnd{})
+			if res.example == nil {
+				t.Fatalf("no per-line outcomes, status %s: %s", res.Status, res.Detail)
+			}
+			got := res.example.Steps[0].Lines[0]
+			if diff := cmp.Diff([]string{string(test.WantStatus), string(test.WantReason)},
+				[]string{string(got.Status), string(got.Reason)}); diff != "" {
+				t.Errorf("verdict mismatch (-want +got):\n%s\ndetail: %s", diff, got.Detail)
+			}
+			if !strings.Contains(got.Detail, test.WantDetail) {
+				t.Errorf("detail %q does not contain %q", got.Detail, test.WantDetail)
+			}
+		})
+	}
+}

@@ -37,8 +37,9 @@ type Plan struct {
 	// Steps are the example blocks in documented order.
 	Steps []PlanStep `json:"steps,omitempty"`
 	// Settings are environment names the document mentions anywhere, prose
-	// and tables included. A tool that fails asking for one of these is
-	// asking the reader for something the document already told them about.
+	// and tables included, and configuration keys it writes as a file sets
+	// them. A tool that fails asking for one of these is asking the reader
+	// for something the document already told them about.
 	Settings []string `json:"settings,omitempty"`
 	// Excluded counts code blocks that are not shell recipes.
 	Excluded int `json:"excluded,omitempty"`
