@@ -168,6 +168,11 @@ func (d *DockerRunner) runExample(ctx context.Context, step InstallStep) Result 
 // Python session runs on the newest release the checkout at dir states it
 // supports, and blocked is set when that range allows no image.
 func (d *DockerRunner) exampleImage(plan *kplan.Plan, dir string) (image string, ok bool, blocked string) {
+	// A release archive unpacks with whatever its extension asks for, so the
+	// session runs where the standalone release step does.
+	if releaseAsset(plan) != "" {
+		return sourceBuildImage, true, ""
+	}
 	eco := ""
 	for _, in := range plan.Installs {
 		if in.Ecosystem == "" {

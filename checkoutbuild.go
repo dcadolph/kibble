@@ -195,3 +195,21 @@ func fromCheckout(plan *kplan.Plan) bool {
 	}
 	return false
 }
+
+// releaseAsset returns the file name of the release asset a plan's session
+// installs from, or empty when no documented release download is its install.
+func releaseAsset(plan *kplan.Plan) string {
+	for _, in := range plan.Installs {
+		if in.Release != "" {
+			return path.Base(in.Release)
+		}
+	}
+	return ""
+}
+
+// releaseNote labels every example result run against the release binary a
+// documented download installed, naming the asset, since the examples did not
+// run on whatever else the documents offer.
+func releaseNote(asset string) string {
+	return "ran on the release binary the docs name (" + asset + ")"
+}

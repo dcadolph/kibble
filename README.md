@@ -269,6 +269,12 @@ verdict claims the documented step works:
   repository. The examples' verdicts stand, but a release can differ from the checkout,
   and the install rows keep their own verdicts. A checkout that does not build reads
   `BLOCKED`, since the failure is kibble's stand-in and not the document.
+- An example row whose detail opens with "ran on the release binary the docs name" ran
+  against the release archive a documented download put in place, because no package,
+  `go install`, or clone install did. The detail names the asset, which is the one built
+  for the container's platform. A release block for another platform, or one whose URL
+  holds a variable the block never sets, is never the session's install. Only when no
+  release download runs does kibble build from the checkout.
 - `BLOCKED` with the reason `inherited-state` means a line that would have been a plain
   `FAIL` ran in a directory an earlier section entered with `cd`, `pushd`, or `popd`.
   Documents `cd` once in setup and stay there, so the failure may come from what that

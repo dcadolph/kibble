@@ -273,4 +273,8 @@ func TestSourceBuildImage(t *testing.T) {
 			t.Errorf("%s image = %q, want %q", kind, image, sourceBuildImage)
 		}
 	}
+	plan := &kplan.Plan{Installs: []kplan.PlanInstall{{Cmd: "wget x", Release: "https://x/tool.tar.xz"}}}
+	if image, ok, _ := d.exampleImage(plan, t.TempDir()); !ok || image != sourceBuildImage {
+		t.Errorf("release session image = %q ok=%v, want %q", image, ok, sourceBuildImage)
+	}
 }

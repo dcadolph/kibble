@@ -135,11 +135,13 @@ func TestCheckoutBuild(t *testing.T) {
 func TestCheckoutBuildSession(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		Out        string
-		Checkout   bool
-		WantStatus Status
-		WantDetail string
-		WantLabel  bool
+		Out         string
+		Checkout    bool
+		Release     bool
+		WantStatus  Status
+		WantDetail  string
+		WantLabel   bool
+		WantRelease bool
 	}{{ // Test 0: passing examples on a checkout build are labeled.
 		Out: sessionOut("KIBBLE-BUILD CODE=0", "KIBBLE-STEP b1 START", "KIBBLE-LINE b1:0 CODE=0",
 			"KIBBLE-LINE b1:1 CODE=0", "KIBBLE-LINE b1:2 CODE=0", "KIBBLE-DONE"),
@@ -161,6 +163,17 @@ func TestCheckoutBuildSession(t *testing.T) {
 		Out: sessionOut("KIBBLE-BUILD CODE=0", "KIBBLE-STEP b1 START", "KIBBLE-LINE b1:0 CODE=0",
 			"KIBBLE-LINE b1:1 CODE=0", "KIBBLE-LINE b1:2 CODE=0", "KIBBLE-DONE"),
 		WantStatus: StatusVerified,
+	}, { // Test 5: passing examples on a documented release download name the asset.
+		Out: sessionOut("KIBBLE-BUILD CODE=0", "KIBBLE-STEP b1 START", "KIBBLE-LINE b1:0 CODE=0",
+			"KIBBLE-LINE b1:1 CODE=0", "KIBBLE-LINE b1:2 CODE=0", "KIBBLE-DONE"),
+		Release: true, WantStatus: StatusVerified, WantRelease: true,
+	}, { // Test 6: a failing example on a release download is labeled too.
+		Out: sessionOut("KIBBLE-BUILD CODE=0", "KIBBLE-STEP b1 START", "KIBBLE-LINE b1:0 CODE=0",
+			"error: unknown command", "KIBBLE-LINE b1:1 CODE=2", "KIBBLE-LINE b1:2 CODE=0", "KIBBLE-DONE"),
+		Release: true, WantStatus: StatusFail, WantRelease: true,
+	}, { // Test 7: a failed release download skips, says it was the download, and names the asset.
+		Out:     sessionOut("KIBBLE-BUILD CODE=8", "wget: server returned error: HTTP/1.1 404", "KIBBLE-ABORT"),
+		Release: true, WantStatus: StatusSkipped, WantRelease: true, WantDetail: "release download failed",
 	}}
 	for testNum, test := range tests {
 		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
@@ -169,6 +182,10 @@ func TestCheckoutBuildSession(t *testing.T) {
 			if test.Checkout {
 				plan.Installs = []kplan.PlanInstall{{Cmd: "go install .", Ecosystem: "go", Binary: "tool",
 					FromCheckout: true}}
+			}
+			if test.Release {
+				plan.Installs = []kplan.PlanInstall{{Cmd: "wget x", Dir: "/work", Binary: "tool",
+					Release: "https://github.com/acme/tool/releases/download/v1/tool_linux_arm64.tar.gz"}}
 			}
 			step := InstallStep{Repo: "repo", Kind: "example", plan: plan}
 			res := classifyExample(step, plan, test.Out, nil, 0, lineTimeout, sessionEnd{})
@@ -180,6 +197,10 @@ func TestCheckoutBuildSession(t *testing.T) {
 			}
 			if got := strings.Contains(res.Detail, checkoutNote); got != test.WantLabel {
 				t.Errorf("labeled = %v, want %v (detail %q)", got, test.WantLabel, res.Detail)
+			}
+			note := releaseNote("tool_linux_arm64.tar.gz")
+			if got := strings.Contains(res.Detail, note); got != test.WantRelease {
+				t.Errorf("release labeled = %v, want %v (detail %q)", got, test.WantRelease, res.Detail)
 			}
 		})
 	}

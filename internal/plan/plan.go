@@ -83,6 +83,10 @@ type PlanInstall struct {
 	// gave the session a binary: the tool built from the checkout. Examples
 	// run against it say so, and the documented install stays untested.
 	FromCheckout bool `json:"fromCheckout,omitempty"`
+	// Release is the release asset URL a documented download fetched, set when
+	// that download is the session's install because no other documented
+	// install puts the tool on PATH. Examples run against it say so.
+	Release string `json:"release,omitempty"`
 }
 
 // PlanStep is one documented code block prepared for execution.

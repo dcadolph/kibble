@@ -318,8 +318,8 @@ func collect(paths []string, examples bool) ([]InstallStep, []*kplan.Plan, []Res
 		// where install and usage steps go once the front page fills up, and
 		// it rots faster because nobody reads it on the way past, so every
 		// document that walks a reader through commands gets its own session.
-		// No documented install gave the session a binary, so the tool is
-		// built from the checkout and the examples run against that, labeled.
+		// No documented install gave the session a binary, a release download
+		// included, so the tool is built from the checkout and the examples run against that, labeled.
 		// Skipping them cost every example in the repository for want of one
 		// install route, and the documented install rows keep their own
 		// statuses either way.
@@ -440,11 +440,14 @@ func installRoutes(steps []InstallStep) []string {
 // them on PATH. Every install kind counts, not only Go, so a Rust or Node
 // project's examples run against the tool its own README installs. A clone
 // recipe counts only when nothing else does, as fzf documents only package
-// managers kibble does not run and its own clone-and-install script.
+// managers kibble does not run and its own clone-and-install script. A release
+// download counts only when no clone does either, as ntfy documents its Linux
+// install as a release archive and its checkout does not build without
+// generated files, so its examples ran on nothing.
 func sessionInstalls(dir string, steps []InstallStep) ([]string, []kplan.PlanInstall) {
 	var bins []string
 	var all []kplan.PlanInstall
-	var clone *kplan.PlanInstall
+	var clone, release *kplan.PlanInstall
 	npmSeen := map[string]bool{}
 	for _, s := range steps {
 		// A step recorded but not run, such as a clone of a placeholder URL,
@@ -457,6 +460,11 @@ func sessionInstalls(dir string, steps []InstallStep) ([]string, []kplan.PlanIns
 		case s.Kind == "git-clone":
 			if clone == nil && len(s.Block) > 0 && clonesItself(s) {
 				clone = cloneInstall(s, dir)
+			}
+			continue
+		case s.Kind == "release-binary":
+			if release == nil && len(s.Block) > 0 {
+				release = releaseInstall(s)
 			}
 			continue
 		case s.Kind == "go-install":
@@ -493,7 +501,24 @@ func sessionInstalls(dir string, steps []InstallStep) ([]string, []kplan.PlanIns
 	if len(all) == 0 && clone != nil {
 		return bins, []kplan.PlanInstall{*clone}
 	}
+	if len(all) == 0 && release != nil {
+		return bins, []kplan.PlanInstall{*release}
+	}
 	return bins, oncePerBinary(sameEcosystem(all, dir))
+}
+
+// releaseInstall turns a release-binary recipe into a session install. Only a
+// recipe the extractor marked runnable reaches it, so an asset for another
+// platform or a URL holding a variable the block never sets is never the
+// session's install. It runs from /work, as the standalone step does, so the
+// archive unpacks beside the repository rather than inside the copy the
+// examples run in.
+func releaseInstall(s InstallStep) *kplan.PlanInstall {
+	in := &kplan.PlanInstall{Cmd: strings.Join(s.Block, "\n"), Dir: "/work", Release: s.Module}
+	if kplan.IsSimpleWord(s.Repo) {
+		in.Binary = s.Repo
+	}
+	return in
 }
 
 // clonesItself reports whether a clone recipe clones the repository being
