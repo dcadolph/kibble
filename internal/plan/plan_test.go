@@ -1693,3 +1693,41 @@ func TestDocumentedSettingNamesConfigKeys(t *testing.T) {
 		t.Errorf("settings mismatch (-want +got):\n%s", diff)
 	}
 }
+
+// TestArrowNotation checks that a block listing calls and their results joined
+// by a bare => is notation and never planned, while a line that quotes => or
+// runs the same program without it still is. ntfy's template-function page
+// lists seq this way, and each line ran as the shell's seq and failed.
+func TestArrowNotation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Block     string
+		WantLines []string
+	}{{ // Test 0: ntfy's seq listing at the pinned commit is notation.
+		Block: "seq 5       => 1 2 3 4 5\nseq -3      => 1 0 -1 -2 -3\nseq 0 2     => 0 1 2\n",
+	}, { // Test 1: the same program without the arrow is a command.
+		Block: "seq 5\n", WantLines: []string{"seq 5"},
+	}, { // Test 2: a quoted arrow is an argument, so the line runs.
+		Block: "echo \"a => b\"\n", WantLines: []string{`echo "a => b"`},
+	}, { // Test 3: an arrow joined to other text is not the notation.
+		Block: "echo a=>b\n", WantLines: []string{"echo a=>b"},
+	}}
+	for testNum, test := range tests {
+		t.Run(fmt.Sprintf("test %d", testNum), func(t *testing.T) {
+			t.Parallel()
+			md := "# Doc\n\n```\n" + test.Block + "```\n"
+			// ntfy's plan carries seq among its binaries, as usage extraction
+			// found it, which is how the listing qualified to run at all.
+			plan := BuildPlan("repo", t.TempDir(), md, []string{"tool", "seq"}, nil, nil, testRecognizer())
+			var got []string
+			for _, s := range plan.Steps {
+				for _, l := range s.Lines {
+					got = append(got, l.Cmd)
+				}
+			}
+			if diff := cmp.Diff(test.WantLines, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("planned lines mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
