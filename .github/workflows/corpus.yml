@@ -192,7 +192,11 @@ jobs:
           while IFS=$'\t' read -r name url sha doc line want proof expect; do
             case "$name" in ""|\#*) continue ;; esac
             rows=$((rows + 1))
-            dir="$WORK/${name}-${sha:0:12}"
+            # The checkout's folder carries the repository's own name, as a
+            # reader's clone does, since kibble names the binary it smoke-tests
+            # after it. A folder named jq-<sha> had jq's build tested through
+            # whichever new program a directory listing returned first.
+            dir="$WORK/${name}-${sha:0:12}/${name}"
             out="$WORK/${name}-${sha:0:12}.json"
             # Two rows can name one repository. It runs once.
             if [ ! -s "$out" ]; then
