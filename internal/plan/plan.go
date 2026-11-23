@@ -928,6 +928,9 @@ func (pl *planner) qualifies(lines []string) bool {
 		if flat == "" || strings.HasPrefix(flat, "#") {
 			continue
 		}
+		if arrowNotation(flat) {
+			return false
+		}
 		first := ""
 		if parsed, ok := shell.Parse(flat); ok && len(parsed.Cmds) > 0 {
 			first = parsed.Cmds[0].Name()
@@ -957,6 +960,22 @@ func (pl *planner) qualifies(lines []string) bool {
 		pl.provided[b] = true
 	}
 	return true
+}
+
+// reQuoted matches a single- or double-quoted span of a shell line.
+var reQuoted = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"`)
+
+// reArrow matches => standing alone as a word.
+var reArrow = regexp.MustCompile(`(^|\s)=>(\s|$)`)
+
+// arrowNotation reports whether a line shows an input and its result joined
+// by a bare =>, as a reference page lists a function's calls and what each
+// returns. No shell line writes => unquoted as a word: bash would read it as an
+// argument "=" and a redirect into a file named by the result. ntfy lists its
+// template function seq that way in an unlabeled block, and each line ran as
+// the shell's seq and failed.
+func arrowNotation(flat string) bool {
+	return reArrow.MatchString(reQuoted.ReplaceAllString(flat, "''"))
 }
 
 // CommandEcosystem maps a build command to the ecosystem that provides it.

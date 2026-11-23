@@ -585,7 +585,10 @@ server, a file the docs reference but never create, a variable such as `$HISTFIL
 only an interactive shell sets, or a subcommand that opens a shell or serves forever.
 Skips are reported with their reason, so the coverage is honest about what it did and
 did not run. A command the docs say exits nonzero, such as a linter that fails when it
-finds something, is recognized and passes on that exit.
+finds something, is recognized and passes on that exit. A block whose line joins a call
+to its result with a bare `=>`, as ntfy lists its template function `seq 5 => 1 2 3 4 5`,
+is notation and is not run at all, since bash would read the arrow as an argument and a
+redirect. An arrow inside quotes, or joined to other text, is an ordinary argument.
 
 A tool that watches or serves is read from how its documentation introduces it. A README
 opening with "nodemon is a tool that helps develop Node.js based applications by
