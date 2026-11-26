@@ -21,6 +21,32 @@
 
 <p align="center"><sub><code>VERIFIED · FAIL · GAP · DRIFT · BLOCKED · SKIP</code></sub></p>
 
+## The proof so far
+
+**14 documentation fixes merged upstream, in projects with 190k GitHub stars between them.
+kibble found 10 of them on its own, in projects it had never seen before.**
+
+kibble read each project's docs, ran them from zero in a clean container, and these
+documented commands failed:
+
+| Project                                                         | What the docs promised                   | What happened in a clean container                                 | Merged fix                                                                                                         |
+|-----------------------------------------------------------------|------------------------------------------|--------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
+| [pypa/pipx](https://github.com/pypa/pipx)                       | A pinned install example                 | Failed to build on Python 3.15                                     | [pipx#2181](https://github.com/pypa/pipx/pull/2181)                                                                |
+| [johnkerl/miller](https://github.com/johnkerl/miller)           | Library setup steps and prepipe examples | A doubled directory change, and examples broken by their own flags | [miller#2276](https://github.com/johnkerl/miller/pull/2276), [#2275](https://github.com/johnkerl/miller/pull/2275) |
+| [ducaale/xh](https://github.com/ducaale/xh)                     | A request example in the man page        | DNS error from a stray letter in the host                          | [xh#497](https://github.com/ducaale/xh/pull/497)                                                                   |
+| [mufeedvh/code2prompt](https://github.com/mufeedvh/code2prompt) | A filter tutorial in seven languages     | Rejected a flag the tool had already removed                       | [code2prompt#346](https://github.com/mufeedvh/code2prompt/pull/346)                                                |
+| [dundee/gdu](https://github.com/dundee/gdu)                     | The contributor setup target             | Failed with and without the documented environment                 | [gdu#704](https://github.com/dundee/gdu/pull/704)                                                                  |
+| [tach-org/tach](https://github.com/tach-org/tach)               | The getting started install command      | Used a flag where a required target belongs                        | [tach#961](https://github.com/tach-org/tach/pull/961)                                                              |
+| [nosarthur/gita](https://github.com/nosarthur/gita)             | A context command on a fresh install     | Crashed, and the fix went into the code                            | [gita#316](https://github.com/nosarthur/gita/pull/316)                                                             |
+| [wait4x/wait4x](https://github.com/wait4x/wait4x)               | DNS check examples                       | Flags that do not exist                                            | [wait4x#577](https://github.com/wait4x/wait4x/pull/577)                                                            |
+| [ehmicky/nve](https://github.com/ehmicky/nve)                   | Running tests on an old Node version     | A module error from a stale compatibility note                     | [nve#82](https://github.com/ehmicky/nve/pull/82)                                                                   |
+
+The other four came from a hand check of pyenv, ShellCheck, jq, and GoReleaser, where kibble
+missed them. Each one became a row in kibble's recall corpus, a scoreboard of real bugs kibble
+walked past, run in CI. kibble now catches the jq bug on its own, and the job fails if it ever
+stops. [docs/FINDS.md](docs/FINDS.md) lists all 14 with the exact line, the exit code, and the
+merged pull request.
+
 <p align="center">
   <img src="assets/kibble-demo.gif" width="100%"
     alt="kibble reads a README's install steps and flags a documented brew install that names a formula that does not exist, with the line number and the reason">
@@ -61,7 +87,6 @@ worse than no verifier, so kibble is tested against its own willingness to say y
 - [Install](#install)
 - [Usage](#usage)
 - [Use it in CI](#use-it-in-ci)
-- [What it has found](#what-it-has-found)
 - [Flags](#flags)
 - [What the verdicts mean](#what-the-verdicts-mean)
 - [Why believe any of it](#why-believe-any-of-it)
@@ -206,14 +231,6 @@ The exit code tells a script what happened:
   those causes. The action fails on purpose, since a check that tested nothing must not
   pass.
 - `130` means the run was interrupted.
-
-## What it has found
-
-kibble's first sweeps ran it on open source projects it had never seen, and some of the
-documented commands it ran failed in a clean container. A separate hand check found more that
-kibble missed. Each failure was replayed by hand, and the fixes were filed upstream and merged
-by each project's maintainers. [docs/FINDS.md](docs/FINDS.md) lists every merged fix with how
-it was found, the documented line, what happened in the container, and the merged pull request.
 
 ## Flags
 
